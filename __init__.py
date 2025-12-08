@@ -1,0 +1,1 @@
+# 空文件即可，让 astrbot_plugin_dailynews 成为一个包
