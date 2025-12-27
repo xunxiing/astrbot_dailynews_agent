@@ -1,6 +1,15 @@
 import sys
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin
+
 from playwright.sync_api import sync_playwright
+
+try:
+    from astrbot.api import logger as astrbot_logger
+except Exception:  # pragma: no cover
+    import logging
+
+    astrbot_logger = logging.getLogger(__name__)
 
 
 WECHAT_MOBILE_UA = (
@@ -11,41 +20,49 @@ WECHAT_MOBILE_UA = (
 )
 
 
-def get_album_articles(article_url: str, limit: int = 5):
-    """无头模式：从文章页打开目录弹窗并抓取最新文章"""
+def get_album_articles(
+    article_url: str,
+    limit: int = 5,
+    album_keyword: Optional[str] = None,
+) -> List[Dict[str, str]]:
+    """
+    无头模式：从公众号文章页打开「合集/专辑目录」弹窗并抓取最新文章。
+
+    参数:
+    - article_url: 任意一篇公众号文章链接（建议来自你想抓取的那个合集/专辑）
+    - limit: 最多返回多少篇
+    - album_keyword: 用于匹配目录入口名称；为空则默认点击第一个目录入口
+    """
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent=WECHAT_MOBILE_UA)
         page = context.new_page()
 
-        print("打开文章页面…")
         page.goto(article_url, timeout=60000, wait_until="domcontentloaded")
 
-        # 等专辑入口
         page.wait_for_selector("span.js_album_directory__name", timeout=15000)
-
-        # 找到匹配 “AI 早报” 文本的入口
         entries = page.query_selector_all("span.js_album_directory__name")
+        if not entries:
+            browser.close()
+            raise RuntimeError("找不到任何「合集/专辑目录」入口")
+
         target = None
-        for el in entries:
-            text = (el.inner_text() or "").strip()
-            if "AI 早报" in text:
-                target = el
-                break
-
+        if album_keyword:
+            for el in entries:
+                text = (el.inner_text() or "").strip()
+                if album_keyword in text:
+                    target = el
+                    break
         if not target:
-            raise RuntimeError("找不到『AI 早报 · 目录』入口")
+            target = entries[0]
 
-        print("点击目录入口…")
         target.click()
         page.wait_for_timeout(1200)
 
-        # 等弹窗里的标题元素
         page.wait_for_selector(".album_read_directory_title", timeout=10000)
-
-        # 在页面中执行 JS，采集标题与链接
-        items = page.evaluate("""
+        items = page.evaluate(
+            """
         () => {
             const out = [];
             const titles = document.querySelectorAll('.album_read_directory_title');
@@ -58,14 +75,8 @@ def get_album_articles(article_url: str, limit: int = 5):
 
                 // 向上查找 data-link / data-url
                 while (node && !url) {
-                    if (node.dataset && node.dataset.link) {
-                        url = node.dataset.link;
-                        break;
-                    }
-                    if (node.dataset && node.dataset.url) {
-                        url = node.dataset.url;
-                        break;
-                    }
+                    if (node.dataset && node.dataset.link) { url = node.dataset.link; break; }
+                    if (node.dataset && node.dataset.url) { url = node.dataset.url; break; }
                     const dl = node.getAttribute && node.getAttribute('data-link');
                     if (dl) { url = dl; break; }
                     const du = node.getAttribute && node.getAttribute('data-url');
@@ -76,7 +87,7 @@ def get_album_articles(article_url: str, limit: int = 5):
                 // fallback：找附近的 a 标签
                 if (!url) {
                     const a = el.closest('a[href*="mp.weixin.qq.com/s"]')
-                           || el.parentElement?.querySelector('a[href*="mp.weixin.qq.com/s"]');
+                           || (el.parentElement && el.parentElement.querySelector('a[href*="mp.weixin.qq.com/s"]'));
                     if (a) url = a.href;
                 }
 
@@ -84,19 +95,22 @@ def get_album_articles(article_url: str, limit: int = 5):
             });
             return out;
         }
-        """)
+        """
+        )
 
         browser.close()
 
     if not items:
         raise RuntimeError("没有从目录弹窗里解析到文章链接")
 
-    # 处理 URL & 去重
     seen = set()
-    articles = []
-
+    articles: List[Dict[str, str]] = []
     for item in items:
-        url = item["url"]
+        url = item.get("url") or ""
+        title = item.get("title") or ""
+        if not url or not title:
+            continue
+
         if url.startswith("/"):
             url = urljoin("https://mp.weixin.qq.com", url)
 
@@ -104,28 +118,109 @@ def get_album_articles(article_url: str, limit: int = 5):
             continue
         seen.add(url)
 
-        articles.append({
-            "title": item["title"],
-            "url": url
-        })
-
+        articles.append({"title": title, "url": url})
         if len(articles) >= limit:
             break
 
     return articles
 
 
+def get_album_articles_chasing_latest(
+    article_url: str,
+    limit: int = 5,
+    album_keyword: Optional[str] = None,
+    max_hops: int = 6,
+) -> List[Dict[str, str]]:
+    """
+    解决「目录弹窗默认定位在当前文章附近」导致抓到的并非全局最新的问题：
+    每次取“当前窗口里的第一篇(最上面)”作为新种子，再抓一次，直到第一篇不再变化。
+
+    不会修改用户配置；只在本次抓取链路里使用追逐后的种子 URL。
+    """
+
+    curr = article_url
+    seen = set()
+    last_articles: List[Dict[str, str]] = []
+
+    for _ in range(max(1, int(max_hops))):
+        if curr in seen:
+            break
+        seen.add(curr)
+
+        try:
+            articles = get_album_articles(curr, limit=limit, album_keyword=album_keyword)
+        except Exception:
+            # 失败时直接返回上一轮结果（若没有则为空）
+            return last_articles
+
+        last_articles = articles
+        if not articles:
+            return []
+
+        top = (articles[0].get("url") or "").strip()
+        if not top:
+            return articles
+
+        if top == curr:
+            return articles
+
+        curr = top
+
+    return last_articles
+
+
+def get_album_articles_chasing_latest_with_seed(
+    article_url: str,
+    limit: int = 5,
+    album_keyword: Optional[str] = None,
+    max_hops: int = 6,
+) -> Tuple[str, List[Dict[str, str]]]:
+    """
+    与 get_album_articles_chasing_latest() 一致，但会额外返回稳定后的种子 URL。
+    返回: (seed_url, articles)
+    """
+
+    curr = article_url
+    seen = set()
+    last_articles: List[Dict[str, str]] = []
+
+    for _ in range(max(1, int(max_hops))):
+        if curr in seen:
+            break
+        seen.add(curr)
+
+        try:
+            articles = get_album_articles(curr, limit=limit, album_keyword=album_keyword)
+        except Exception:
+            return curr, last_articles
+
+        last_articles = articles
+        if not articles:
+            return curr, []
+
+        top = (articles[0].get("url") or "").strip()
+        if not top:
+            return curr, articles
+
+        if top == curr:
+            return curr, articles
+
+        curr = top
+
+    return curr, last_articles
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("用法: python latest_articles.py \"文章链接\" [数量]")
+        astrbot_logger.info('用法: python latest_articles.py "文章链接" [数量] [目录关键词]')
         sys.exit(1)
 
     url = sys.argv[1]
     limit = int(sys.argv[2]) if len(sys.argv) > 2 else 5
+    album_keyword = sys.argv[3] if len(sys.argv) > 3 else None
 
-    articles = get_album_articles(url, limit)
+    articles = get_album_articles(url, limit, album_keyword=album_keyword)
 
-    print(f"\n获取到最新 {len(articles)} 篇文章：\n")
+    astrbot_logger.info("获取到最新 %s 篇文章：", len(articles))
     for i, a in enumerate(articles, 1):
-        print(f"{i}. {a['title']}")
-        print(f"   {a['url']}")
+        astrbot_logger.info("%s. %s\n   %s", i, a["title"], a["url"])

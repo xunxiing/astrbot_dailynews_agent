@@ -13,12 +13,23 @@ from astrbot.core.astr_agent_context import AstrAgentContext
 from ..analysis.wechatanalysis.analysis import wechat_to_markdown
 from ..analysis.wechatanalysis.latest_articles import get_album_articles
 
+try:
+    from astrbot.api.star import StarTools
+except Exception:  # pragma: no cover
+    StarTools = None  # type: ignore
+
 
 # 插件根目录：.../astrbot_plugin_dailynews
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 # 默认把 Markdown 输出到 analysis/wechatanalysis/output
-DEFAULT_OUTPUT_DIR = PLUGIN_ROOT / "analysis" / "wechatanalysis" / "output"
+def _default_output_dir() -> Path:
+    if StarTools is not None:
+        try:
+            return Path(StarTools.get_data_dir()) / "wechat_markdown"
+        except Exception:
+            pass
+    return PLUGIN_ROOT / "analysis" / "wechatanalysis" / "output"
 
 
 async def _run_in_thread(func, *args, **kwargs):
@@ -72,13 +83,14 @@ class WechatArticleMarkdownTool(FunctionTool[AstrAgentContext]):
         except (TypeError, ValueError):
             max_concurrency = 10
 
-        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_dir = _default_output_dir()
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # 在线程池里跑你原来的同步逻辑，避免阻塞事件循环
         md_path = await _run_in_thread(
             wechat_to_markdown,
             url,
-            str(DEFAULT_OUTPUT_DIR),
+            str(output_dir),
             max_concurrency,
         )
 
@@ -105,6 +117,10 @@ class WechatAlbumLatestArticlesTool(FunctionTool[AstrAgentContext]):
                 "url": {
                     "type": "string",
                     "description": "专辑中任意一篇文章的链接（从这个页面能点开『AI 早报 · 目录』）。",
+                },
+                "album_keyword": {
+                    "type": "string",
+                    "description": "可选：目录入口名称匹配关键字，不填则默认点击第一个目录入口",
                 },
                 "limit": {
                     "type": "integer",
@@ -134,6 +150,7 @@ class WechatAlbumLatestArticlesTool(FunctionTool[AstrAgentContext]):
                 get_album_articles,
                 url,
                 limit,
+                album_keyword=kwargs.get("album_keyword"),
             )
         except Exception as e:
             return f"获取专辑文章列表失败：{e}"

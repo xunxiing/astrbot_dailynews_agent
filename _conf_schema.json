@@ -1,0 +1,102 @@
+{
+  "enabled": {
+    "type": "bool",
+    "description": "是否启用每日自动推送",
+    "default": false,
+    "obvious_hint": true
+  },
+  "schedule_time": {
+    "type": "string",
+    "description": "每日生成时间（HH:MM）",
+    "default": "09:00",
+    "hint": "例如：09:00"
+  },
+  "output_format": {
+    "type": "string",
+    "description": "输出格式",
+    "default": "markdown",
+    "options": ["markdown"]
+  },
+  "delivery_mode": {
+    "type": "string",
+    "description": "发送方式",
+    "default": "html_image",
+    "options": ["html_image", "plain"],
+    "hint": "html_image 使用 AstrBot 的网页渲染服务生成图片发送，可规避部分 markdown 渲染插件输出空白的问题"
+  },
+  "max_sources_per_day": {
+    "type": "int",
+    "description": "每天最多处理多少个来源",
+    "default": 3
+  },
+  "render_page_chars": {
+    "type": "int",
+    "description": "网页渲染每页最大字符数（过长会自动分页）",
+    "default": 2600
+  },
+  "render_max_pages": {
+    "type": "int",
+    "description": "网页渲染最多生成多少页图片",
+    "default": 4
+  },
+  "preferred_source_types": {
+    "type": "list",
+    "description": "优先处理的来源类型",
+    "default": ["wechat"],
+    "hint": "例如：[\"wechat\"]"
+  },
+  "llm_timeout_s": {
+    "type": "int",
+    "description": "LLM 请求超时时间（秒）",
+    "default": 180
+  },
+  "llm_write_timeout_s": {
+    "type": "int",
+    "description": "LLM 写作阶段超时（秒）",
+    "default": 360,
+    "hint": "写作输入更长，建议比 llm_timeout_s 大"
+  },
+  "llm_merge_timeout_s": {
+    "type": "int",
+    "description": "LLM 汇总阶段超时（秒）",
+    "default": 240
+  },
+  "llm_max_retries": {
+    "type": "int",
+    "description": "LLM 超时/失败重试次数",
+    "default": 1
+  },
+  "wechat_seed_persist": {
+    "type": "bool",
+    "description": "是否持久化“追逐到最新”的种子文章（加速下次抓取）",
+    "default": true
+  },
+  "wechat_chase_max_hops": {
+    "type": "int",
+    "description": "追逐到最新的最大跳转次数",
+    "default": 6
+  },
+  "target_sessions": {
+    "type": "list",
+    "description": "推送目标会话 unified_msg_origin 列表",
+    "default": [],
+    "hint": "可用 /news_subscribe 将当前会话加入"
+  },
+  "admin_sessions": {
+    "type": "list",
+    "description": "错误通知目标会话 unified_msg_origin 列表",
+    "default": []
+  },
+  "news_sources": {
+    "type": "list",
+    "description": "新闻源（公众号文章链接列表）",
+    "default": [],
+    "hint": "每一项填一个公众号文章链接（用于打开目录抓取最新文章）"
+  },
+  "last_run_date": {
+    "type": "string",
+    "description": "内部字段：上次运行日期 YYYY-MM-DD",
+    "default": "",
+    "invisible": true
+  }
+}

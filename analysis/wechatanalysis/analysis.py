@@ -6,6 +6,12 @@ from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import sync_playwright
 import aiohttp
 
+try:
+    from astrbot.api import logger as astrbot_logger
+except Exception:  # pragma: no cover
+    import logging
+
+    astrbot_logger = logging.getLogger(__name__)
 
 # ---------- 工具函数 ----------
 
@@ -29,7 +35,7 @@ def fetch_wechat_article(url: str):
         context = browser.new_context()
         page = context.new_page()
 
-        print("Opening article...")
+        astrbot_logger.info("[dailynews] opening wechat article: %s", url)
         page.goto(url, timeout=60000)
 
         # 等标题加载出来
@@ -99,10 +105,10 @@ async def _download_one_image(session, idx, img_url, images_dir, referer_url):
             data = await resp.read()
             with open(local_path, "wb") as f:
                 f.write(data)
-        print(f"下载成功: {img_url}")
+        astrbot_logger.debug("[dailynews] image downloaded: %s", img_url)
         return rel_path
     except Exception as e:
-        print(f"下载失败 ({img_url}): {e}")
+        astrbot_logger.warning("[dailynews] image download failed: %s (%s)", img_url, e)
         return None
 
 
@@ -202,7 +208,9 @@ def wechat_to_markdown(url: str, output_dir="output", max_concurrency=8):
 
     # 2. 并发下载图片
     images_dir = os.path.join(output_dir, "images")
-    print(f"共发现图片 {len(data['image_urls'])} 张，开始并发下载...")
+    astrbot_logger.info(
+        "[dailynews] found %s images; downloading...", len(data.get("image_urls") or [])
+    )
     local_image_paths = download_images(
         data["image_urls"], url, images_dir, max_concurrency=max_concurrency
     )
@@ -213,19 +221,13 @@ def wechat_to_markdown(url: str, output_dir="output", max_concurrency=8):
     # 4. 保存 Markdown 文件
     md_path = save_markdown(md_text, data["title"], output_dir)
 
-    print("标题:", data["title"])
-    print("作者:", data["author"])
-    print("发布时间:", data["publish_time"])
-    print("正文长度:", len(data["content_text"]))
-    print("成功下载图片数量:", len(local_image_paths))
-    print("Markdown 文件路径:", md_path)
-    print("图片保存目录:", images_dir)
+    astrbot_logger.info("[dailynews] wechat markdown saved: %s", md_path)
     return md_path
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("用法: python analysis.py <微信公众号文章链接>")
+        astrbot_logger.info("用法: python analysis.py <微信公众号文章链接>")
         sys.exit(1)
 
     article_url = sys.argv[1]
