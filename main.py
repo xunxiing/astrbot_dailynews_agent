@@ -1,5 +1,8 @@
+import base64
 import json
+from datetime import datetime
 from pathlib import Path
+import textwrap
 from typing import List
 
 from astrbot.api import logger as astrbot_logger
@@ -9,16 +12,38 @@ from astrbot.api.star import Context, Star, register
 
 from .tools import WechatAlbumLatestArticlesTool, WechatArticleMarkdownTool
 from .workflow.scheduler import DailyNewsScheduler
+from .workflow.rendering import load_template, markdown_to_html, safe_text
+
+try:
+    from astrbot.core.message.components import Image as _ImageComponent
+except Exception:  # pragma: no cover
+    _ImageComponent = None  # type: ignore
+
+try:
+    from astrbot.core import html_renderer as _astrbot_html_renderer
+except Exception:  # pragma: no cover
+    _astrbot_html_renderer = None  # type: ignore
 
 
-DAILY_NEWS_HTML_TMPL = """
-<div style="width: 980px; padding: 36px 44px; background: #ffffff; color: #111; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;">
-  <div style="font-size: 30px; font-weight: 800; margin-bottom: 10px;">{{ title | e }}</div>
-  <div style="font-size: 14px; color: #666; margin-bottom: 18px;">{{ subtitle | e }}</div>
-  <div style="border-top: 1px solid #eee; margin: 14px 0 18px;"></div>
-  <pre style="white-space: pre-wrap; word-wrap: break-word; font-size: 15px; line-height: 1.55; margin: 0;">{{ body | e }}</pre>
-</div>
-""".strip()
+def _is_valid_image_file(path: Path) -> bool:
+    try:
+        if not path.exists():
+            return False
+        if path.stat().st_size < 128:
+            return False
+        head = path.read_bytes()[:16]
+        if head.startswith(b"\xFF\xD8\xFF"):  # JPEG
+            return True
+        if head.startswith(b"\x89PNG\r\n\x1a\n"):  # PNG
+            return True
+        if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
+            return True
+        return False
+    except Exception:
+        return False
+
+
+DAILY_NEWS_HTML_TMPL = load_template("templates/daily_news.html").strip()
 
 
 @register(
@@ -62,6 +87,24 @@ class DailyNewsPlugin(Star):
 
     # ====== commands ======
 
+    def _get_image_b64(self, filename: str) -> str:
+        # 尝试定位 image 目录
+        # 1. 相对于当前文件 main.py -> ./image
+        base_dir = Path(__file__).parent
+        img_path = base_dir / "image" / filename
+        
+        if not img_path.exists():
+            # 2. 相对于 cwd
+            img_path = Path.cwd() / "image" / filename
+
+        if img_path.exists():
+            try:
+                with open(img_path, "rb") as f:
+                    return base64.b64encode(f.read()).decode("utf-8")
+            except Exception:
+                pass
+        return ""
+
     def _split_pages(self, text: str, page_chars: int, max_pages: int) -> List[str]:
         s = (text or "").strip()
         if not s:
@@ -94,28 +137,95 @@ class DailyNewsPlugin(Star):
             yield event.plain_result("生成失败：日报内容为空，请查看 AstrBot 日志。")
             return
 
+        bg_img = self._get_image_b64("sunsetbackground.jpg")
+        char_img = self._get_image_b64("transparent_output.png")
+
         for idx, page in enumerate(pages, start=1):
             try:
                 # 用 return_url=False 拿到本地图片路径，避免平台把 URL 当成“链接卡片”导致空白预览
                 img_path = await self.html_render(
                     DAILY_NEWS_HTML_TMPL,
-                    {"title": "每日资讯日报", "subtitle": f"第 {idx}/{len(pages)} 页", "body": page},
+                    {
+                        "title": safe_text("每日资讯日报"),
+                        "subtitle": safe_text(f"第 {idx}/{len(pages)} 页"),
+                        "body_html": markdown_to_html(page),
+                        "bg_img": bg_img,
+                        "char_img": char_img,
+                    },
                     return_url=False,
                 )
                 astrbot_logger.info("[dailynews] rendered page %s/%s -> %s", idx, len(pages), img_path)
                 # 兼容 Napcat/aiocqhttp：避免生成 file:///C:\\... 这种不规范 file URI
-                yield event.image_result(Path(str(img_path)).resolve().as_posix())
+                img_file = Path(str(img_path)).resolve()
+                if not _is_valid_image_file(img_file):
+                    astrbot_logger.error(
+                        "[dailynews] html_render returned invalid image file: %s (size=%s)",
+                        img_file,
+                        img_file.stat().st_size if img_file.exists() else -1,
+                    )
+                    raise RuntimeError("html_render invalid image")
+
+                p = img_file.as_posix()
+                if _ImageComponent is not None:
+                    yield event.chain_result([_ImageComponent(file=f"file:///{p}", path=p)])
+                else:
+                    yield event.image_result(p)
             except Exception:
                 astrbot_logger.error("[dailynews] html_render failed; fallback to text_to_image", exc_info=True)
                 try:
-                    img_path = await self.text_to_image(page, return_url=False)
+                    template_name = self.context._config.get("t2i_active_template")
+
+                    # 优先走 AstrBot 内置渲染：先尝试默认（可能是网络渲染），若返回的“图片”文件不合法则强制本地渲染。
+                    renderer = _astrbot_html_renderer
+                    if renderer is None:
+                        try:
+                            from astrbot.core import html_renderer as renderer  # type: ignore
+                        except Exception:
+                            renderer = None
+
+                    if renderer is not None:
+                        img_path = await renderer.render_t2i(
+                            page,
+                            return_url=False,
+                            template_name=template_name,
+                        )
+                        img_file = Path(str(img_path)).resolve()
+                        if not _is_valid_image_file(img_file):
+                            astrbot_logger.error(
+                                "[dailynews] render_t2i returned invalid image file: %s (size=%s); retry local",
+                                img_file,
+                                img_file.stat().st_size if img_file.exists() else -1,
+                            )
+                            img_path = await renderer.render_t2i(
+                                page,
+                                use_network=False,
+                                return_url=False,
+                                template_name=template_name,
+                            )
+                    else:
+                        img_path = await self.text_to_image(page, return_url=False)
+
                     astrbot_logger.info(
-                        "[dailynews] fallback text_to_image page %s/%s -> %s",
+                        "[dailynews] fallback render_t2i page %s/%s -> %s",
                         idx,
                         len(pages),
                         img_path,
                     )
-                    yield event.image_result(Path(str(img_path)).resolve().as_posix())
+                    img_file = Path(str(img_path)).resolve()
+                    if not _is_valid_image_file(img_file):
+                        astrbot_logger.error(
+                            "[dailynews] fallback render returned invalid image file: %s (size=%s)",
+                            img_file,
+                            img_file.stat().st_size if img_file.exists() else -1,
+                        )
+                        yield event.plain_result(page)
+                        continue
+
+                    p = img_file.as_posix()
+                    if _ImageComponent is not None:
+                        yield event.chain_result([_ImageComponent(file=f"file:///{p}", path=p)])
+                    else:
+                        yield event.image_result(p)
                 except Exception:
                     astrbot_logger.error("[dailynews] text_to_image fallback failed", exc_info=True)
                     yield event.plain_result("生成失败：网页渲染失败，请查看 AstrBot 日志。")
@@ -149,6 +259,81 @@ class DailyNewsPlugin(Star):
         """查看当前配置（JSON）"""
         snapshot = self.scheduler.get_config_snapshot()
         yield event.plain_result(json.dumps(snapshot, ensure_ascii=False, indent=2))
+
+    @filter.command("news_test_md")
+    async def news_test_md(self, event: AstrMessageEvent, args: str = ""):
+        """
+        测试用 Markdown（用于检查渲染/分页/发送链路与日志排版）
+        用法：/news_test_md [plain|html] [long]
+        """
+        parts = (args or "").strip().split()
+        force_mode = parts[0].strip().lower() if parts else ""
+        long_mode = any(p.strip().lower() == "long" for p in parts[1:]) or (
+            parts and parts[0].strip().lower() == "long"
+        )
+
+        test_md = textwrap.dedent(
+            """
+            # 每日资讯日报（测试稿）
+
+            *生成时间：{now}*
+
+            ## 1. 标题/列表/链接
+            - 要点 1：带链接 https://example.com
+            - 要点 2：带括号与中文标点（测试）
+            - 要点 3：长行测试：{long_line}
+
+            ## 2. 代码块
+            ```python
+            def hello(name: str) -> str:
+                return f"hello, {{name}}"
+            ```
+
+            ## 3. 引用与分隔
+            > 这是一段引用（测试换行与缩进）。
+            >
+            > - 引用内列表 A
+            > - 引用内列表 B
+
+            ---
+
+            ## 4. 结尾
+            - 支持分页/多图渲染：`render_page_chars`、`render_max_pages`
+            """
+        ).strip()
+
+        if long_mode:
+            filler = "\n".join([f"- filler line {i}: {('内容' * 40)}" for i in range(1, 120)])
+            test_md = f"{test_md}\n\n## 5. 长内容（分页测试）\n{filler}\n"
+
+        content = test_md.format(
+            now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            long_line=("A" * 180),
+        )
+
+        astrbot_logger.info(
+            "[dailynews] /news_test_md mode=%s long=%s chars=%s",
+            force_mode or "(config)",
+            long_mode,
+            len(content),
+        )
+        astrbot_logger.debug(
+            "[dailynews] /news_test_md preview=%s",
+            (content[:260].replace("\n", "\\n") + ("..." if len(content) > 260 else "")),
+        )
+
+        delivery_mode = str(self.config.get("delivery_mode", "html_image") or "html_image")
+        if force_mode in {"plain", "text"}:
+            delivery_mode = "plain"
+        elif force_mode in {"html", "img", "image"}:
+            delivery_mode = "html_image"
+
+        if delivery_mode == "html_image":
+            async for r in self._send_as_html_images(event, content):
+                yield r
+            return
+
+        yield event.plain_result(content)
 
     @filter.command("news_subscribe")
     async def news_subscribe(self, event: AstrMessageEvent):

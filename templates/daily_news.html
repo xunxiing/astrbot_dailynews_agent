@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        --w: 1080px;
+        --radius: 18px;
+        --text: #111827;
+        --muted: rgba(17, 24, 39, 0.70);
+        --paper: rgba(255, 255, 255, 0.96);
+        --paper-border: rgba(17, 24, 39, 0.10);
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 0; background: transparent; }
+      .wrap {
+        width: var(--w);
+        position: relative;
+        font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", Arial, sans-serif;
+        color: var(--text);
+        border-radius: var(--radius);
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+        background: #ffffff;
+      }
+
+      /* Hero (top cover image) */
+      .hero {
+        position: relative;
+        height: 260px;
+        overflow: hidden;
+        background: #f3f4f6;
+      }
+      .hero-bg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transform: scale(1.02);
+      }
+      .hero-overlay {
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.90) 92%);
+      }
+      .hero-char {
+        position: absolute;
+        right: 16px;
+        top: 8px;
+        height: 320px;
+        width: auto;
+        pointer-events: none;
+        filter: drop-shadow(-10px 10px 22px rgba(0,0,0,0.35));
+        opacity: 0.97;
+      }
+      .hero-text {
+        position: relative;
+        z-index: 2;
+        padding: 22px 30px 18px 30px;
+        width: 74%;
+      }
+      .brand {
+        font-size: 12px;
+        letter-spacing: 2px;
+        color: rgba(255,255,255,0.92);
+        text-shadow: 0 2px 10px rgba(0,0,0,0.35);
+        font-weight: 900;
+      }
+      .title {
+        margin-top: 12px;
+        font-size: 46px;
+        font-weight: 900;
+        line-height: 1.06;
+        color: #0f172a;
+        text-shadow: 0 2px 14px rgba(255,255,255,0.55);
+        border-left: 8px solid #c0392b;
+        padding-left: 16px;
+      }
+      .subtitle {
+        margin-top: 10px;
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--muted);
+        padding-left: 24px;
+      }
+      .content {
+        padding: 18px 28px 34px 28px;
+      }
+      .paper {
+        border-radius: 16px;
+        background: var(--paper);
+        border: 1px solid var(--paper-border);
+        box-shadow: 0 10px 26px rgba(17,24,39,0.08);
+        backdrop-filter: blur(10px);
+        padding: 20px 22px;
+      }
+      /* Markdown styles */
+      .md { font-size: 18px; line-height: 1.72; color: var(--text); }
+      .md h1, .md h2, .md h3 { margin: 16px 0 10px; line-height: 1.2; }
+      .md h1 { font-size: 28px; }
+      .md h2 { font-size: 22px; }
+      .md h3 { font-size: 20px; }
+      .md p { margin: 10px 0; }
+      .md ul, .md ol { margin: 8px 0 8px 22px; padding: 0; }
+      .md li { margin: 4px 0; }
+      .md a { color: #2563eb; text-decoration: none; border-bottom: 1px solid rgba(37,99,235,0.25); }
+      .md a:hover { border-bottom-color: rgba(37,99,235,0.8); }
+      .md code {
+        font-family: Consolas, "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, "Liberation Mono", monospace;
+        background: rgba(15, 23, 42, 0.06);
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        padding: 0 6px;
+        border-radius: 6px;
+        font-size: 0.95em;
+      }
+      .md pre {
+        margin: 12px 0;
+        padding: 14px 14px;
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.92);
+        color: #e5e7eb;
+        overflow: hidden;
+      }
+      .md pre code {
+        background: transparent;
+        border: 0;
+        padding: 0;
+        color: inherit;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .md blockquote {
+        margin: 10px 0;
+        padding: 10px 14px;
+        border-left: 4px solid rgba(2, 132, 199, 0.55);
+        background: rgba(2, 132, 199, 0.06);
+        border-radius: 10px;
+        color: rgba(17,24,39,0.85);
+      }
+      .md hr {
+        border: 0;
+        height: 1px;
+        background: rgba(15, 23, 42, 0.12);
+        margin: 14px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="hero">
+        <img class="hero-bg" src="data:image/jpeg;base64,{{ bg_img }}" />
+        <div class="hero-overlay"></div>
+        <img class="hero-char" src="data:image/png;base64,{{ char_img }}" />
+        <div class="hero-text">
+          <div class="brand">ASTRBOT DAILY NEWS</div>
+          <div class="title">{{ title | safe }}</div>
+          <div class="subtitle">{{ subtitle | safe }}</div>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="paper">
+          <div class="md">{{ body_html | safe }}</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
+

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 from datetime import datetime
 from pathlib import Path
@@ -17,16 +18,38 @@ except Exception:  # pragma: no cover
     MessageChain = None  # type: ignore
 
 from .agents import MiyousheSubAgent, NewsSourceConfig, NewsWorkflowManager, WechatSubAgent
+from .rendering import load_template, markdown_to_html, safe_text
+
+try:
+    from astrbot.core.message.components import Image as _ImageComponent
+except Exception:  # pragma: no cover
+    _ImageComponent = None  # type: ignore
+
+try:
+    from astrbot.core import html_renderer as _astrbot_html_renderer
+except Exception:  # pragma: no cover
+    _astrbot_html_renderer = None  # type: ignore
 
 
-DAILY_NEWS_HTML_TMPL = """
-<div style="width: 980px; padding: 36px 44px; background: #ffffff; color: #111; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;">
-  <div style="font-size: 30px; font-weight: 800; margin-bottom: 10px;">{{ title | e }}</div>
-  <div style="font-size: 14px; color: #666; margin-bottom: 18px;">{{ subtitle | e }}</div>
-  <div style="border-top: 1px solid #eee; margin: 14px 0 18px;"></div>
-  <pre style="white-space: pre-wrap; word-wrap: break-word; font-size: 15px; line-height: 1.55; margin: 0;">{{ body | e }}</pre>
-</div>
-""".strip()
+def _is_valid_image_file(path: Path) -> bool:
+    try:
+        if not path.exists():
+            return False
+        if path.stat().st_size < 128:
+            return False
+        head = path.read_bytes()[:16]
+        if head.startswith(b"\xFF\xD8\xFF"):  # JPEG
+            return True
+        if head.startswith(b"\x89PNG\r\n\x1a\n"):  # PNG
+            return True
+        if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
+            return True
+        return False
+    except Exception:
+        return False
+
+
+DAILY_NEWS_HTML_TMPL = load_template("templates/daily_news.html").strip()
 
 
 class DailyNewsScheduler:
@@ -231,6 +254,24 @@ class DailyNewsScheduler:
         await self._send_to_targets(content, list(config.get("target_sessions", []) or []), config=config)
         return content
 
+    def _get_image_b64(self, filename: str) -> str:
+        # 尝试定位 image 目录
+        # 1. 相对于当前文件 workflow/scheduler.py -> ../image
+        base_dir = Path(__file__).parent.parent
+        img_path = base_dir / "image" / filename
+        
+        if not img_path.exists():
+            # 2. 相对于 cwd
+            img_path = Path.cwd() / "image" / filename
+
+        if img_path.exists():
+            try:
+                with open(img_path, "rb") as f:
+                    return base64.b64encode(f.read()).decode("utf-8")
+            except Exception:
+                pass
+        return ""
+
     def _split_pages(self, text: str, page_chars: int, max_pages: int) -> List[str]:
         s = (text or "").strip()
         if not s:
@@ -276,26 +317,86 @@ class DailyNewsScheduler:
         if not pages:
             return []
 
+        bg_img = self._get_image_b64("sunsetbackground.jpg")
+        char_img = self._get_image_b64("transparent_output.png")
+
         out: List[str] = []
         for idx, page in enumerate(pages, start=1):
             try:
                 img_path = await html_renderer.render_custom_template(
                     DAILY_NEWS_HTML_TMPL,
-                    {"title": "每日资讯日报", "subtitle": f"第 {idx}/{len(pages)} 页", "body": page},
+                    {
+                        "title": safe_text("每日资讯日报"),
+                        "subtitle": safe_text(f"第 {idx}/{len(pages)} 页"),
+                        "body_html": markdown_to_html(page),
+                        "bg_img": bg_img,
+                        "char_img": char_img,
+                    },
                     return_url=False,
                 )
-                out.append(Path(str(img_path)).resolve().as_posix())
+                img_file = Path(str(img_path)).resolve()
+                if not _is_valid_image_file(img_file):
+                    astrbot_logger.error(
+                        "[dailynews] render_custom_template returned invalid image file: %s (size=%s)",
+                        img_file,
+                        img_file.stat().st_size if img_file.exists() else -1,
+                    )
+                    raise RuntimeError("render_custom_template invalid image")
+                out.append(img_file.as_posix())
+                continue
             except Exception:
                 astrbot_logger.error(
                     "[dailynews] render_custom_template failed; fallback to render_t2i",
                     exc_info=True,
                 )
-                try:
-                    img_path = await html_renderer.render_t2i(page, return_url=False)
-                    out.append(Path(str(img_path)).resolve().as_posix())
-                except Exception:
-                    astrbot_logger.error("[dailynews] render_t2i fallback failed", exc_info=True)
+
+            try:
+                template_name = (
+                    config.get("t2i_active_template")
+                    or getattr(self.context, "_config", {}).get("t2i_active_template")
+                )
+
+                # 先走默认（可能是网络渲染），若返回的“图片”文件不合法则强制本地渲染。
+                if _astrbot_html_renderer is not None:
+                    img_path = await _astrbot_html_renderer.render_t2i(
+                        page,
+                        return_url=False,
+                        template_name=template_name,
+                    )
+                    img_file = Path(str(img_path)).resolve()
+                    if not _is_valid_image_file(img_file):
+                        astrbot_logger.error(
+                            "[dailynews] render_t2i returned invalid image file: %s (size=%s); retry local",
+                            img_file,
+                            img_file.stat().st_size if img_file.exists() else -1,
+                        )
+                        img_path = await _astrbot_html_renderer.render_t2i(
+                            page,
+                            use_network=False,
+                            return_url=False,
+                            template_name=template_name,
+                        )
+                else:
+                    img_path = await html_renderer.render_t2i(
+                        page,
+                        use_network=False,
+                        return_url=False,
+                        template_name=template_name,
+                    )
+
+                img_file = Path(str(img_path)).resolve()
+                if not _is_valid_image_file(img_file):
+                    astrbot_logger.error(
+                        "[dailynews] render_t2i returned invalid image file: %s (size=%s)",
+                        img_file,
+                        img_file.stat().st_size if img_file.exists() else -1,
+                    )
                     return []
+
+                out.append(img_file.as_posix())
+            except Exception:
+                astrbot_logger.error("[dailynews] render_t2i fallback failed", exc_info=True)
+                return []
 
         return out
 
@@ -321,7 +422,12 @@ class DailyNewsScheduler:
                 if delivery_mode == "html_image":
                     for img_path in img_paths:
                         # 通过本地文件路径发送，避免变成“链接卡片”（并兼容 Napcat 对路径格式的要求）
-                        chain = MessageChain().file_image(Path(str(img_path)).resolve().as_posix())
+                        p = Path(str(img_path)).resolve().as_posix()
+                        if _ImageComponent is not None:
+                            chain = MessageChain()
+                            chain.chain.append(_ImageComponent(file=f"file:///{p}", path=p))
+                        else:
+                            chain = MessageChain().file_image(p)
                         await self.context.send_message(umo, chain)
                 else:
                     chain = MessageChain().message(content)
