@@ -43,7 +43,8 @@
     "type": "list",
     "description": "优先处理的来源类型",
     "default": ["wechat"],
-    "hint": "例如：[\"wechat\"]"
+    "hint": "例如：[\"wechat\", \"miyoushe\"]",
+    "options": ["wechat", "miyoushe"]
   },
   "llm_timeout_s": {
     "type": "int",
@@ -76,6 +77,16 @@
     "description": "追逐到最新的最大跳转次数",
     "default": 6
   },
+  "miyoushe_headless": {
+    "type": "bool",
+    "description": "米游社抓取使用无头浏览器",
+    "default": true
+  },
+  "miyoushe_sleep_between_s": {
+    "type": "float",
+    "description": "米游社列表点开间隔（秒）",
+    "default": 0.6
+  },
   "target_sessions": {
     "type": "list",
     "description": "推送目标会话 unified_msg_origin 列表",
@@ -89,9 +100,9 @@
   },
   "news_sources": {
     "type": "list",
-    "description": "新闻源（公众号文章链接列表）",
+    "description": "新闻源（链接列表）",
     "default": [],
-    "hint": "每一项填一个公众号文章链接（用于打开目录抓取最新文章）"
+    "hint": "每一项填一个链接：公众号文章（mp.weixin.qq.com）或米游社用户帖子列表（miyoushe.com/.../accountCenter/postList?id=...）。可混用。"
   },
   "last_run_date": {
     "type": "string",

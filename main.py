@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import List
 
 from astrbot.api import logger as astrbot_logger
@@ -102,7 +103,8 @@ class DailyNewsPlugin(Star):
                     return_url=False,
                 )
                 astrbot_logger.info("[dailynews] rendered page %s/%s -> %s", idx, len(pages), img_path)
-                yield event.image_result(str(img_path))
+                # 兼容 Napcat/aiocqhttp：避免生成 file:///C:\\... 这种不规范 file URI
+                yield event.image_result(Path(str(img_path)).resolve().as_posix())
             except Exception:
                 astrbot_logger.error("[dailynews] html_render failed; fallback to text_to_image", exc_info=True)
                 try:
@@ -113,7 +115,7 @@ class DailyNewsPlugin(Star):
                         len(pages),
                         img_path,
                     )
-                    yield event.image_result(str(img_path))
+                    yield event.image_result(Path(str(img_path)).resolve().as_posix())
                 except Exception:
                     astrbot_logger.error("[dailynews] text_to_image fallback failed", exc_info=True)
                     yield event.plain_result("生成失败：网页渲染失败，请查看 AstrBot 日志。")

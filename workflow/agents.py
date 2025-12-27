@@ -21,9 +21,13 @@ except Exception:  # pragma: no cover
 try:
     from ..analysis.wechatanalysis.analysis import fetch_wechat_article
     from ..analysis.wechatanalysis.latest_articles import get_album_articles_chasing_latest_with_seed
+    from ..analysis.miyousheanalysis.analysis import fetch_miyoushe_post
+    from ..analysis.miyousheanalysis.latest_posts import get_user_latest_posts
 except Exception:  # pragma: no cover
     from analysis.wechatanalysis.analysis import fetch_wechat_article  # type: ignore
     from analysis.wechatanalysis.latest_articles import get_album_articles_chasing_latest_with_seed  # type: ignore
+    from analysis.miyousheanalysis.analysis import fetch_miyoushe_post  # type: ignore
+    from analysis.miyousheanalysis.latest_posts import get_user_latest_posts  # type: ignore
 
 
 @dataclass
@@ -304,12 +308,15 @@ class NewsWorkflowManager:
             main_agent = MainNewsAgent()
             decision = await main_agent.analyze_sub_agent_reports(reports, user_config, llm_scout)
 
-            # 兜底：当 LLM 只选择 1 个来源时，按配置补齐到 max_sources_per_day
+            # 兜底：当 LLM 只选择部分来源时，按“优先类型 + 其它类型”补齐到 max_sources_per_day
             preferred_types = user_config.get("preferred_source_types", ["wechat"])
-            if not isinstance(preferred_types, list) or not preferred_types:
+            if not isinstance(preferred_types, list):
                 preferred_types = ["wechat"]
+            preferred_set = {str(x).strip() for x in preferred_types if str(x).strip()}
             max_sources = int(user_config.get("max_sources_per_day", 3))
-            candidate_sources = [s for s in sources if s.type in preferred_types]
+            preferred_sources = [s for s in sources if (not preferred_set) or s.type in preferred_set]
+            other_sources = [s for s in sources if preferred_set and s.type not in preferred_set]
+            candidate_sources = preferred_sources + other_sources
             wanted = min(len(candidate_sources), max_sources)
 
             selected: List[str] = []
@@ -466,13 +473,22 @@ class MainNewsAgent:
         reported_names = {r.get("source_name") for r in reports if isinstance(r, dict)}
         sources_to_process = [s for s in sources_to_process if s in reported_names]
 
-        # 当来源数量 <= 上限时，优先保证“每个来源都有子Agent写作”，避免 LLM 随机只挑 1 个来源
+        # “preferred_source_types”是优先级而非硬过滤：容量允许时尽量覆盖所有来源
+        preferred_set = set(preferred_types) if isinstance(preferred_types, list) else set()
         preferred_reports = [
             r
             for r in reports
             if isinstance(r, dict)
             and r.get("source_name") in reported_names
-            and r.get("source_type") in preferred_types
+            and (not preferred_set or r.get("source_type") in preferred_set)
+        ]
+        other_reports = [
+            r
+            for r in reports
+            if isinstance(r, dict)
+            and r.get("source_name") in reported_names
+            and preferred_set
+            and r.get("source_type") not in preferred_set
         ]
 
         def _score(r: Dict[str, Any]) -> Tuple[int, int]:
@@ -482,7 +498,9 @@ class MainNewsAgent:
                 return 0, 0
 
         preferred_reports.sort(key=_score, reverse=True)
-        wanted = min(len(preferred_reports), max_sources)
+        other_reports.sort(key=_score, reverse=True)
+        all_reports = preferred_reports + other_reports
+        wanted = min(len(all_reports), max_sources)
 
         # 先按 LLM 选择顺序保留，再用评分补齐到 wanted
         dedup: List[str] = []
@@ -492,7 +510,7 @@ class MainNewsAgent:
         sources_to_process = dedup
 
         if len(sources_to_process) < wanted:
-            for r in preferred_reports:
+            for r in all_reports:
                 name = str(r.get("source_name") or "")
                 if not name or name in sources_to_process:
                     continue
@@ -833,6 +851,212 @@ class WechatSubAgent:
         data = _json_from_text(raw)
         if not isinstance(data, dict):
             # 兜底：直接把模型输出当作 Markdown
+            return SubAgentResult(
+                source_name=source.name,
+                content=str(raw),
+                summary="",
+                key_points=[],
+                error=None,
+            )
+
+        summary = str(data.get("summary") or "")
+        key_points = data.get("key_points", [])
+        if not isinstance(key_points, list):
+            key_points = []
+        section = str(data.get("section_markdown") or "")
+
+        return SubAgentResult(
+            source_name=source.name,
+            content=section,
+            summary=summary,
+            key_points=[str(x) for x in key_points[:10]],
+            images=None,
+            error=None,
+        )
+
+
+class MiyousheSubAgent:
+    """米游社子 Agent：抓取用户帖子列表 -> 抓取帖子正文 -> 写出小节"""
+
+    async def fetch_latest_articles(
+        self, source: NewsSourceConfig, user_config: Dict[str, Any]
+    ) -> Tuple[str, List[Dict[str, str]]]:
+        limit = max(int(source.max_articles), 5)
+        headless = bool(user_config.get("miyoushe_headless", True))
+        sleep_between = float(user_config.get("miyoushe_sleep_between_s", 0.6) or 0.6)
+
+        url = (source.url or "").strip()
+        if not url:
+            return source.name, []
+
+        # 用户帖子列表页（推荐）
+        if "accountCenter/postList" in url:
+            posts = await _run_sync(
+                get_user_latest_posts,
+                url,
+                limit,
+                headless=headless,
+                sleep_between=sleep_between,
+            )
+            if posts:
+                return source.name, posts
+
+        # 回退：把用户配置的 URL 当作单篇帖子
+        astrbot_logger.warning(
+            "[dailynews] %s miyoushe list empty; fallback to single url: %s",
+            source.name,
+            url,
+        )
+        return source.name, [{"title": "", "url": url}]
+
+    async def analyze_source(
+        self, source: NewsSourceConfig, articles: List[Dict[str, str]], llm: LLMRunner
+    ) -> Dict[str, Any]:
+        # 复用与公众号一致的“汇报”格式
+        system_prompt = (
+            "你是子Agent（信息侦察）。"
+            "你将收到某个来源的最新文章标题与链接。"
+            "请快速判断今日主要看点/主题，并给出可写作的角度建议。"
+            "只输出 JSON，不要输出其它文本。"
+        )
+        prompt = {
+            "source_name": source.name,
+            "source_type": source.type,
+            "source_url": source.url,
+            "priority": source.priority,
+            "latest_articles": articles[:10],
+            "output_schema": {
+                "source_name": source.name,
+                "source_type": source.type,
+                "priority": source.priority,
+                "article_count": len(articles),
+                "topics": ["topic"],
+                "quality_score": 0,
+                "today_angle": "string",
+            },
+        }
+
+        raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+        data = _json_from_text(raw) or {}
+        topics = data.get("topics", [])
+        if not isinstance(topics, list):
+            topics = []
+
+        quality = data.get("quality_score")
+        try:
+            if isinstance(quality, float) and 0 <= quality <= 1:
+                quality_score = int(quality * 100)
+            elif isinstance(quality, str):
+                q = quality.strip()
+                qf = float(q[:-1]) if q.endswith("%") else float(q)
+                quality_score = int(qf * 100) if 0 <= qf <= 1 else int(qf)
+            else:
+                quality_score = int(quality)
+        except Exception:
+            quality_score = len(articles) * 2 + len(topics)
+
+        return {
+            "source_name": source.name,
+            "source_type": source.type,
+            "source_url": source.url,
+            "priority": source.priority,
+            "article_count": len(articles),
+            "topics": [str(t) for t in topics[:8]],
+            "quality_score": quality_score,
+            "today_angle": str(data.get("today_angle") or ""),
+            "sample_articles": articles[:3],
+            "error": None,
+        }
+
+    async def process_source(
+        self,
+        source: NewsSourceConfig,
+        instruction: str,
+        articles: List[Dict[str, str]],
+        llm: LLMRunner,
+    ) -> SubAgentResult:
+        if not articles:
+            return SubAgentResult(
+                source_name=source.name,
+                content="",
+                summary="",
+                key_points=[],
+                error="该来源未抓取到任何最新帖子",
+            )
+
+        chosen = articles[: max(1, int(source.max_articles))]
+        max_fetch_concurrency = 2
+        sem = asyncio.Semaphore(max_fetch_concurrency)
+
+        async def _fetch_one(a: Dict[str, str]) -> Dict[str, Any]:
+            url = (a.get("url") or "").strip()
+            if not url:
+                return {"title": (a.get("title") or "").strip(), "url": "", "error": "missing url"}
+
+            last_err: Optional[str] = None
+            for attempt in range(1, 3):
+                try:
+                    async with sem:
+                        detail = await _run_sync(fetch_miyoushe_post, url)
+                    content_text = (detail.get("content_text") or "").strip()
+                    if len(content_text) > 1500:
+                        content_text = content_text[:1500] + "…"
+                    return {
+                        "title": (detail.get("title") or a.get("title") or "").strip(),
+                        "url": url,
+                        "content_text": content_text,
+                        "image_urls": detail.get("image_urls") or [],
+                    }
+                except Exception as e:
+                    last_err = str(e) or type(e).__name__
+                    astrbot_logger.warning(
+                        "[dailynews] fetch_miyoushe_post failed (attempt %s/2): %s",
+                        attempt,
+                        last_err,
+                        exc_info=True,
+                    )
+                    await asyncio.sleep(1.0 * attempt)
+            return {"title": (a.get("title") or "").strip(), "url": url, "error": last_err or "unknown"}
+
+        article_details = await asyncio.gather(*[_fetch_one(a) for a in chosen], return_exceptions=False)
+
+        system_prompt = (
+            "你是子Agent（写作）。"
+            "你会收到：写作指令 + 多篇帖子正文摘录。"
+            "请写出该来源在今日日报中的一段 Markdown 小节（含小标题、要点，尽量附上链接）。"
+            "同时只输出 JSON，不要输出其它文本。"
+        )
+        prompt = {
+            "source_name": source.name,
+            "instruction": instruction,
+            "articles": article_details,
+            "output_schema": {
+                "summary": "string",
+                "key_points": ["string"],
+                "section_markdown": "markdown string",
+            },
+        }
+
+        try:
+            raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+        except Exception as e:
+            astrbot_logger.warning("[dailynews] miyoushe subagent write failed, fallback: %s", e, exc_info=True)
+            lines = [f"## {source.name}", "", "（模型生成失败/超时，以下为自动回退摘要）", ""]
+            for a in chosen:
+                u = (a.get("url") or "").strip()
+                t = (a.get("title") or "").strip()
+                lines.append(f"- {t} ({u})" if t and u else (u or t))
+            return SubAgentResult(
+                source_name=source.name,
+                content="\n".join([x for x in lines if x]).strip(),
+                summary="",
+                key_points=[],
+                images=None,
+                error=None,
+            )
+
+        data = _json_from_text(raw)
+        if not isinstance(data, dict):
             return SubAgentResult(
                 source_name=source.name,
                 content=str(raw),

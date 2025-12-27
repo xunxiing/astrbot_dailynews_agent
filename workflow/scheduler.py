@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
@@ -15,7 +16,7 @@ try:
 except Exception:  # pragma: no cover
     MessageChain = None  # type: ignore
 
-from .agents import NewsSourceConfig, NewsWorkflowManager, WechatSubAgent
+from .agents import MiyousheSubAgent, NewsSourceConfig, NewsWorkflowManager, WechatSubAgent
 
 
 DAILY_NEWS_HTML_TMPL = """
@@ -42,6 +43,7 @@ class DailyNewsScheduler:
 
     def _init_workflow_manager(self):
         self.workflow_manager.register_sub_agent("wechat", WechatSubAgent)
+        self.workflow_manager.register_sub_agent("miyoushe", MiyousheSubAgent)
 
     def _save_config(self):
         if hasattr(self.config, "save_config"):
@@ -108,6 +110,8 @@ class DailyNewsScheduler:
         cfg.setdefault("llm_max_retries", 1)
         cfg.setdefault("wechat_seed_persist", True)
         cfg.setdefault("wechat_chase_max_hops", 6)
+        cfg.setdefault("miyoushe_headless", True)
+        cfg.setdefault("miyoushe_sleep_between_s", 0.6)
         cfg.setdefault("target_sessions", [])
         cfg.setdefault("admin_sessions", [])
         cfg.setdefault("last_run_date", "")
@@ -184,10 +188,19 @@ class DailyNewsScheduler:
             url = str(source_data.get("url") or "").strip()
             if not url:
                 continue
+            source_type = str(source_data.get("type") or "").strip()
+            if not source_type:
+                u = url.lower()
+                if "miyoushe.com" in u:
+                    source_type = "miyoushe"
+                elif "mp.weixin.qq.com" in u:
+                    source_type = "wechat"
+                else:
+                    source_type = "wechat"
             source = NewsSourceConfig(
                 name=str(source_data.get("name") or f"来源{idx}"),
                 url=url,
-                type=str(source_data.get("type") or "wechat"),
+                type=source_type,
                 priority=int(source_data.get("priority") or 1),
                 max_articles=int(source_data.get("max_articles") or 3),
                 album_keyword=(
@@ -271,7 +284,7 @@ class DailyNewsScheduler:
                     {"title": "每日资讯日报", "subtitle": f"第 {idx}/{len(pages)} 页", "body": page},
                     return_url=False,
                 )
-                out.append(str(img_path))
+                out.append(Path(str(img_path)).resolve().as_posix())
             except Exception:
                 astrbot_logger.error(
                     "[dailynews] render_custom_template failed; fallback to render_t2i",
@@ -279,7 +292,7 @@ class DailyNewsScheduler:
                 )
                 try:
                     img_path = await html_renderer.render_t2i(page, return_url=False)
-                    out.append(str(img_path))
+                    out.append(Path(str(img_path)).resolve().as_posix())
                 except Exception:
                     astrbot_logger.error("[dailynews] render_t2i fallback failed", exc_info=True)
                     return []
@@ -307,8 +320,8 @@ class DailyNewsScheduler:
             try:
                 if delivery_mode == "html_image":
                     for img_path in img_paths:
-                        # 通过本地文件路径发送，避免变成“链接卡片”
-                        chain = MessageChain().file_image(img_path)
+                        # 通过本地文件路径发送，避免变成“链接卡片”（并兼容 Napcat 对路径格式的要求）
+                        chain = MessageChain().file_image(Path(str(img_path)).resolve().as_posix())
                         await self.context.send_message(umo, chain)
                 else:
                     chain = MessageChain().message(content)
