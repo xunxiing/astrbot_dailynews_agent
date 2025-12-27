@@ -68,7 +68,7 @@
 ## ⚙️ 插件配置（推荐方式）
 
 本插件使用 AstrBot 的 `_conf_schema.json` 进行可视化配置（WebUI 管理面板里直接改，不需要手改文件）。
-AstrBot 会把配置落盘到 `data/config/astrbot_plugin_dailynews_config.json` 并在插件 `__init__` 时注入 `config`。
+AstrBot 会把配置落盘到 `data/config/astrbot_dailynews_agent_config.json` 并在插件 `__init__` 时注入 `config`。
 
 如果你需要看配置结构，可在管理面板的「插件配置」里查看；也可以用 `/news_config` 查看当前配置快照。
 
@@ -93,7 +93,7 @@ AstrBot 会把配置落盘到 `data/config/astrbot_plugin_dailynews_config.json`
 
 ### 文件结构
 ```
-astrbot_plugin_dailynews/
+astrbot_dailynews_agent/
 ├── main.py                 # 主插件文件
 ├── requirements.txt        # 依赖包
 ├── workflow/              # 工作流模块

@@ -47,7 +47,7 @@ DAILY_NEWS_HTML_TMPL = load_template("templates/daily_news.html").strip()
 
 
 @register(
-    "astrbot_plugin_dailynews",
+    "astrbot_dailynews_agent",
     "your_name",
     "AI 日报插件：定时抓取公众号最新内容，多 Agent 总结并自动推送",
     "0.2.0",
