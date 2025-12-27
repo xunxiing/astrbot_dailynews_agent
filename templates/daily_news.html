@@ -98,13 +98,17 @@
       }
       /* Markdown styles */
       .md { font-size: 18px; line-height: 1.72; color: var(--text); }
-      .md h1, .md h2, .md h3 { margin: 16px 0 10px; line-height: 1.2; }
-      .md h1 { font-size: 28px; }
-      .md h2 { font-size: 22px; }
-      .md h3 { font-size: 20px; }
+      .md h1 { margin: 10px 0 12px; line-height: 1.2; font-size: 28px; }
+      .md h2, .md h3 { margin: 0; line-height: 1.2; }
+      /* Heading + divider should stack vertically (fix multi-line headings) */
+      .md-heading { display: block; margin: 18px 0 10px; }
+      .md-heading.md-h2 h2 { font-size: 28px; font-weight: 900; color: #2563eb; }
+      .md-heading.md-h3 h3 { font-size: 24px; font-weight: 900; color: #2563eb; }
+      .md-heading .css-snow-divider { margin-top: 10px; }
       .md p { margin: 10px 0; }
       .md ul, .md ol { margin: 8px 0 8px 22px; padding: 0; }
-      .md li { margin: 4px 0; }
+      .md li { margin: 6px 0; }
+      .md li::marker { color: #2563eb; font-size: 1.05em; }
       .md a { color: #2563eb; text-decoration: none; border-bottom: 1px solid rgba(37,99,235,0.25); }
       .md a:hover { border-bottom-color: rgba(37,99,235,0.8); }
       .md code {
@@ -115,35 +119,97 @@
         border-radius: 6px;
         font-size: 0.95em;
       }
-      .md pre {
-        margin: 12px 0;
-        padding: 14px 14px;
-        border-radius: 12px;
-        background: rgba(15, 23, 42, 0.92);
-        color: #e5e7eb;
-        overflow: hidden;
-      }
-      .md pre code {
-        background: transparent;
-        border: 0;
-        padding: 0;
-        color: inherit;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
+      /* Code blocks (with language label) */
+      .codebox { margin: 12px 0; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.55); overflow: hidden; background: rgba(248, 250, 252, 0.96); }
+      .codebox-head { height: 40px; display: flex; align-items: center; padding: 0 12px; background: rgba(226, 232, 240, 0.75); border-bottom: 1px solid rgba(148, 163, 184, 0.35); }
+      .codebox-lang { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 10px; background: rgba(100, 116, 139, 0.85); color: #f8fafc; font-weight: 800; font-size: 16px; letter-spacing: 0.5px; }
+      .codebox-lang::before { content: "▼"; font-size: 12px; opacity: 0.85; }
+      .codebox-body { margin: 0; padding: 14px 14px; background: transparent; }
+      .codebox-body code { background: transparent; border: 0; padding: 0; color: #0f172a; white-space: pre-wrap; word-break: break-word; font-size: 16px; line-height: 1.7; }
       .md blockquote {
-        margin: 10px 0;
-        padding: 10px 14px;
-        border-left: 4px solid rgba(2, 132, 199, 0.55);
-        background: rgba(2, 132, 199, 0.06);
-        border-radius: 10px;
-        color: rgba(17,24,39,0.85);
+        margin: 12px 0;
+        padding: 0;
+        border: 1px solid rgba(148, 163, 184, 0.55);
+        background: rgba(241, 245, 249, 0.78);
+        border-radius: 12px;
+        overflow: hidden;
+        color: rgba(17,24,39,0.88);
       }
+      .md blockquote > p {
+        margin: 0;
+        padding: 12px 14px 12px 44px;
+        position: relative;
+      }
+      .md blockquote > p + p { border-top: 1px solid rgba(148, 163, 184, 0.35); }
+      .md blockquote > p::before {
+        content: "›";
+        position: absolute;
+        left: 14px;
+        top: 10px;
+        font-size: 22px;
+        line-height: 1;
+        color: rgba(100, 116, 139, 0.85);
+        font-weight: 900;
+      }
+      .md blockquote ul,
+      .md blockquote ol {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        border-top: 1px solid rgba(148, 163, 184, 0.35);
+      }
+      .md blockquote li {
+        margin: 0;
+        padding: 12px 14px 12px 44px;
+        position: relative;
+      }
+      .md blockquote li + li { border-top: 1px solid rgba(148, 163, 184, 0.35); }
+      .md blockquote li::before {
+        content: "›";
+        position: absolute;
+        left: 14px;
+        top: 10px;
+        font-size: 22px;
+        line-height: 1;
+        color: rgba(100, 116, 139, 0.85);
+        font-weight: 900;
+      }
+      .md blockquote li p { margin: 0; display: inline; }
       .md hr {
         border: 0;
-        height: 1px;
-        background: rgba(15, 23, 42, 0.12);
-        margin: 14px 0;
+        height: 0;
+        margin: 16px 0;
+      }
+
+      /* Snow divider (provided) */
+      .css-snow-divider {
+        display: flex;
+        align-items: flex-end;
+        height: 22px;
+        gap: 2px;
+        width: 100%;
+        margin: 0;
+      }
+      .divider-line {
+        flex-grow: 1;
+        height: 3.5px;
+        border-radius: 2px;
+        background: linear-gradient(to right, #a9c4e4 0%, #a9c4e4 40%, rgba(255, 255, 255, 0) 100%);
+      }
+      .divider-mountain {
+        flex-shrink: 0;
+        position: relative;
+        width: 30px;
+        height: 16px;
+        clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+        background-color: #9abce4;
+      }
+      .divider-mountain::after {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: #eaf4fc;
+        clip-path: polygon(50% 0%, 75% 50%, 0% 100%);
       }
     </style>
   </head>

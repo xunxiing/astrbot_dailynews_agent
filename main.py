@@ -171,11 +171,9 @@ class DailyNewsPlugin(Star):
                 else:
                     yield event.image_result(p)
             except Exception:
-                astrbot_logger.error("[dailynews] html_render failed; fallback to text_to_image", exc_info=True)
+                astrbot_logger.error("[dailynews] html_render failed; fallback to render_t2i", exc_info=True)
                 try:
                     template_name = self.context._config.get("t2i_active_template")
-
-                    # 优先走 AstrBot 内置渲染：先尝试默认（可能是网络渲染），若返回的“图片”文件不合法则强制本地渲染。
                     renderer = _astrbot_html_renderer
                     if renderer is None:
                         try:
@@ -183,51 +181,27 @@ class DailyNewsPlugin(Star):
                         except Exception:
                             renderer = None
 
-                    if renderer is not None:
+                    if renderer is None:
+                        img_path = await self.text_to_image(page, return_url=False)
+                    else:
                         img_path = await renderer.render_t2i(
                             page,
+                            use_network=False,
                             return_url=False,
                             template_name=template_name,
                         )
-                        img_file = Path(str(img_path)).resolve()
-                        if not _is_valid_image_file(img_file):
-                            astrbot_logger.error(
-                                "[dailynews] render_t2i returned invalid image file: %s (size=%s); retry local",
-                                img_file,
-                                img_file.stat().st_size if img_file.exists() else -1,
-                            )
-                            img_path = await renderer.render_t2i(
-                                page,
-                                use_network=False,
-                                return_url=False,
-                                template_name=template_name,
-                            )
-                    else:
-                        img_path = await self.text_to_image(page, return_url=False)
 
-                    astrbot_logger.info(
-                        "[dailynews] fallback render_t2i page %s/%s -> %s",
-                        idx,
-                        len(pages),
-                        img_path,
-                    )
                     img_file = Path(str(img_path)).resolve()
                     if not _is_valid_image_file(img_file):
-                        astrbot_logger.error(
-                            "[dailynews] fallback render returned invalid image file: %s (size=%s)",
-                            img_file,
-                            img_file.stat().st_size if img_file.exists() else -1,
-                        )
                         yield event.plain_result(page)
                         continue
-
                     p = img_file.as_posix()
                     if _ImageComponent is not None:
                         yield event.chain_result([_ImageComponent(file=f"file:///{p}", path=p)])
                     else:
                         yield event.image_result(p)
                 except Exception:
-                    astrbot_logger.error("[dailynews] text_to_image fallback failed", exc_info=True)
+                    astrbot_logger.error("[dailynews] render_t2i fallback failed", exc_info=True)
                     yield event.plain_result("生成失败：网页渲染失败，请查看 AstrBot 日志。")
                     return
 

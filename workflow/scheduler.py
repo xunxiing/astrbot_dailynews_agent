@@ -336,67 +336,39 @@ class DailyNewsScheduler:
                 )
                 img_file = Path(str(img_path)).resolve()
                 if not _is_valid_image_file(img_file):
-                    astrbot_logger.error(
-                        "[dailynews] render_custom_template returned invalid image file: %s (size=%s)",
-                        img_file,
-                        img_file.stat().st_size if img_file.exists() else -1,
-                    )
                     raise RuntimeError("render_custom_template invalid image")
                 out.append(img_file.as_posix())
-                continue
             except Exception:
                 astrbot_logger.error(
                     "[dailynews] render_custom_template failed; fallback to render_t2i",
                     exc_info=True,
                 )
-
-            try:
-                template_name = (
-                    config.get("t2i_active_template")
-                    or getattr(self.context, "_config", {}).get("t2i_active_template")
-                )
-
-                # 先走默认（可能是网络渲染），若返回的“图片”文件不合法则强制本地渲染。
-                if _astrbot_html_renderer is not None:
-                    img_path = await _astrbot_html_renderer.render_t2i(
-                        page,
-                        return_url=False,
-                        template_name=template_name,
+                try:
+                    template_name = (
+                        config.get("t2i_active_template")
+                        or getattr(self.context, "_config", {}).get("t2i_active_template")
                     )
-                    img_file = Path(str(img_path)).resolve()
-                    if not _is_valid_image_file(img_file):
-                        astrbot_logger.error(
-                            "[dailynews] render_t2i returned invalid image file: %s (size=%s); retry local",
-                            img_file,
-                            img_file.stat().st_size if img_file.exists() else -1,
-                        )
+                    if _astrbot_html_renderer is not None:
                         img_path = await _astrbot_html_renderer.render_t2i(
                             page,
                             use_network=False,
                             return_url=False,
                             template_name=template_name,
                         )
-                else:
-                    img_path = await html_renderer.render_t2i(
-                        page,
-                        use_network=False,
-                        return_url=False,
-                        template_name=template_name,
-                    )
-
-                img_file = Path(str(img_path)).resolve()
-                if not _is_valid_image_file(img_file):
-                    astrbot_logger.error(
-                        "[dailynews] render_t2i returned invalid image file: %s (size=%s)",
-                        img_file,
-                        img_file.stat().st_size if img_file.exists() else -1,
-                    )
+                    else:
+                        img_path = await html_renderer.render_t2i(
+                            page,
+                            use_network=False,
+                            return_url=False,
+                            template_name=template_name,
+                        )
+                    img_file = Path(str(img_path)).resolve()
+                    if not _is_valid_image_file(img_file):
+                        return []
+                    out.append(img_file.as_posix())
+                except Exception:
+                    astrbot_logger.error("[dailynews] render_t2i failed", exc_info=True)
                     return []
-
-                out.append(img_file.as_posix())
-            except Exception:
-                astrbot_logger.error("[dailynews] render_t2i fallback failed", exc_info=True)
-                return []
 
         return out
 
