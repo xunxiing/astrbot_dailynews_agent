@@ -101,7 +101,7 @@
   "news_sources": {
     "type": "list",
     "description": "新闻源（链接列表）",
-    "default": [],
+    "default": ["https://mp.weixin.qq.com/s/K1FGe-TiAk52B8lD6Kg8Mw","https://www.miyoushe.com/ys/accountCenter/postList?id=75276539"],
     "hint": "每一项填一个链接：公众号文章（mp.weixin.qq.com）或米游社用户帖子列表（miyoushe.com/.../accountCenter/postList?id=...）。可混用。"
   },
   "last_run_date": {
