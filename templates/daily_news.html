@@ -111,6 +111,33 @@
       .md li::marker { color: #2563eb; font-size: 1.05em; }
       .md a { color: #2563eb; text-decoration: none; border-bottom: 1px solid rgba(37,99,235,0.25); }
       .md a:hover { border-bottom-color: rgba(37,99,235,0.8); }
+      /* Images: standardize size then decide side-by-side (float) */
+      .md { --img-full: 100%; --img-medium: 820px; --img-narrow: 420px; }
+      .md img { max-width: 100%; height: auto; display: block; margin: 12px 0; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.35); box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10); }
+      .md p.md-imgp { margin: 10px 0; }
+      .md img.md-img--full { width: var(--img-full); }
+      .md img.md-img--medium { width: min(var(--img-medium), 100%); margin-left: auto; margin-right: auto; }
+      .md img.md-img--narrow { width: min(var(--img-narrow), 100%); }
+      .md img.md-img--portrait { max-height: 640px; object-fit: contain; }
+      .md img.md-img--panorama { max-height: 420px; object-fit: contain; }
+      .md img.md-img--float-r,
+      .md img.md-img--float-l {
+        width: clamp(260px, 38%, var(--img-narrow));
+        max-width: 42%;
+        height: auto;
+        display: block;
+        margin-top: 8px;
+        margin-bottom: 8px;
+      }
+      .md img.md-img--float-r { float: right; margin-left: 16px; margin-right: 0; }
+      .md img.md-img--float-l { float: left; margin-right: 16px; margin-left: 0; }
+      /* Prevent floats from leaking into next sections */
+      .md-heading,
+      .md h1,
+      .md h2,
+      .md h3,
+      .md hr,
+      .md .css-snow-divider { clear: both; }
       .md code {
         font-family: Consolas, "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, "Liberation Mono", monospace;
         background: rgba(15, 23, 42, 0.06);

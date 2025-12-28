@@ -39,6 +39,57 @@
     "description": "网页渲染最多生成多少页图片",
     "default": 4
   },
+  "render_retries": {
+    "type": "int",
+    "description": "渲染失败重试次数（html_render / t2i）",
+    "default": 2
+  },
+  "render_poll_timeout_s": {
+    "type": "float",
+    "description": "渲染产物轮询等待超时（秒）",
+    "default": 6.0,
+    "hint": "某些渲染服务会先写很小的占位文件；轮询可等待图片真正落盘"
+  },
+  "render_poll_interval_ms": {
+    "type": "int",
+    "description": "渲染产物轮询间隔（毫秒）",
+    "default": 200
+  },
+  "render_playwright_fallback": {
+    "type": "bool",
+    "description": "渲染服务掉线时，使用本地 Playwright 截图兜底",
+    "default": true
+  },
+  "render_playwright_timeout_ms": {
+    "type": "int",
+    "description": "本地 Playwright 截图超时（毫秒）",
+    "default": 20000
+  },
+  "render_img_float_enabled": {
+    "type": "bool",
+    "description": "Float narrow images to place them side-by-side with text",
+    "default": true
+  },
+  "render_img_float_threshold": {
+    "type": "int",
+    "description": "If normalized width <= threshold, prefer side-by-side (px)",
+    "default": 480
+  },
+  "render_img_full_max_width": {
+    "type": "int",
+    "description": "Max display width for full images (px)",
+    "default": 1000
+  },
+  "render_img_medium_max_width": {
+    "type": "int",
+    "description": "Max display width for medium images (px)",
+    "default": 820
+  },
+  "render_img_narrow_max_width": {
+    "type": "int",
+    "description": "Max display width for narrow images (px)",
+    "default": 420
+  },
   "preferred_source_types": {
     "type": "list",
     "description": "优先处理的来源类型",
@@ -66,6 +117,122 @@
     "type": "int",
     "description": "LLM 超时/失败重试次数",
     "default": 1
+  },
+  "main_agent_provider_id": {
+    "type": "string",
+    "description": "主Agent 使用的 Provider（用于主 Agent 决策/汇总）",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "image_plan_enabled": {
+    "type": "bool",
+    "description": "启用主 Agent 图片数量规划（为图片排版 Agent 提供优先约束）",
+    "default": true
+  },
+  "image_layout_enabled": {
+    "type": "bool",
+    "description": "启用图片排版 Agent（从消息源提取的图片 URL 中选图并插入日报）",
+    "default": false,
+    "hint": "需要 AstrBot >= v4.0.0，并选择一个支持图片输入的 Provider",
+    "obvious_hint": true
+  },
+  "image_layout_provider_id": {
+    "type": "string",
+    "description": "图片排版 Agent 使用的 Provider",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "image_layout_max_images_total": {
+    "type": "int",
+    "description": "图片排版 Agent 最多插入图片数（总计）",
+    "default": 6
+  },
+  "image_layout_max_images_per_source": {
+    "type": "int",
+    "description": "图片排版 Agent 单个来源最多插入图片数",
+    "default": 3
+  },
+  "image_layout_sources": {
+    "type": "list",
+    "description": "仅从指定来源选图（空列表=全部来源）",
+    "default": [],
+    "hint": "例如：[\"来源1\", \"来源2\"]"
+  },
+  "image_layout_pass_images_to_model": {
+    "type": "bool",
+    "description": "将候选图片作为 vision 输入传给模型（需要所选 Provider 支持图片）",
+    "default": true
+  },
+  "image_layout_max_images_to_model": {
+    "type": "int",
+    "description": "最多传给模型的图片数（vision 输入）",
+    "default": 6
+  },
+  "image_layout_preview_enabled": {
+    "type": "bool",
+    "description": "为图片排版 Agent 生成一张纵向拼接预览图",
+    "default": false
+  },
+  "image_layout_preview_max_images": {
+    "type": "int",
+    "description": "参与拼接预览的最大图片数",
+    "default": 6
+  },
+  "image_layout_preview_max_width": {
+    "type": "int",
+    "description": "预览图最大宽度（像素）",
+    "default": 1080
+  },
+  "image_layout_preview_gap": {
+    "type": "int",
+    "description": "预览图中图片之间的间距（像素）",
+    "default": 8
+  },
+  "image_layout_shuffle_candidates": {
+    "type": "bool",
+    "description": "Shuffle image candidates before sending to the layout agent (helps avoid picking the same image every run)",
+    "default": true
+  },
+  "image_layout_shuffle_seed": {
+    "type": "string",
+    "description": "Optional shuffle seed for image candidates; leave empty for random",
+    "default": ""
+  },
+  "image_layout_refine_enabled": {
+    "type": "bool",
+    "description": "Iteratively refine layout by sending rendered preview back to the layout agent",
+    "default": false,
+    "hint": "Requires Playwright local render available; costs extra LLM calls"
+  },
+  "image_layout_refine_rounds": {
+    "type": "int",
+    "description": "Max refine rounds",
+    "default": 2
+  },
+  "image_layout_refine_max_requests": {
+    "type": "int",
+    "description": "Max times the agent can request original image previews",
+    "default": 2
+  },
+  "image_layout_refine_request_max_images": {
+    "type": "int",
+    "description": "Max images per requested preview merge",
+    "default": 6
+  },
+  "image_layout_refine_preview_page_chars": {
+    "type": "int",
+    "description": "Chars per page for refine preview rendering",
+    "default": 2400
+  },
+  "image_layout_refine_preview_pages": {
+    "type": "int",
+    "description": "How many pages to render for refine preview",
+    "default": 1
+  },
+  "image_layout_refine_preview_timeout_ms": {
+    "type": "int",
+    "description": "Playwright render timeout for refine preview (ms)",
+    "default": 20000
   },
   "wechat_seed_persist": {
     "type": "bool",

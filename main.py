@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 from datetime import datetime
@@ -10,9 +11,23 @@ from astrbot.api import AstrBotConfig
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 
-from .tools import WechatAlbumLatestArticlesTool, WechatArticleMarkdownTool
+from .tools import (
+    ImageUrlDownloadTool,
+    ImageUrlsPreviewTool,
+    WechatAlbumLatestArticlesTool,
+    WechatArticleMarkdownTool,
+)
 from .workflow.scheduler import DailyNewsScheduler
 from .workflow.rendering import load_template, markdown_to_html, safe_text
+from .workflow.image_utils import (
+    get_plugin_data_dir,
+    inline_html_remote_images,
+    adaptive_layout_html_images,
+    merge_images_vertical,
+)
+from .workflow.image_layout_agent import ImageLayoutAgent
+from .workflow.models import SubAgentResult
+from .workflow.local_render import render_template_to_image_playwright, wait_for_file_ready
 
 try:
     from astrbot.core.message.components import Image as _ImageComponent
@@ -61,6 +76,8 @@ class DailyNewsPlugin(Star):
         tools = [
             WechatArticleMarkdownTool(),
             WechatAlbumLatestArticlesTool(),
+            ImageUrlsPreviewTool(),
+            ImageUrlDownloadTool(),
         ]
 
         if hasattr(self.context, "add_llm_tools"):
@@ -132,6 +149,11 @@ class DailyNewsPlugin(Star):
     async def _send_as_html_images(self, event: AstrMessageEvent, content: str):
         page_chars = int(self.config.get("render_page_chars", 2600) or 2600)
         max_pages = int(self.config.get("render_max_pages", 4) or 4)
+        render_retries = int(self.config.get("render_retries", 2) or 2)
+        poll_timeout_s = float(self.config.get("render_poll_timeout_s", 6.0) or 6.0)
+        poll_interval_ms = int(self.config.get("render_poll_interval_ms", 200) or 200)
+        playwright_fallback = bool(self.config.get("render_playwright_fallback", True))
+        playwright_timeout_ms = int(self.config.get("render_playwright_timeout_ms", 20000) or 20000)
         pages = self._split_pages(content, page_chars=page_chars, max_pages=max_pages)
         if not pages:
             yield event.plain_result("生成失败：日报内容为空，请查看 AstrBot 日志。")
@@ -140,70 +162,120 @@ class DailyNewsPlugin(Star):
         bg_img = self._get_image_b64("sunsetbackground.jpg")
         char_img = self._get_image_b64("transparent_output.png")
 
-        for idx, page in enumerate(pages, start=1):
+        template_name = getattr(self.context, "_config", {}).get("t2i_active_template")
+        renderer = _astrbot_html_renderer
+        if renderer is None:
             try:
-                # 用 return_url=False 拿到本地图片路径，避免平台把 URL 当成“链接卡片”导致空白预览
-                img_path = await self.html_render(
-                    DAILY_NEWS_HTML_TMPL,
-                    {
-                        "title": safe_text("每日资讯日报"),
-                        "subtitle": safe_text(f"第 {idx}/{len(pages)} 页"),
-                        "body_html": markdown_to_html(page),
-                        "bg_img": bg_img,
-                        "char_img": char_img,
-                    },
-                    return_url=False,
-                )
-                astrbot_logger.info("[dailynews] rendered page %s/%s -> %s", idx, len(pages), img_path)
-                # 兼容 Napcat/aiocqhttp：避免生成 file:///C:\\... 这种不规范 file URI
-                img_file = Path(str(img_path)).resolve()
-                if not _is_valid_image_file(img_file):
-                    astrbot_logger.error(
-                        "[dailynews] html_render returned invalid image file: %s (size=%s)",
-                        img_file,
-                        img_file.stat().st_size if img_file.exists() else -1,
-                    )
-                    raise RuntimeError("html_render invalid image")
-
-                p = img_file.as_posix()
-                if _ImageComponent is not None:
-                    yield event.chain_result([_ImageComponent(file=f"file:///{p}", path=p)])
-                else:
-                    yield event.image_result(p)
+                from astrbot.core import html_renderer as renderer  # type: ignore
             except Exception:
-                astrbot_logger.error("[dailynews] html_render failed; fallback to render_t2i", exc_info=True)
-                try:
-                    template_name = self.context._config.get("t2i_active_template")
-                    renderer = _astrbot_html_renderer
-                    if renderer is None:
-                        try:
-                            from astrbot.core import html_renderer as renderer  # type: ignore
-                        except Exception:
-                            renderer = None
+                renderer = None
 
+        async def _send_image(path: Path):
+            p = Path(path).resolve().as_posix()
+            if _ImageComponent is not None:
+                yield event.chain_result([_ImageComponent(file=f"file:///{p}", path=p)])
+            else:
+                yield event.image_result(p)
+
+        async def _try_html_render(ctx: dict) -> Path | None:
+            last: Exception | None = None
+            for attempt in range(max(0, render_retries) + 1):
+                try:
+                    img_path = await self.html_render(DAILY_NEWS_HTML_TMPL, ctx, return_url=False)
+                    img_file = Path(str(img_path)).resolve()
+                    ok = await wait_for_file_ready(
+                        img_file,
+                        is_valid=_is_valid_image_file,
+                        timeout_s=poll_timeout_s,
+                        interval_ms=poll_interval_ms,
+                    )
+                    if ok:
+                        return img_file
+                    raise RuntimeError("html_render invalid image")
+                except Exception as e:
+                    last = e
+                    if attempt < max(0, render_retries):
+                        await asyncio.sleep(0.6 + 0.6 * attempt)
+            if last is not None:
+                astrbot_logger.error("[dailynews] html_render failed after retries: %s", last, exc_info=True)
+            return None
+
+        async def _try_t2i(text: str) -> Path | None:
+            last: Exception | None = None
+            for attempt in range(max(0, render_retries) + 1):
+                try:
                     if renderer is None:
-                        img_path = await self.text_to_image(page, return_url=False)
+                        img_path = await self.text_to_image(text, return_url=False)
                     else:
                         img_path = await renderer.render_t2i(
-                            page,
+                            text,
                             use_network=False,
                             return_url=False,
                             template_name=template_name,
                         )
-
                     img_file = Path(str(img_path)).resolve()
-                    if not _is_valid_image_file(img_file):
-                        yield event.plain_result(page)
-                        continue
-                    p = img_file.as_posix()
-                    if _ImageComponent is not None:
-                        yield event.chain_result([_ImageComponent(file=f"file:///{p}", path=p)])
-                    else:
-                        yield event.image_result(p)
+                    ok = await wait_for_file_ready(
+                        img_file,
+                        is_valid=_is_valid_image_file,
+                        timeout_s=poll_timeout_s,
+                        interval_ms=poll_interval_ms,
+                    )
+                    if ok:
+                        return img_file
+                    raise RuntimeError("render_t2i invalid image")
+                except Exception as e:
+                    last = e
+                    if attempt < max(0, render_retries):
+                        await asyncio.sleep(0.6 + 0.6 * attempt)
+            if last is not None:
+                astrbot_logger.error("[dailynews] render_t2i failed after retries: %s", last, exc_info=True)
+            return None
+
+        for idx, page in enumerate(pages, start=1):
+            body_html = await inline_html_remote_images(markdown_to_html(page))
+            body_html = await adaptive_layout_html_images(
+                body_html,
+                full_max_width=int(self.config.get("render_img_full_max_width", 1000) or 1000),
+                medium_max_width=int(self.config.get("render_img_medium_max_width", 820) or 820),
+                narrow_max_width=int(self.config.get("render_img_narrow_max_width", 420) or 420),
+                float_if_width_le=int(self.config.get("render_img_float_threshold", 480) or 480),
+                float_enabled=bool(self.config.get("render_img_float_enabled", True)),
+            )
+            ctx = {
+                "title": safe_text("每日资讯日报"),
+                "subtitle": safe_text(f"第 {idx}/{len(pages)} 页"),
+                "body_html": body_html,
+                "bg_img": bg_img,
+                "char_img": char_img,
+            }
+
+            img_file = await _try_html_render(ctx)
+            if img_file is None and playwright_fallback:
+                try:
+                    out_path = get_plugin_data_dir("render_fallback") / (
+                        f"playwright_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
+                    )
+                    img_file = await render_template_to_image_playwright(
+                        DAILY_NEWS_HTML_TMPL,
+                        ctx,
+                        out_path=out_path,
+                        viewport=(1080, 720),
+                        timeout_ms=playwright_timeout_ms,
+                        full_page=True,
+                    )
                 except Exception:
-                    astrbot_logger.error("[dailynews] render_t2i fallback failed", exc_info=True)
-                    yield event.plain_result("生成失败：网页渲染失败，请查看 AstrBot 日志。")
-                    return
+                    astrbot_logger.error("[dailynews] playwright render failed", exc_info=True)
+                    img_file = None
+            if img_file is None:
+                img_file = await _try_t2i(page)
+
+            if img_file is None or not _is_valid_image_file(Path(img_file).resolve()):
+                yield event.plain_result(page)
+                continue
+
+            astrbot_logger.info("[dailynews] rendered page %s/%s -> %s", idx, len(pages), img_file)
+            async for r in _send_image(Path(img_file)):
+                yield r
 
     @filter.command("daily_news")
     async def daily_news(self, event: AstrMessageEvent):
@@ -308,6 +380,308 @@ class DailyNewsPlugin(Star):
             return
 
         yield event.plain_result(content)
+
+    @filter.command("news_image_preview")
+    async def news_image_preview(self, event: AstrMessageEvent, args: str = ""):
+        """
+        合并多张图片 URL 为纵向预览图。
+        用法：/news_image_preview url1 url2 url3 ...
+        """
+        from .workflow.image_utils import get_plugin_data_dir, merge_images_vertical, parse_image_urls
+
+        urls = parse_image_urls(args)
+        if not urls:
+            yield event.plain_result("用法：/news_image_preview url1 url2 url3 ...")
+            return
+
+        out_dir = get_plugin_data_dir("image_previews")
+        out_path = out_dir / f"preview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        try:
+            merged = await merge_images_vertical(urls, out_path=out_path)
+        except Exception as e:
+            astrbot_logger.error("[dailynews] news_image_preview failed: %s", e, exc_info=True)
+            yield event.plain_result(f"合并失败：{e}")
+            return
+
+        img_file = Path(str(merged)).resolve()
+        if not _is_valid_image_file(img_file):
+            yield event.plain_result("合并失败：生成的图片无效")
+            return
+
+        p = img_file.as_posix()
+        if _ImageComponent is not None:
+            yield event.chain_result([_ImageComponent(file=f"file:///{p}", path=p)])
+        else:
+            yield event.image_result(p)
+
+    @filter.command("news_image_debug")
+    async def news_image_debug(self, event: AstrMessageEvent, args: str = ""):
+        """
+        调试：列出每个来源抓到的图片直链，并可选拼接预览图。
+        用法：/news_image_debug [preview] [max_urls]
+        """
+        parts = (args or "").strip().split()
+        want_preview = any(p.lower() == "preview" for p in parts)
+        max_urls = 12
+        for p in parts:
+            if p.isdigit():
+                max_urls = max(1, min(50, int(p)))
+                break
+
+        cfg = self.scheduler.get_config_snapshot()
+        await self.scheduler.update_workflow_sources_from_config(cfg)
+        sources = list(self.scheduler.workflow_manager.news_sources)
+        if not sources:
+            yield event.plain_result("未配置 news_sources")
+            return
+
+        # 1) 先抓每个来源的最新文章列表
+        fetch_tasks = []
+        fetch_sources = []
+        for s in sources:
+            agent_cls = self.scheduler.workflow_manager.sub_agents.get(s.type)
+            if not agent_cls:
+                continue
+            fetch_sources.append(s)
+            fetch_tasks.append(agent_cls().fetch_latest_articles(s, cfg))
+
+        fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        source_articles = {}
+        for idx, r in enumerate(fetched):
+            src = fetch_sources[idx]
+            if isinstance(r, Exception):
+                astrbot_logger.warning("[dailynews] news_image_debug fetch list failed: %s", r, exc_info=True)
+                source_articles[src.name] = []
+                continue
+            name, articles = r
+            source_articles[name] = articles or []
+
+        # 2) 抓正文并提取 image_urls（不走 LLM）
+        from .workflow.utils import _run_sync
+        from .analysis.wechatanalysis.analysis import fetch_wechat_article
+        from .analysis.miyousheanalysis.analysis import fetch_miyoushe_post
+
+        async def _collect_images(source_name: str, source_type: str, arts, max_articles: int):
+            urls = []
+            for a in (arts or [])[: max(1, int(max_articles or 1))]:
+                u = (a.get("url") or "").strip() if isinstance(a, dict) else ""
+                if not u:
+                    continue
+                try:
+                    if source_type == "miyoushe":
+                        d = await _run_sync(fetch_miyoushe_post, u)
+                    else:
+                        d = await _run_sync(fetch_wechat_article, u)
+                    imgs = d.get("image_urls") or []
+                    if isinstance(imgs, list):
+                        for x in imgs:
+                            xs = str(x).strip()
+                            if xs and xs not in urls:
+                                urls.append(xs)
+                                if len(urls) >= max_urls:
+                                    return urls
+                except Exception:
+                    continue
+            return urls
+
+        tasks = []
+        meta = []
+        for s in sources:
+            tasks.append(
+                _collect_images(
+                    s.name,
+                    s.type,
+                    source_articles.get(s.name, []),
+                    int(getattr(s, "max_articles", 2) or 2),
+                )
+            )
+            meta.append(s)
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+
+        lines = ["# image_debug", ""]
+        all_for_preview = []
+        for s, imgs in zip(meta, results):
+            lines.append(f"## {s.name} ({s.type})")
+            lines.append(f"- images: {len(imgs)}")
+            for u in imgs[: min(8, len(imgs))]:
+                lines.append(f"  - {u}")
+            lines.append("")
+            all_for_preview.extend(imgs)
+
+        if not want_preview:
+            yield event.plain_result("\n".join(lines).strip())
+            return
+
+        if not all_for_preview:
+            yield event.plain_result("\n".join(lines + ["无可预览图片"]).strip())
+            return
+
+        out_path = get_plugin_data_dir("image_previews") / f"debug_preview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        try:
+            merged = await merge_images_vertical(all_for_preview[: max_urls], out_path=out_path)
+            img_file = Path(str(merged)).resolve()
+            if not _is_valid_image_file(img_file):
+                yield event.plain_result("\n".join(lines + ["预览图生成失败：图片无效"]).strip())
+                return
+            p = img_file.as_posix()
+            if _ImageComponent is not None:
+                yield event.chain_result([_ImageComponent(file=f"file:///{p}", path=p)])
+            else:
+                yield event.image_result(p)
+        except Exception as e:
+            astrbot_logger.error("[dailynews] news_image_debug preview failed: %s", e, exc_info=True)
+            yield event.plain_result("\n".join(lines + [f"预览图生成失败：{e}"]).strip())
+
+    @filter.command("news_layout_test")
+    async def news_layout_test(self, event: AstrMessageEvent, args: str = ""):
+        """
+        仅测试“图片排版 Agent”的插图能力，不跑写作/汇总。
+        用法：/news_layout_test [plain|html] [preview] [max_urls]
+        """
+        parts = (args or "").strip().split()
+        mode = "html" if any(p.lower() == "html" for p in parts) else "plain"
+        force_preview = any(p.lower() == "preview" for p in parts)
+        max_urls = 12
+        for p in parts:
+            if p.isdigit():
+                max_urls = max(1, min(50, int(p)))
+                break
+
+        cfg = self.scheduler.get_config_snapshot()
+        cfg["image_layout_enabled"] = True
+        if force_preview:
+            cfg["image_layout_preview_enabled"] = True
+
+        await self.scheduler.update_workflow_sources_from_config(cfg)
+        sources = list(self.scheduler.workflow_manager.news_sources)
+        if not sources:
+            yield event.plain_result("未配置 news_sources")
+            return
+
+        # 1) 抓取每个来源最新文章列表
+        fetch_tasks = []
+        fetch_sources = []
+        for s in sources:
+            agent_cls = self.scheduler.workflow_manager.sub_agents.get(s.type)
+            if not agent_cls:
+                continue
+            fetch_sources.append(s)
+            fetch_tasks.append(agent_cls().fetch_latest_articles(s, cfg))
+
+        fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        source_articles = {}
+        for idx, r in enumerate(fetched):
+            src = fetch_sources[idx]
+            if isinstance(r, Exception):
+                astrbot_logger.warning("[dailynews] news_layout_test fetch list failed: %s", r, exc_info=True)
+                source_articles[src.name] = []
+                continue
+            name, articles = r
+            source_articles[name] = articles or []
+
+        # 2) 抓正文并提取 image_urls（不走 LLM 写作）
+        from .workflow.utils import _run_sync
+        from .analysis.wechatanalysis.analysis import fetch_wechat_article
+        from .analysis.miyousheanalysis.analysis import fetch_miyoushe_post
+
+        async def _collect_images(source_name: str, source_type: str, arts, max_articles: int):
+            urls = []
+            for a in (arts or [])[: max(1, int(max_articles or 1))]:
+                u = (a.get("url") or "").strip() if isinstance(a, dict) else ""
+                if not u:
+                    continue
+                try:
+                    if source_type == "miyoushe":
+                        d = await _run_sync(fetch_miyoushe_post, u)
+                    else:
+                        d = await _run_sync(fetch_wechat_article, u)
+                    imgs = d.get("image_urls") or []
+                    if isinstance(imgs, list):
+                        for x in imgs:
+                            xs = str(x).strip()
+                            if xs and xs not in urls:
+                                urls.append(xs)
+                                if len(urls) >= max_urls:
+                                    return urls
+                except Exception:
+                    continue
+            return urls
+
+        tasks = []
+        meta = []
+        for s in sources:
+            tasks.append(
+                _collect_images(
+                    s.name,
+                    s.type,
+                    source_articles.get(s.name, []),
+                    int(getattr(s, "max_articles", 2) or 2),
+                )
+            )
+            meta.append(s)
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+
+        sub_results = []
+        for s, imgs in zip(meta, results):
+            if not imgs:
+                continue
+            sub_results.append(
+                SubAgentResult(
+                    source_name=s.name,
+                    summary="",
+                    key_points=[],
+                    content="",
+                    images=imgs,
+                )
+            )
+
+        test_md = textwrap.dedent(
+            """
+            # 每日资讯日报（排版测试）
+
+            *生成时间：{now}*
+
+            ## 1. 标题/列表/链接
+            - 要点 1：带链接 https://example.com
+            - 要点 2：带括号与中文标点（测试）
+            - 要点 3：长行测试：{long_line}
+
+            ## 2. 代码块
+            ```python
+            def hello(name: str) -> str:
+                return f"hello, {{name}}"
+            ```
+
+            ## 3. 引用与分隔
+            > 这是一段引用（测试换行与缩进）。
+            >
+            > - 引用内列表 A
+            > - 引用内列表 B
+
+            ---
+
+            ## 4. 结尾
+            - 支持分页/多图渲染：`render_page_chars`、`render_max_pages`
+            """
+        ).strip()
+        test_md = test_md.format(
+            now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            long_line="A" * 200,
+        )
+
+        patched = await ImageLayoutAgent().enhance_markdown(
+            draft_markdown=test_md,
+            sub_results=sub_results,
+            user_config=cfg,
+            astrbot_context=self.context,
+            image_plan=None,
+        )
+
+        if mode == "html":
+            async for r in self._send_as_html_images(event, patched):
+                yield r
+        else:
+            yield event.plain_result(patched)
 
     @filter.command("news_subscribe")
     async def news_subscribe(self, event: AstrMessageEvent):

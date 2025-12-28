@@ -19,6 +19,8 @@ except Exception:  # pragma: no cover
 
 from .agents import MiyousheSubAgent, NewsSourceConfig, NewsWorkflowManager, WechatSubAgent
 from .rendering import load_template, markdown_to_html, safe_text
+from .image_utils import get_plugin_data_dir, inline_html_remote_images, adaptive_layout_html_images
+from .local_render import render_template_to_image_playwright, wait_for_file_ready
 
 try:
     from astrbot.core.message.components import Image as _ImageComponent
@@ -126,11 +128,29 @@ class DailyNewsScheduler:
         cfg.setdefault("max_sources_per_day", 3)
         cfg.setdefault("render_page_chars", 2600)
         cfg.setdefault("render_max_pages", 4)
+        cfg.setdefault("render_retries", 2)
+        cfg.setdefault("render_poll_timeout_s", 6.0)
+        cfg.setdefault("render_poll_interval_ms", 200)
+        cfg.setdefault("render_playwright_fallback", True)
+        cfg.setdefault("render_playwright_timeout_ms", 20000)
         cfg.setdefault("preferred_source_types", ["wechat"])
         cfg.setdefault("llm_timeout_s", 180)
         cfg.setdefault("llm_write_timeout_s", 360)
         cfg.setdefault("llm_merge_timeout_s", 240)
         cfg.setdefault("llm_max_retries", 1)
+        cfg.setdefault("main_agent_provider_id", "")
+        cfg.setdefault("image_layout_enabled", False)
+        cfg.setdefault("image_plan_enabled", True)
+        cfg.setdefault("image_layout_provider_id", "")
+        cfg.setdefault("image_layout_max_images_total", 6)
+        cfg.setdefault("image_layout_max_images_per_source", 3)
+        cfg.setdefault("image_layout_sources", [])
+        cfg.setdefault("image_layout_pass_images_to_model", True)
+        cfg.setdefault("image_layout_max_images_to_model", 6)
+        cfg.setdefault("image_layout_preview_enabled", False)
+        cfg.setdefault("image_layout_preview_max_images", 6)
+        cfg.setdefault("image_layout_preview_max_width", 1080)
+        cfg.setdefault("image_layout_preview_gap", 8)
         cfg.setdefault("wechat_seed_persist", True)
         cfg.setdefault("wechat_chase_max_hops", 6)
         cfg.setdefault("miyoushe_headless", True)
@@ -313,6 +333,11 @@ class DailyNewsScheduler:
 
         page_chars = int(config.get("render_page_chars", 2600) or 2600)
         max_pages = int(config.get("render_max_pages", 4) or 4)
+        render_retries = int(config.get("render_retries", 2) or 2)
+        poll_timeout_s = float(config.get("render_poll_timeout_s", 6.0) or 6.0)
+        poll_interval_ms = int(config.get("render_poll_interval_ms", 200) or 200)
+        playwright_fallback = bool(config.get("render_playwright_fallback", True))
+        playwright_timeout_ms = int(config.get("render_playwright_timeout_ms", 20000) or 20000)
         pages = self._split_pages(s, page_chars=page_chars, max_pages=max_pages)
         if not pages:
             return []
@@ -322,53 +347,118 @@ class DailyNewsScheduler:
 
         out: List[str] = []
         for idx, page in enumerate(pages, start=1):
-            try:
-                img_path = await html_renderer.render_custom_template(
-                    DAILY_NEWS_HTML_TMPL,
-                    {
-                        "title": safe_text("每日资讯日报"),
-                        "subtitle": safe_text(f"第 {idx}/{len(pages)} 页"),
-                        "body_html": markdown_to_html(page),
-                        "bg_img": bg_img,
-                        "char_img": char_img,
-                    },
-                    return_url=False,
-                )
-                img_file = Path(str(img_path)).resolve()
-                if not _is_valid_image_file(img_file):
-                    raise RuntimeError("render_custom_template invalid image")
-                out.append(img_file.as_posix())
-            except Exception:
-                astrbot_logger.error(
-                    "[dailynews] render_custom_template failed; fallback to render_t2i",
-                    exc_info=True,
-                )
+            body_html = await inline_html_remote_images(markdown_to_html(page))
+            body_html = await adaptive_layout_html_images(
+                body_html,
+                full_max_width=int(config.get("render_img_full_max_width", 1000) or 1000),
+                medium_max_width=int(config.get("render_img_medium_max_width", 820) or 820),
+                narrow_max_width=int(config.get("render_img_narrow_max_width", 420) or 420),
+                float_if_width_le=int(config.get("render_img_float_threshold", 480) or 480),
+                float_enabled=bool(config.get("render_img_float_enabled", True)),
+            )
+            ctx = {
+                "title": safe_text("每日资讯日报"),
+                "subtitle": safe_text(f"第 {idx}/{len(pages)} 页"),
+                "body_html": body_html,
+                "bg_img": bg_img,
+                "char_img": char_img,
+            }
+
+            img_file: Path | None = None
+
+            last: Exception | None = None
+            for attempt in range(max(0, render_retries) + 1):
                 try:
-                    template_name = (
-                        config.get("t2i_active_template")
-                        or getattr(self.context, "_config", {}).get("t2i_active_template")
+                    img_path = await html_renderer.render_custom_template(
+                        DAILY_NEWS_HTML_TMPL,
+                        ctx,
+                        return_url=False,
                     )
-                    if _astrbot_html_renderer is not None:
-                        img_path = await _astrbot_html_renderer.render_t2i(
-                            page,
-                            use_network=False,
-                            return_url=False,
-                            template_name=template_name,
+                    candidate = Path(str(img_path)).resolve()
+                    ok = await wait_for_file_ready(
+                        candidate,
+                        is_valid=_is_valid_image_file,
+                        timeout_s=poll_timeout_s,
+                        interval_ms=poll_interval_ms,
+                    )
+                    if ok:
+                        img_file = candidate
+                        break
+                    raise RuntimeError("render_custom_template invalid image")
+                except Exception as e:
+                    last = e
+                    if attempt < max(0, render_retries):
+                        await asyncio.sleep(0.6 + 0.6 * attempt)
+
+            if img_file is None:
+                if last is not None:
+                    astrbot_logger.error(
+                        "[dailynews] render_custom_template failed after retries: %s",
+                        last,
+                        exc_info=True,
+                    )
+
+                if playwright_fallback:
+                    try:
+                        out_path = get_plugin_data_dir("render_fallback") / (
+                            f"playwright_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
                         )
-                    else:
-                        img_path = await html_renderer.render_t2i(
-                            page,
-                            use_network=False,
-                            return_url=False,
-                            template_name=template_name,
+                        img_file = await render_template_to_image_playwright(
+                            DAILY_NEWS_HTML_TMPL,
+                            ctx,
+                            out_path=out_path,
+                            viewport=(1080, 720),
+                            timeout_ms=playwright_timeout_ms,
+                            full_page=True,
                         )
-                    img_file = Path(str(img_path)).resolve()
-                    if not _is_valid_image_file(img_file):
-                        return []
-                    out.append(img_file.as_posix())
-                except Exception:
-                    astrbot_logger.error("[dailynews] render_t2i failed", exc_info=True)
-                    return []
+                    except Exception:
+                        astrbot_logger.error("[dailynews] playwright render failed", exc_info=True)
+                        img_file = None
+
+            if img_file is None:
+                template_name = (
+                    config.get("t2i_active_template")
+                    or getattr(self.context, "_config", {}).get("t2i_active_template")
+                )
+                last = None
+                for attempt in range(max(0, render_retries) + 1):
+                    try:
+                        if _astrbot_html_renderer is not None:
+                            img_path = await _astrbot_html_renderer.render_t2i(
+                                page,
+                                use_network=False,
+                                return_url=False,
+                                template_name=template_name,
+                            )
+                        else:
+                            img_path = await html_renderer.render_t2i(
+                                page,
+                                use_network=False,
+                                return_url=False,
+                                template_name=template_name,
+                            )
+                        candidate = Path(str(img_path)).resolve()
+                        ok = await wait_for_file_ready(
+                            candidate,
+                            is_valid=_is_valid_image_file,
+                            timeout_s=poll_timeout_s,
+                            interval_ms=poll_interval_ms,
+                        )
+                        if ok:
+                            img_file = candidate
+                            break
+                        raise RuntimeError("render_t2i invalid image")
+                    except Exception as e:
+                        last = e
+                        if attempt < max(0, render_retries):
+                            await asyncio.sleep(0.6 + 0.6 * attempt)
+
+                if img_file is None and last is not None:
+                    astrbot_logger.error("[dailynews] render_t2i failed after retries: %s", last, exc_info=True)
+
+            if img_file is None or not _is_valid_image_file(Path(img_file).resolve()):
+                return []
+            out.append(Path(img_file).resolve().as_posix())
 
         return out
 

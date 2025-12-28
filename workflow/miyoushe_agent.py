@@ -18,7 +18,7 @@ except Exception:  # pragma: no cover
 
 from .llm import LLMRunner
 from .models import NewsSourceConfig, SubAgentResult
-from .utils import _json_from_text, _run_sync
+from .utils import _json_from_text, _run_sync, ensure_section_links
 
 
 class MiyousheSubAgent:
@@ -162,6 +162,17 @@ class MiyousheSubAgent:
             return {"title": (a.get("title") or "").strip(), "url": url, "error": last_err or "unknown"}
 
         article_details = await asyncio.gather(*[_fetch_one(a) for a in chosen], return_exceptions=False)
+        images: List[str] = []
+        seen = set()
+        for d in article_details:
+            if not isinstance(d, dict):
+                continue
+            for u in d.get("image_urls") or []:
+                if isinstance(u, str) and u and u not in seen:
+                    seen.add(u)
+                    images.append(u)
+        if images:
+            astrbot_logger.info("[dailynews] %s collected %s image urls", source.name, len(images))
 
         system_prompt = (
             "你是子Agent（写作）。"
@@ -194,7 +205,7 @@ class MiyousheSubAgent:
                 content="\n".join([x for x in lines if x]).strip(),
                 summary="",
                 key_points=[],
-                images=None,
+                images=images or None,
                 error=None,
             )
 
@@ -205,6 +216,7 @@ class MiyousheSubAgent:
                 content=str(raw),
                 summary="",
                 key_points=[],
+                images=images or None,
                 error=None,
             )
 
@@ -213,13 +225,13 @@ class MiyousheSubAgent:
         if not isinstance(key_points, list):
             key_points = []
         section = str(data.get("section_markdown") or "")
+        section = ensure_section_links(section, article_details)
 
         return SubAgentResult(
             source_name=source.name,
             content=section,
             summary=summary,
             key_points=[str(x) for x in key_points[:10]],
-            images=None,
+            images=images or None,
             error=None,
         )
-

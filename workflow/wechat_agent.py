@@ -22,7 +22,7 @@ except Exception:  # pragma: no cover
 from .llm import LLMRunner
 from .models import NewsSourceConfig, SubAgentResult
 from .seed_store import _get_seed_state, _update_seed_entry
-from .utils import _json_from_text, _run_sync
+from .utils import _json_from_text, _run_sync, ensure_section_links
 
 
 class WechatSubAgent:
@@ -187,12 +187,17 @@ class WechatSubAgent:
                     content_text = (detail.get("content_text") or "").strip()
                     if len(content_text) > 1500:
                         content_text = content_text[:1500] + "…"
+                    image_urls = detail.get("image_urls") or []
+                    if not isinstance(image_urls, list):
+                        image_urls = []
+                    image_urls = [str(u) for u in image_urls if isinstance(u, str) and u.strip()][:30]
                     return {
                         "title": (detail.get("title") or a.get("title") or "").strip(),
                         "url": url,
                         "author": (detail.get("author") or "").strip(),
                         "publish_time": (detail.get("publish_time") or "").strip(),
                         "content_text": content_text,
+                        "image_urls": image_urls,
                     }
                 except Exception as e:
                     last_err = str(e) or type(e).__name__
@@ -206,6 +211,17 @@ class WechatSubAgent:
             return {"title": (a.get("title") or "").strip(), "url": url, "error": last_err or "unknown"}
 
         article_details = await asyncio.gather(*[_fetch_one(a) for a in chosen], return_exceptions=False)
+        images: List[str] = []
+        seen = set()
+        for d in article_details:
+            if not isinstance(d, dict):
+                continue
+            for u in d.get("image_urls") or []:
+                if isinstance(u, str) and u and u not in seen:
+                    seen.add(u)
+                    images.append(u)
+        if images:
+            astrbot_logger.info("[dailynews] %s collected %s image urls", source.name, len(images))
 
         system_prompt = (
             "你是子Agent（写作）。"
@@ -241,7 +257,7 @@ class WechatSubAgent:
                 content="\n".join(lines).strip(),
                 summary="",
                 key_points=[],
-                images=None,
+                images=images or None,
                 error=None,
             )
 
@@ -252,6 +268,7 @@ class WechatSubAgent:
                 content=str(raw),
                 summary="",
                 key_points=[],
+                images=images or None,
                 error=None,
             )
 
@@ -260,13 +277,13 @@ class WechatSubAgent:
         if not isinstance(key_points, list):
             key_points = []
         section = str(data.get("section_markdown") or "")
+        section = ensure_section_links(section, article_details)
 
         return SubAgentResult(
             source_name=source.name,
             content=section,
             summary=summary,
             key_points=[str(x) for x in key_points[:10]],
-            images=None,
+            images=images or None,
             error=None,
         )
-

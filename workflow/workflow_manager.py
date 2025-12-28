@@ -11,6 +11,8 @@ except Exception:  # pragma: no cover
 
 from .llm import LLMRunner
 from .main_agent import MainNewsAgent
+from .image_layout_agent import ImageLayoutAgent
+from .image_plan_agent import ImagePlanAgent
 from .models import NewsSourceConfig, SubAgentResult
 
 
@@ -31,6 +33,7 @@ class NewsWorkflowManager:
         llm_timeout_s = int(user_config.get("llm_timeout_s", 180))
         llm_write_timeout_s = int(user_config.get("llm_write_timeout_s", max(llm_timeout_s, 360)))
         llm_merge_timeout_s = int(user_config.get("llm_merge_timeout_s", max(llm_timeout_s, 240)))
+        main_provider_id = str(user_config.get("main_agent_provider_id") or "").strip()
 
         llm_scout = LLMRunner(
             astrbot_context,
@@ -46,6 +49,24 @@ class NewsWorkflowManager:
             astrbot_context,
             timeout_s=llm_merge_timeout_s,
             max_retries=int(user_config.get("llm_max_retries", 1)),
+        )
+        llm_main_decision = LLMRunner(
+            astrbot_context,
+            timeout_s=llm_timeout_s,
+            max_retries=int(user_config.get("llm_max_retries", 1)),
+            provider_id=main_provider_id or None,
+        )
+        llm_main_merge = LLMRunner(
+            astrbot_context,
+            timeout_s=llm_merge_timeout_s,
+            max_retries=int(user_config.get("llm_max_retries", 1)),
+            provider_id=main_provider_id or None,
+        )
+        llm_image_plan = LLMRunner(
+            astrbot_context,
+            timeout_s=llm_timeout_s,
+            max_retries=int(user_config.get("llm_max_retries", 1)),
+            provider_id=main_provider_id or None,
         )
 
         try:
@@ -124,7 +145,7 @@ class NewsWorkflowManager:
 
             # 3) 主 Agent 听汇报 -> 做分工决策
             main_agent = MainNewsAgent()
-            decision = await main_agent.analyze_sub_agent_reports(reports, user_config, llm_scout)
+            decision = await main_agent.analyze_sub_agent_reports(reports, user_config, llm_main_decision)
 
             # 兜底：当 LLM 只选择部分来源时，按“优先类型 + 其它类型”补齐到 max_sources_per_day
             preferred_types = user_config.get("preferred_source_types", ["wechat"])
@@ -196,7 +217,30 @@ class NewsWorkflowManager:
             astrbot_logger.debug("[dailynews] write_tasks: %s", len(write_tasks))
 
             sub_results = await asyncio.gather(*write_tasks, return_exceptions=True)
-            final_summary = await main_agent.summarize_all_results(sub_results, decision.final_format, llm_merge)
+
+            image_plan = None
+            if bool(user_config.get("image_layout_enabled", False)):
+                try:
+                    img_counts = {
+                        r.source_name: len(r.images or [])
+                        for r in sub_results
+                        if isinstance(r, SubAgentResult)
+                    }
+                    astrbot_logger.info("[dailynews] sub_results image counts: %s", img_counts)
+                except Exception:
+                    pass
+                try:
+                    image_plan = await ImagePlanAgent().decide_plan(
+                        reports=reports,
+                        decision=decision,
+                        sub_results=sub_results,
+                        user_config=user_config,
+                        llm=llm_image_plan,
+                    )
+                except Exception as e:
+                    astrbot_logger.warning("[dailynews] image_plan failed: %s", e, exc_info=True)
+
+            final_summary = await main_agent.summarize_all_results(sub_results, decision.final_format, llm_main_merge)
 
             if not (final_summary or "").strip():
                 astrbot_logger.warning("[dailynews] final_summary is empty; fallback to concat sections")
@@ -222,11 +266,34 @@ class NewsWorkflowManager:
                         parts.append(f"- {msg}")
                 final_summary = "\n".join(parts).strip()
 
+            # 5) 图片排版 Agent（可选）：从抓取到的图片 URL 中挑选并插入到日报 Markdown
+            if bool(user_config.get("image_layout_enabled", False)) and (final_summary or "").strip():
+                try:
+                    astrbot_logger.info(
+                        "[dailynews] image_layout start enabled=%s provider=%s",
+                        bool(user_config.get("image_layout_enabled", False)),
+                        str(user_config.get("image_layout_provider_id") or ""),
+                    )
+                    final_summary = await ImageLayoutAgent().enhance_markdown(
+                        draft_markdown=final_summary,
+                        sub_results=sub_results,
+                        user_config=user_config,
+                        astrbot_context=astrbot_context,
+                        image_plan=image_plan,
+                    )
+                    astrbot_logger.info(
+                        "[dailynews] image_layout done has_image=%s",
+                        ("![](" in (final_summary or "")) or ("<img" in (final_summary or "")),
+                    )
+                except Exception as e:
+                    astrbot_logger.warning("[dailynews] image_layout failed: %s", e, exc_info=True)
+
             return {
                 "status": "success",
                 "decision": decision,
                 "sub_reports": reports,
                 "sub_results": sub_results,
+                "image_plan": image_plan,
                 "final_summary": final_summary,
                 "timestamp": datetime.now().isoformat(),
             }
@@ -240,4 +307,3 @@ class NewsWorkflowManager:
                 "traceback": traceback.format_exc(),
                 "timestamp": datetime.now().isoformat(),
             }
-

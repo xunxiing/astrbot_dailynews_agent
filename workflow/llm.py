@@ -10,17 +10,32 @@ except Exception:  # pragma: no cover
 
 
 class LLMRunner:
-    def __init__(self, astrbot_context: Any, timeout_s: int = 180, max_retries: int = 1):
+    def __init__(
+        self,
+        astrbot_context: Any,
+        timeout_s: int = 180,
+        max_retries: int = 1,
+        provider_id: Optional[str] = None,
+    ):
         self._ctx = astrbot_context
         self._timeout_s = timeout_s
         self._max_retries = max_retries
+        self._provider_id = provider_id or None
 
     async def ask(self, *, system_prompt: str, prompt: str) -> str:
-        provider = self._ctx.get_using_provider()
-
         last_exc: Optional[BaseException] = None
         for attempt in range(1, int(self._max_retries) + 2):
             try:
+                if self._provider_id:
+                    coro = self._ctx.llm_generate(
+                        chat_provider_id=self._provider_id,
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                    )
+                    resp = await asyncio.wait_for(coro, timeout=self._timeout_s)
+                    return getattr(resp, "completion_text", "") or ""
+
+                provider = self._ctx.get_using_provider()
                 coro = provider.text_chat(
                     prompt=prompt,
                     session_id=None,  # deprecated but kept for compatibility
@@ -61,4 +76,3 @@ class LLMRunner:
             f"LLM call failed after {int(self._max_retries) + 1} attempts: "
             f"{type(last_exc).__name__ if last_exc else 'UnknownError'}"
         )
-
