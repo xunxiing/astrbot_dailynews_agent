@@ -188,6 +188,33 @@
     "description": "预览图中图片之间的间距（像素）",
     "default": 8
   },
+  "image_layout_request_max_requests": {
+    "type": "int",
+    "description": "排版 Agent 最多允许请求“查看候选图细节”的次数（request_image_urls）",
+    "default": 1,
+    "hint": "增大可减少错位/错图，但会增加额外的 LLM 调用次数"
+  },
+  "image_layout_request_max_images": {
+    "type": "int",
+    "description": "每次 request_image_urls 最多合成多少张候选图预览",
+    "default": 6
+  },
+  "image_layout_tool_enabled": {
+    "type": "bool",
+    "description": "启用“工具驱动的排版编辑”：先给 AI 文字稿，再让 AI 通过 tools 插图/改文并反复渲染校验",
+    "default": true,
+    "hint": "需要 AstrBot >= 4.5.7（tool_loop_agent），且所选 Provider 支持工具调用"
+  },
+  "image_layout_tool_rounds": {
+    "type": "int",
+    "description": "工具驱动排版最多迭代轮数（每轮会渲染预览并允许调用 tools）",
+    "default": 2
+  },
+  "image_layout_tool_max_steps": {
+    "type": "int",
+    "description": "每轮 tool-loop 最大工具调用步数",
+    "default": 25
+  },
   "image_layout_shuffle_candidates": {
     "type": "bool",
     "description": "发送给排版 Agent 前打乱候选图（减少每次都选同一张）",

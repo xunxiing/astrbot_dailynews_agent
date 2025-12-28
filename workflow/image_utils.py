@@ -4,7 +4,8 @@ import html as _html
 import io
 import re
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 import aiohttp
 from PIL import Image
@@ -24,6 +25,8 @@ except Exception:  # pragma: no cover
 
 _DATA_URI_RE = re.compile(r"^data:image/[a-zA-Z0-9.+-]+;base64,", re.I)
 _IMG_CLASS_RE = re.compile(r'\sclass=(?P<q>["\'])(?P<cls>[^"\']*)(?P=q)', re.I)
+_FETCH_WARNED: Set[Tuple[str, int]] = set()
+_INLINE_NOOP_WARNED: Set[str] = set()
 
 
 def get_plugin_data_dir(subdir: str) -> Path:
@@ -61,7 +64,12 @@ def _guess_referer(url: str) -> Optional[str]:
     u = url.lower()
     if "mp.weixin.qq.com" in u or "mmbiz.qpic.cn" in u:
         return "https://mp.weixin.qq.com/"
-    if "miyoushe.com" in u:
+    # MiYoShe / miHoYo image CDNs often require a referer under *.miyoushe.com or bbs.mihoyo.com
+    if (
+        "miyoushe.com" in u
+        or "mihoyo.com" in u
+        or "miyoushe.net" in u
+    ):
         return "https://www.miyoushe.com/"
     return None
 
@@ -74,6 +82,20 @@ async def _fetch_http_image(session: aiohttp.ClientSession, url: str) -> Optiona
     try:
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             if resp.status != 200:
+                try:
+                    host = (urlparse(url).netloc or "").lower()
+                    key = (host, int(resp.status))
+                    if host and key not in _FETCH_WARNED:
+                        _FETCH_WARNED.add(key)
+                        astrbot_logger.warning(
+                            "[dailynews] fetch image failed: host=%s status=%s referer=%s url=%s",
+                            host,
+                            resp.status,
+                            referer or "",
+                            url[:240],
+                        )
+                except Exception:
+                    pass
                 return None
             return await resp.read()
     except Exception:
@@ -255,6 +277,86 @@ async def inline_html_remote_images(
         mapping[src] = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
 
     if not mapping:
+        try:
+            host = (urlparse(srcs[0]).netloc or "").lower() if srcs else ""
+            if host and host not in _INLINE_NOOP_WARNED:
+                _INLINE_NOOP_WARNED.add(host)
+                astrbot_logger.warning(
+                    "[dailynews] inline_html_remote_images: failed to inline any images (count=%s, host=%s)",
+                    len(srcs),
+                    host,
+                )
+        except Exception:
+            pass
+        return s
+
+    def repl(m: re.Match) -> str:
+        src_raw = (m.group("src") or "").strip()
+        src = _html.unescape(src_raw)
+        new_src = mapping.get(src)
+        if not new_src:
+            return m.group(0)
+        q = m.group("q")
+        before = m.group("before") or ""
+        after = m.group("after") or ""
+        return f"<img{before} src={q}{new_src}{q}{after}>"
+
+    return _IMG_SRC_RE.sub(repl, s)
+
+
+async def localize_html_remote_images(
+    html: str,
+    *,
+    max_images: int = 8,
+    max_width: int = 1200,
+    quality: int = 85,
+) -> str:
+    """
+    Replace remote <img src="http(s)://..."> with local file:// URLs.
+
+    This avoids embedding huge base64 data-uri in HTML (which may flood logs),
+    while still bypassing common hotlink/referer restrictions by downloading locally.
+    """
+    s = html or ""
+    if not s:
+        return s
+
+    srcs: List[str] = []
+    for m in _IMG_SRC_RE.finditer(s):
+        src = _html.unescape((m.group("src") or "").strip())
+        if src.startswith("http://") or src.startswith("https://"):
+            if src not in srcs:
+                srcs.append(src)
+        if len(srcs) >= max_images:
+            break
+
+    if not srcs:
+        return s
+
+    import hashlib
+
+    out_dir = get_plugin_data_dir("html_image_cache")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    mapping: Dict[str, str] = {}
+    for src in srcs:
+        try:
+            h = hashlib.sha1(src.encode("utf-8", errors="ignore")).hexdigest()[:20]
+            out_path = out_dir / f"{h}.jpg"
+            saved = await download_image_to_jpeg_file(
+                src,
+                out_path=out_path,
+                max_width=max_width,
+                quality=quality,
+            )
+            if not saved:
+                continue
+            saved_path, _ = saved
+            mapping[src] = f"file:///{saved_path.resolve().as_posix()}"
+        except Exception:
+            continue
+
+    if not mapping:
         return s
 
     def repl(m: re.Match) -> str:
@@ -423,6 +525,22 @@ async def adaptive_layout_html_images(
         r'<p class="md-imgp">\1</p>',
         out,
         flags=re.I,
+    )
+
+    # If a floated narrow image is immediately followed by a heading/divider (which clears floats),
+    # it will create a large empty column; de-float in that case.
+    def _defloat(m: re.Match) -> str:
+        img = m.group("img") or ""
+        nxt = m.group("next") or ""
+        img = re.sub(r"\bmd-img--float-(?:r|l)\b", "", img)
+        img = re.sub(r"\s{2,}", " ", img)
+        return f'<p class="md-imgp">{img}</p>{nxt}'
+
+    out = re.sub(
+        r'(?is)<p class="md-imgp">\s*(?P<img><img[^>]*\bmd-img--float-(?:r|l)\b[^>]*>)\s*</p>'
+        r'(?P<next>\s*(?:<div class="md-heading\b|<div class="css-snow-divider\b|<h[1-6]\b|<hr\b))',
+        _defloat,
+        out,
     )
     return out
 

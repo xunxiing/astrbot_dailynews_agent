@@ -14,6 +14,10 @@ from astrbot.api.star import Context, Star, register
 from .tools import (
     ImageUrlDownloadTool,
     ImageUrlsPreviewTool,
+    MarkdownDocApplyEditsTool,
+    MarkdownDocCreateTool,
+    MarkdownDocMatchInsertImageTool,
+    MarkdownDocReadTool,
     WechatAlbumLatestArticlesTool,
     WechatArticleMarkdownTool,
 )
@@ -74,6 +78,10 @@ class DailyNewsPlugin(Star):
             WechatAlbumLatestArticlesTool(),
             ImageUrlsPreviewTool(),
             ImageUrlDownloadTool(),
+            MarkdownDocCreateTool(),
+            MarkdownDocReadTool(),
+            MarkdownDocApplyEditsTool(),
+            MarkdownDocMatchInsertImageTool(),
         ]
 
         if hasattr(self.context, "add_llm_tools"):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import base64
 from dataclasses import dataclass
 from datetime import datetime
@@ -95,8 +96,10 @@ async def _try_with_retries(
     call: Callable[[], Awaitable[Optional[Path]]],
     poll_timeout_s: float,
     poll_interval_ms: int,
+    log_level: str = "error",
 ) -> Optional[Path]:
     last: Exception | None = None
+    last_exc_info = None
     for attempt in range(max(0, attempts) + 1):
         try:
             p = await call()
@@ -114,10 +117,18 @@ async def _try_with_retries(
             raise RuntimeError("render produced invalid image")
         except Exception as e:
             last = e
+            last_exc_info = sys.exc_info()
             if attempt < max(0, attempts):
                 await asyncio.sleep(0.6 + 0.6 * attempt)
     if last is not None:
-        astrbot_logger.error("[dailynews] render failed after retries: %s", last, exc_info=True)
+        msg = "[dailynews] render failed after retries: %s"
+        lvl = (log_level or "error").lower()
+        if lvl == "warning":
+            astrbot_logger.warning(msg, last, exc_info=last_exc_info)
+        elif lvl == "info":
+            astrbot_logger.info(msg, last, exc_info=last_exc_info)
+        else:
+            astrbot_logger.error(msg, last, exc_info=last_exc_info)
     return None
 
 
@@ -168,6 +179,7 @@ async def render_daily_news_pages(
             call=lambda: render_html(ctx),
             poll_timeout_s=pipeline.poll_timeout_s,
             poll_interval_ms=pipeline.poll_interval_ms,
+            log_level="warning" if pipeline.playwright_fallback else "error",
         )
         method = "html"
 

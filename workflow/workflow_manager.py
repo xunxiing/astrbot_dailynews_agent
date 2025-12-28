@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+import re
 from typing import Any, Dict, List
 
 try:
@@ -283,7 +284,8 @@ class NewsWorkflowManager:
                     )
                     astrbot_logger.info(
                         "[dailynews] image_layout done has_image=%s",
-                        ("![](" in (final_summary or "")) or ("<img" in (final_summary or "")),
+                        bool(re.search(r"!\[[^\]]*\]\(", (final_summary or "")))
+                        or ("<img" in (final_summary or "")),
                     )
                 except Exception as e:
                     astrbot_logger.warning("[dailynews] image_layout failed: %s", e, exc_info=True)

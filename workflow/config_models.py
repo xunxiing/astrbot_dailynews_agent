@@ -101,6 +101,11 @@ class ImageLayoutConfig:
     preview_max_images: int = 6
     preview_max_width: int = 1080
     preview_gap: int = 8
+    request_max_requests: int = 1
+    request_max_images: int = 6
+    tool_enabled: bool = True
+    tool_rounds: int = 2
+    tool_max_steps: int = 25
     shuffle_candidates: bool = True
     shuffle_seed: str = ""
 
@@ -117,6 +122,11 @@ class ImageLayoutConfig:
             preview_max_images=max(1, _to_int(cfg.get("image_layout_preview_max_images"), 6)),
             preview_max_width=max(200, _to_int(cfg.get("image_layout_preview_max_width"), 1080)),
             preview_gap=max(0, _to_int(cfg.get("image_layout_preview_gap"), 8)),
+            request_max_requests=max(0, _to_int(cfg.get("image_layout_request_max_requests"), 1)),
+            request_max_images=max(1, _to_int(cfg.get("image_layout_request_max_images"), 6)),
+            tool_enabled=_to_bool(cfg.get("image_layout_tool_enabled"), True),
+            tool_rounds=max(1, _to_int(cfg.get("image_layout_tool_rounds"), 2)),
+            tool_max_steps=max(5, _to_int(cfg.get("image_layout_tool_max_steps"), 25)),
             shuffle_candidates=_to_bool(cfg.get("image_layout_shuffle_candidates"), True),
             shuffle_seed=_to_str(cfg.get("image_layout_shuffle_seed"), "").strip(),
         )
@@ -148,6 +158,7 @@ class LayoutRefineConfig:
 @dataclass(frozen=True)
 class LayoutPrompts:
     image_layout_system: str
+    image_layout_tool_system: str
     layout_refiner_system: str
 
     @classmethod
@@ -156,10 +167,11 @@ class LayoutPrompts:
         *,
         load_template: Any,
         image_layout_system_path: str = "templates/prompts/image_layout_agent_system.txt",
+        image_layout_tool_system_path: str = "templates/prompts/image_layout_tool_agent_system.txt",
         layout_refiner_system_path: str = "templates/prompts/layout_refiner_system.txt",
     ) -> "LayoutPrompts":
         return cls(
             image_layout_system=str(load_template(image_layout_system_path) or "").strip(),
+            image_layout_tool_system=str(load_template(image_layout_tool_system_path) or "").strip(),
             layout_refiner_system=str(load_template(layout_refiner_system_path) or "").strip(),
         )
-

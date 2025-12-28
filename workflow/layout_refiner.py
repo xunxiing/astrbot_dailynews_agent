@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import base64
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import base64
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -14,7 +14,12 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 from .config_models import LayoutRefineConfig, RenderImageStyleConfig
-from .image_utils import adaptive_layout_html_images, get_plugin_data_dir, inline_html_remote_images, merge_images_vertical
+from .image_utils import (
+    adaptive_layout_html_images,
+    get_plugin_data_dir,
+    inline_html_remote_images,
+    merge_images_vertical,
+)
 from .local_render import render_template_to_image_playwright
 from .rendering import load_template, markdown_to_html, safe_text
 from .utils import _json_from_text
@@ -225,4 +230,3 @@ class LayoutRefiner:
                     return current
 
         return current
-
