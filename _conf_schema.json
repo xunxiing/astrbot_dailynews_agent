@@ -67,27 +67,27 @@
   },
   "render_img_float_enabled": {
     "type": "bool",
-    "description": "Float narrow images to place them side-by-side with text",
+    "description": "是否将窄图优先与文字并排（浮动排版）",
     "default": true
   },
   "render_img_float_threshold": {
     "type": "int",
-    "description": "If normalized width <= threshold, prefer side-by-side (px)",
+    "description": "图片标准化后，若宽度 <= 阈值，则优先并排（px）",
     "default": 480
   },
   "render_img_full_max_width": {
     "type": "int",
-    "description": "Max display width for full images (px)",
+    "description": "大图的最大显示宽度（px）",
     "default": 1000
   },
   "render_img_medium_max_width": {
     "type": "int",
-    "description": "Max display width for medium images (px)",
+    "description": "中图的最大显示宽度（px）",
     "default": 820
   },
   "render_img_narrow_max_width": {
     "type": "int",
-    "description": "Max display width for narrow images (px)",
+    "description": "窄图的最大显示宽度（px）",
     "default": 420
   },
   "preferred_source_types": {
@@ -190,48 +190,48 @@
   },
   "image_layout_shuffle_candidates": {
     "type": "bool",
-    "description": "Shuffle image candidates before sending to the layout agent (helps avoid picking the same image every run)",
+    "description": "发送给排版 Agent 前打乱候选图（减少每次都选同一张）",
     "default": true
   },
   "image_layout_shuffle_seed": {
     "type": "string",
-    "description": "Optional shuffle seed for image candidates; leave empty for random",
+    "description": "候选图打乱用的种子（可选，留空=随机）",
     "default": ""
   },
   "image_layout_refine_enabled": {
     "type": "bool",
-    "description": "Iteratively refine layout by sending rendered preview back to the layout agent",
+    "description": "启用“渲染预览回喂”的迭代排版（直到差不多）",
     "default": false,
-    "hint": "Requires Playwright local render available; costs extra LLM calls"
+    "hint": "需要本地 Playwright 可用；会增加额外的 LLM 调用次数"
   },
   "image_layout_refine_rounds": {
     "type": "int",
-    "description": "Max refine rounds",
+    "description": "最多迭代轮数",
     "default": 2
   },
   "image_layout_refine_max_requests": {
     "type": "int",
-    "description": "Max times the agent can request original image previews",
+    "description": "最多允许请求“查看原图细节”的次数",
     "default": 2
   },
   "image_layout_refine_request_max_images": {
     "type": "int",
-    "description": "Max images per requested preview merge",
+    "description": "每次请求最多合成几张原图预览",
     "default": 6
   },
   "image_layout_refine_preview_page_chars": {
     "type": "int",
-    "description": "Chars per page for refine preview rendering",
+    "description": "迭代预览渲染时每页最大字符数",
     "default": 2400
   },
   "image_layout_refine_preview_pages": {
     "type": "int",
-    "description": "How many pages to render for refine preview",
+    "description": "迭代预览渲染页数（建议 1）",
     "default": 1
   },
   "image_layout_refine_preview_timeout_ms": {
     "type": "int",
-    "description": "Playwright render timeout for refine preview (ms)",
+    "description": "迭代预览渲染超时（毫秒，Playwright）",
     "default": 20000
   },
   "wechat_seed_persist": {

@@ -18,16 +18,12 @@ from .tools import (
     WechatArticleMarkdownTool,
 )
 from .workflow.scheduler import DailyNewsScheduler
-from .workflow.rendering import load_template, markdown_to_html, safe_text
-from .workflow.image_utils import (
-    get_plugin_data_dir,
-    inline_html_remote_images,
-    adaptive_layout_html_images,
-    merge_images_vertical,
-)
+from .workflow.rendering import load_template
+from .workflow.image_utils import get_plugin_data_dir, merge_images_vertical
 from .workflow.image_layout_agent import ImageLayoutAgent
 from .workflow.models import SubAgentResult
-from .workflow.local_render import render_template_to_image_playwright, wait_for_file_ready
+from .workflow.config_models import RenderImageStyleConfig, RenderPipelineConfig
+from .workflow.render_pipeline import render_daily_news_pages, split_pages
 
 try:
     from astrbot.core.message.components import Image as _ImageComponent
@@ -104,63 +100,18 @@ class DailyNewsPlugin(Star):
 
     # ====== commands ======
 
-    def _get_image_b64(self, filename: str) -> str:
-        # 尝试定位 image 目录
-        # 1. 相对于当前文件 main.py -> ./image
-        base_dir = Path(__file__).parent
-        img_path = base_dir / "image" / filename
-        
-        if not img_path.exists():
-            # 2. 相对于 cwd
-            img_path = Path.cwd() / "image" / filename
-
-        if img_path.exists():
-            try:
-                with open(img_path, "rb") as f:
-                    return base64.b64encode(f.read()).decode("utf-8")
-            except Exception:
-                pass
-        return ""
-
-    def _split_pages(self, text: str, page_chars: int, max_pages: int) -> List[str]:
-        s = (text or "").strip()
-        if not s:
-            return []
-        if page_chars <= 0:
-            return [s]
-
-        pages: List[str] = []
-        buf: List[str] = []
-        buf_len = 0
-        for line in s.splitlines():
-            piece = line + "\n"
-            if buf_len + len(piece) > page_chars and buf:
-                pages.append("".join(buf).rstrip())
-                if len(pages) >= max_pages:
-                    return pages
-                buf, buf_len = [], 0
-            buf.append(piece)
-            buf_len += len(piece)
-
-        if buf and len(pages) < max_pages:
-            pages.append("".join(buf).rstrip())
-        return pages
-
     async def _send_as_html_images(self, event: AstrMessageEvent, content: str):
-        page_chars = int(self.config.get("render_page_chars", 2600) or 2600)
-        max_pages = int(self.config.get("render_max_pages", 4) or 4)
-        render_retries = int(self.config.get("render_retries", 2) or 2)
-        poll_timeout_s = float(self.config.get("render_poll_timeout_s", 6.0) or 6.0)
-        poll_interval_ms = int(self.config.get("render_poll_interval_ms", 200) or 200)
-        playwright_fallback = bool(self.config.get("render_playwright_fallback", True))
-        playwright_timeout_ms = int(self.config.get("render_playwright_timeout_ms", 20000) or 20000)
-        pages = self._split_pages(content, page_chars=page_chars, max_pages=max_pages)
+        pipeline_cfg = RenderPipelineConfig.from_mapping(self.config)
+        style_cfg = RenderImageStyleConfig.from_mapping(self.config)
+
+        pages = split_pages(
+            content,
+            page_chars=pipeline_cfg.page_chars,
+            max_pages=pipeline_cfg.max_pages,
+        )
         if not pages:
             yield event.plain_result("生成失败：日报内容为空，请查看 AstrBot 日志。")
             return
-
-        bg_img = self._get_image_b64("sunsetbackground.jpg")
-        char_img = self._get_image_b64("transparent_output.png")
 
         template_name = getattr(self.context, "_config", {}).get("t2i_active_template")
         renderer = _astrbot_html_renderer
@@ -177,105 +128,53 @@ class DailyNewsPlugin(Star):
             else:
                 yield event.image_result(p)
 
-        async def _try_html_render(ctx: dict) -> Path | None:
-            last: Exception | None = None
-            for attempt in range(max(0, render_retries) + 1):
-                try:
-                    img_path = await self.html_render(DAILY_NEWS_HTML_TMPL, ctx, return_url=False)
-                    img_file = Path(str(img_path)).resolve()
-                    ok = await wait_for_file_ready(
-                        img_file,
-                        is_valid=_is_valid_image_file,
-                        timeout_s=poll_timeout_s,
-                        interval_ms=poll_interval_ms,
-                    )
-                    if ok:
-                        return img_file
-                    raise RuntimeError("html_render invalid image")
-                except Exception as e:
-                    last = e
-                    if attempt < max(0, render_retries):
-                        await asyncio.sleep(0.6 + 0.6 * attempt)
-            if last is not None:
-                astrbot_logger.error("[dailynews] html_render failed after retries: %s", last, exc_info=True)
-            return None
+        async def _render_html(ctx: dict) -> Path | None:
+            try:
+                p = await self.html_render(DAILY_NEWS_HTML_TMPL, ctx, return_url=False)
+                return Path(str(p)).resolve()
+            except Exception:
+                return None
 
-        async def _try_t2i(text: str) -> Path | None:
-            last: Exception | None = None
-            for attempt in range(max(0, render_retries) + 1):
-                try:
-                    if renderer is None:
-                        img_path = await self.text_to_image(text, return_url=False)
-                    else:
-                        img_path = await renderer.render_t2i(
-                            text,
-                            use_network=False,
-                            return_url=False,
-                            template_name=template_name,
-                        )
-                    img_file = Path(str(img_path)).resolve()
-                    ok = await wait_for_file_ready(
-                        img_file,
-                        is_valid=_is_valid_image_file,
-                        timeout_s=poll_timeout_s,
-                        interval_ms=poll_interval_ms,
+        async def _render_t2i(text: str) -> Path | None:
+            try:
+                if renderer is None:
+                    p = await self.text_to_image(text, return_url=False)
+                else:
+                    p = await renderer.render_t2i(
+                        text,
+                        use_network=False,
+                        return_url=False,
+                        template_name=template_name,
                     )
-                    if ok:
-                        return img_file
-                    raise RuntimeError("render_t2i invalid image")
-                except Exception as e:
-                    last = e
-                    if attempt < max(0, render_retries):
-                        await asyncio.sleep(0.6 + 0.6 * attempt)
-            if last is not None:
-                astrbot_logger.error("[dailynews] render_t2i failed after retries: %s", last, exc_info=True)
-            return None
+                return Path(str(p)).resolve()
+            except Exception:
+                return None
 
-        for idx, page in enumerate(pages, start=1):
-            body_html = await inline_html_remote_images(markdown_to_html(page))
-            body_html = await adaptive_layout_html_images(
-                body_html,
-                full_max_width=int(self.config.get("render_img_full_max_width", 1000) or 1000),
-                medium_max_width=int(self.config.get("render_img_medium_max_width", 820) or 820),
-                narrow_max_width=int(self.config.get("render_img_narrow_max_width", 420) or 420),
-                float_if_width_le=int(self.config.get("render_img_float_threshold", 480) or 480),
-                float_enabled=bool(self.config.get("render_img_float_enabled", True)),
-            )
-            ctx = {
-                "title": safe_text("每日资讯日报"),
-                "subtitle": safe_text(f"第 {idx}/{len(pages)} 页"),
-                "body_html": body_html,
-                "bg_img": bg_img,
-                "char_img": char_img,
-            }
+        rendered = await render_daily_news_pages(
+            pages=pages,
+            template_str=DAILY_NEWS_HTML_TMPL,
+            render_html=_render_html,
+            render_t2i=_render_t2i,
+            pipeline=pipeline_cfg,
+            style=style_cfg,
+            title="每日资讯日报",
+            subtitle_fmt="第 {idx}/{total} 页",
+        )
 
-            img_file = await _try_html_render(ctx)
-            if img_file is None and playwright_fallback:
-                try:
-                    out_path = get_plugin_data_dir("render_fallback") / (
-                        f"playwright_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
-                    )
-                    img_file = await render_template_to_image_playwright(
-                        DAILY_NEWS_HTML_TMPL,
-                        ctx,
-                        out_path=out_path,
-                        viewport=(1080, 720),
-                        timeout_ms=playwright_timeout_ms,
-                        full_page=True,
-                    )
-                except Exception:
-                    astrbot_logger.error("[dailynews] playwright render failed", exc_info=True)
-                    img_file = None
-            if img_file is None:
-                img_file = await _try_t2i(page)
-
-            if img_file is None or not _is_valid_image_file(Path(img_file).resolve()):
-                yield event.plain_result(page)
+        for r in rendered:
+            if r.image_path is None or not _is_valid_image_file(Path(r.image_path).resolve()):
+                yield event.plain_result(r.markdown)
                 continue
 
-            astrbot_logger.info("[dailynews] rendered page %s/%s -> %s", idx, len(pages), img_file)
-            async for r in _send_image(Path(img_file)):
-                yield r
+            astrbot_logger.info(
+                "[dailynews] rendered page %s/%s via %s -> %s",
+                r.index,
+                r.total,
+                r.method or "unknown",
+                r.image_path,
+            )
+            async for rr in _send_image(Path(r.image_path)):
+                yield rr
 
     @filter.command("daily_news")
     async def daily_news(self, event: AstrMessageEvent):
