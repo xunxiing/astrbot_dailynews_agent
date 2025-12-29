@@ -12,8 +12,9 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .config_models import ImageLayoutConfig, LayoutPrompts, LayoutRefineConfig
+from .config_models import ImageLabelConfig, ImageLayoutConfig, LayoutPrompts, LayoutRefineConfig
 from .image_utils import get_plugin_data_dir, merge_images_vertical
+from .image_labeler import ImageLabeler
 from .layout_refiner import LayoutRefiner
 from .tool_based_layout_editor import ToolBasedLayoutEditor
 from .models import SubAgentResult
@@ -396,6 +397,23 @@ class ImageLayoutAgent:
 
         prompts = LayoutPrompts.from_files(load_template=load_template)
 
+        image_catalog: List[Dict[str, Any]] = []
+        label_cfg = ImageLabelConfig.from_mapping(user_config)
+        if label_cfg.enabled and label_cfg.provider_id:
+            # When we have per-image labels, avoid feeding the layout model a huge image list.
+            pass_images_to_model = False
+            try:
+                labeler = ImageLabeler(system_prompt=prompts.image_labeler_system)
+                image_catalog, _ = await labeler.build_catalog(
+                    images_by_source=images_by_source,
+                    astrbot_context=astrbot_context,
+                    cfg=label_cfg,
+                )
+                if image_catalog:
+                    astrbot_logger.info("[dailynews] image_label catalog ready: %s", len(image_catalog))
+            except Exception as e:
+                astrbot_logger.warning("[dailynews] image_label failed: %s", e, exc_info=True)
+
         # Tool-based layout editing: let the model call tools to insert images / fix text,
         # then we render a preview each round and feed it back until it says "done".
         if tool_enabled and hasattr(astrbot_context, "tool_loop_agent"):
@@ -410,6 +428,7 @@ class ImageLayoutAgent:
                 patched = await ToolBasedLayoutEditor(system_prompt=tool_system).edit(
                     draft_markdown=draft_markdown,
                     images_by_source=images_by_source,
+                    image_catalog=image_catalog,
                     user_config=user_config,
                     astrbot_context=astrbot_context,
                     provider_id=provider_id,
@@ -527,6 +546,7 @@ class ImageLayoutAgent:
             },
             "image_plan": image_plan or {},
             "image_candidates": images_by_source,
+            "image_catalog": image_catalog,
             "sections": sections_hint,
             "source_sections": source_sections_hint,
             "draft_markdown": draft_markdown,
@@ -650,6 +670,7 @@ class ImageLayoutAgent:
                 refined = await refiner.refine(
                     markdown=patched,
                     images_by_source=images_by_source,
+                    image_catalog=image_catalog,
                     user_config=user_config,
                     astrbot_context=astrbot_context,
                     provider_id=provider_id,

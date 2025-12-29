@@ -133,6 +133,27 @@ class ImageLayoutConfig:
 
 
 @dataclass(frozen=True)
+class ImageLabelConfig:
+    enabled: bool = False
+    provider_id: str = ""
+    max_images_total: int = 24
+    batch_size: int = 2
+    concurrency: int = 4
+    force_refresh: bool = False
+
+    @classmethod
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> "ImageLabelConfig":
+        return cls(
+            enabled=_to_bool(cfg.get("image_label_enabled"), False),
+            provider_id=_to_str(cfg.get("image_label_provider_id"), "").strip(),
+            max_images_total=max(0, _to_int(cfg.get("image_label_max_images_total"), 24)),
+            batch_size=max(1, min(2, _to_int(cfg.get("image_label_batch_size"), 2))),
+            concurrency=max(1, _to_int(cfg.get("image_label_concurrency"), 4)),
+            force_refresh=_to_bool(cfg.get("image_label_force_refresh"), False),
+        )
+
+
+@dataclass(frozen=True)
 class LayoutRefineConfig:
     enabled: bool = False
     rounds: int = 2
@@ -160,6 +181,7 @@ class LayoutPrompts:
     image_layout_system: str
     image_layout_tool_system: str
     layout_refiner_system: str
+    image_labeler_system: str
 
     @classmethod
     def from_files(
@@ -169,9 +191,11 @@ class LayoutPrompts:
         image_layout_system_path: str = "templates/prompts/image_layout_agent_system.txt",
         image_layout_tool_system_path: str = "templates/prompts/image_layout_tool_agent_system.txt",
         layout_refiner_system_path: str = "templates/prompts/layout_refiner_system.txt",
+        image_labeler_system_path: str = "templates/prompts/image_labeler_system.txt",
     ) -> "LayoutPrompts":
         return cls(
             image_layout_system=str(load_template(image_layout_system_path) or "").strip(),
             image_layout_tool_system=str(load_template(image_layout_tool_system_path) or "").strip(),
             layout_refiner_system=str(load_template(layout_refiner_system_path) or "").strip(),
+            image_labeler_system=str(load_template(image_labeler_system_path) or "").strip(),
         )

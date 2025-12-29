@@ -134,6 +134,7 @@ class LayoutRefiner:
         *,
         markdown: str,
         images_by_source: Dict[str, List[str]],
+        image_catalog: Optional[List[Dict[str, Any]]] = None,
         user_config: Dict[str, Any],
         astrbot_context: Any,
         provider_id: str,
@@ -171,6 +172,7 @@ class LayoutRefiner:
                 "round": round_idx,
                 "draft_markdown": current,
                 "image_candidates": images_by_source,
+                "image_catalog": image_catalog or [],
                 "output_schema": {
                     "patched_markdown": "string",
                     "done": "boolean(optional)",

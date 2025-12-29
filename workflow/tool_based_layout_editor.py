@@ -165,6 +165,7 @@ class ToolBasedLayoutEditor:
         *,
         draft_markdown: str,
         images_by_source: Dict[str, List[str]],
+        image_catalog: Optional[List[Dict[str, Any]]] = None,
         user_config: Dict[str, Any],
         astrbot_context: Any,
         provider_id: str,
@@ -197,6 +198,12 @@ class ToolBasedLayoutEditor:
             for u in urls or []:
                 if isinstance(u, str) and u.strip():
                     allowed_urls.add(u.strip())
+        for it in image_catalog or []:
+            if not isinstance(it, dict):
+                continue
+            u = str(it.get("url") or "").strip()
+            if u:
+                allowed_urls.add(u)
 
         candidate_preview_url: Optional[str] = None
         candidate_preview_urls: List[str] = []
@@ -229,6 +236,7 @@ class ToolBasedLayoutEditor:
                 "doc_excerpt": current[:1800],
                 "doc_length": len(current),
                 "image_candidates": images_by_source,
+                "image_catalog": image_catalog or [],
                 "constraints": {
                     "request_max_requests": request_budget,
                     "request_max_images": request_max_images,

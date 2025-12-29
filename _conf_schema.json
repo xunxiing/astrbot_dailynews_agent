@@ -129,6 +129,39 @@
     "description": "启用主 Agent 图片数量规划（为图片排版 Agent 提供优先约束）",
     "default": true
   },
+  "image_label_enabled": {
+    "type": "bool",
+    "description": "启用图片打标（先用 VLM 为每个图片 URL 生成<=30字标签，供排版模型选择）",
+    "default": false,
+    "hint": "开启后会优先使用 image_catalog（标签表）而不是把大量候选图片直接喂给排版模型",
+    "obvious_hint": true
+  },
+  "image_label_provider_id": {
+    "type": "string",
+    "description": "图片打标使用的 Provider（需要支持图片输入）",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "image_label_max_images_total": {
+    "type": "int",
+    "description": "最多对多少张候选图进行打标（过多会显著增加耗时）",
+    "default": 24
+  },
+  "image_label_batch_size": {
+    "type": "int",
+    "description": "每次 VLM 调用同时打标的图片数量（建议 2）",
+    "default": 2
+  },
+  "image_label_concurrency": {
+    "type": "int",
+    "description": "图片打标并发数（下载+VLM 调用）",
+    "default": 4
+  },
+  "image_label_force_refresh": {
+    "type": "bool",
+    "description": "强制重新打标（忽略缓存）",
+    "default": false
+  },
   "image_layout_enabled": {
     "type": "bool",
     "description": "启用图片排版 Agent（从消息源提取的图片 URL 中选图并插入日报）",
