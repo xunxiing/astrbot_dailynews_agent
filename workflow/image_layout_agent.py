@@ -400,7 +400,7 @@ class ImageLayoutAgent:
         image_catalog: List[Dict[str, Any]] = []
         label_cfg = ImageLabelConfig.from_mapping(user_config)
         if label_cfg.enabled and label_cfg.provider_id:
-            # When we have per-image labels, avoid feeding the layout model a huge image list.
+            # When we have per-image labels, avoid feeding the layout model a huge image list (and skip vision previews).
             pass_images_to_model = False
             try:
                 labeler = ImageLabeler(system_prompt=prompts.image_labeler_system)
@@ -436,6 +436,7 @@ class ImageLayoutAgent:
                     max_steps=tool_max_steps,
                     request_max_requests=request_max_requests,
                     request_max_images=request_max_images,
+                    send_images_to_model=bool(pass_images_to_model),
                 )
                 if (patched or "").strip():
                     has_img = bool(re.search(r"!\[[^\]]*\]\(", patched)) or ("<img" in patched)
@@ -664,7 +665,7 @@ class ImageLayoutAgent:
             astrbot_logger.warning("[dailynews] image_layout produced no images; fallback insert")
             return _fallback_insert(patched)
 
-        if refine_cfg.enabled:
+        if refine_cfg.enabled and bool(pass_images_to_model):
             try:
                 refiner = LayoutRefiner(system_prompt=prompts.layout_refiner_system)
                 refined = await refiner.refine(

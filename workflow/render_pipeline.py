@@ -166,12 +166,19 @@ async def render_daily_news_pages(
     total = len(pages_list)
     for idx, page in enumerate(pages_list, start=1):
         body_html = await _build_body_html(page, style=style)
+        portrait_max_h = max(360, min(560, int(style.full_max_width * 0.68)))
+        panorama_max_h = max(260, min(420, int(style.medium_max_width * 0.5)))
         ctx = {
             "title": safe_text(title),
             "subtitle": safe_text(subtitle_fmt.format(idx=idx, total=total)),
             "body_html": body_html,
             "bg_img": bg_img,
             "char_img": char_img,
+            "img_full_px": int(style.full_max_width),
+            "img_medium_px": int(style.medium_max_width),
+            "img_narrow_px": int(style.narrow_max_width),
+            "img_portrait_max_h": int(portrait_max_h),
+            "img_panorama_max_h": int(panorama_max_h),
         }
 
         img: Optional[Path] = await _try_with_retries(

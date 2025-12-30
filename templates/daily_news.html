@@ -112,15 +112,22 @@
       .md a { color: #2563eb; text-decoration: none; border-bottom: 1px solid rgba(37,99,235,0.25); }
       .md a:hover { border-bottom-color: rgba(37,99,235,0.8); }
       /* Images: standardize size then decide side-by-side (float) */
-      .md { --img-full: 100%; --img-medium: 820px; --img-narrow: 420px; }
+      .md {
+        /* hard-coded sizes (do not expose in config UI) */
+        --img-full: 400px;
+        --img-medium: 500px;
+        --img-narrow: 300px;
+        --img-portrait-max-h: 420;
+        --img-panorama-max-h: 320;
+      }
       .md img { max-width: 100%; height: auto; display: block; margin: 12px 0; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.35); box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10); }
       .md p.md-imgp { margin: 10px 0; }
-      .md img.md-img--full { width: var(--img-full); }
+      .md img.md-img--full { width: min(var(--img-full), 100%); margin-left: auto; margin-right: auto; }
       .md img.md-img--medium { width: min(var(--img-medium), 100%); margin-left: auto; margin-right: auto; }
       .md img.md-img--narrow { width: min(var(--img-narrow), 100%); }
       .md img.md-img--narrow:not(.md-img--float-r):not(.md-img--float-l) { margin-left: auto; margin-right: auto; }
-      .md img.md-img--portrait { max-height: 640px; object-fit: contain; }
-      .md img.md-img--panorama { max-height: 420px; object-fit: contain; }
+      .md img.md-img--portrait { max-height: calc(var(--img-portrait-max-h) * 1px); object-fit: contain; }
+      .md img.md-img--panorama { max-height: calc(var(--img-panorama-max-h) * 1px); object-fit: contain; }
       .md img.md-img--float-r,
       .md img.md-img--float-l {
         width: clamp(260px, 38%, var(--img-narrow));

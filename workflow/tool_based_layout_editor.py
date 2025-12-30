@@ -103,12 +103,19 @@ class ToolBasedLayoutEditor:
                 float_if_width_le=style.float_threshold,
                 float_enabled=style.float_enabled,
             )
+            portrait_max_h = max(360, min(560, int(style.full_max_width * 0.68)))
+            panorama_max_h = max(260, min(420, int(style.medium_max_width * 0.5)))
             ctx = {
                 "title": safe_text("每日资讯日报"),
                 "subtitle": safe_text(f"预览 {idx}/{len(pages)}"),
                 "body_html": body_html,
                 "bg_img": bg_img,
                 "char_img": char_img,
+                "img_full_px": int(style.full_max_width),
+                "img_medium_px": int(style.medium_max_width),
+                "img_narrow_px": int(style.narrow_max_width),
+                "img_portrait_max_h": int(portrait_max_h),
+                "img_panorama_max_h": int(panorama_max_h),
             }
             out_path = get_plugin_data_dir("layout_tool_previews") / (
                 f"tool_layout_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
@@ -173,6 +180,7 @@ class ToolBasedLayoutEditor:
         max_steps: int = 25,
         request_max_requests: int = 1,
         request_max_images: int = 6,
+        send_images_to_model: bool = True,
     ) -> str:
         system_prompt = self._system_prompt.strip()
         if not system_prompt:
@@ -207,7 +215,7 @@ class ToolBasedLayoutEditor:
 
         candidate_preview_url: Optional[str] = None
         candidate_preview_urls: List[str] = []
-        request_budget = max(0, int(request_max_requests))
+        request_budget = max(0, int(request_max_requests)) if send_images_to_model else 0
 
         for r in range(1, max(1, int(rounds)) + 1):
             current = read_doc(did).strip()
@@ -215,20 +223,22 @@ class ToolBasedLayoutEditor:
                 return current
 
             preview_path: Optional[Path] = None
-            try:
-                preview_path = await self._render_markdown_preview(
-                    current,
-                    refine=refine_cfg,
-                    style=style_cfg,
-                )
-            except Exception as e:
-                astrbot_logger.warning("[dailynews] tool_layout preview render failed: %s", e, exc_info=True)
+            if send_images_to_model:
+                try:
+                    preview_path = await self._render_markdown_preview(
+                        current,
+                        refine=refine_cfg,
+                        style=style_cfg,
+                    )
+                except Exception as e:
+                    astrbot_logger.warning("[dailynews] tool_layout preview render failed: %s", e, exc_info=True)
 
             image_urls: List[str] = []
-            if preview_path is not None:
-                image_urls.append(f"file:///{preview_path.resolve().as_posix()}")
-            if candidate_preview_url:
-                image_urls.append(candidate_preview_url)
+            if send_images_to_model:
+                if preview_path is not None:
+                    image_urls.append(f"file:///{preview_path.resolve().as_posix()}")
+                if candidate_preview_url:
+                    image_urls.append(candidate_preview_url)
 
             payload = {
                 "round": r,
@@ -238,8 +248,8 @@ class ToolBasedLayoutEditor:
                 "image_candidates": images_by_source,
                 "image_catalog": image_catalog or [],
                 "constraints": {
-                    "request_max_requests": request_budget,
-                    "request_max_images": request_max_images,
+                    "request_max_requests": int(request_budget) if send_images_to_model else 0,
+                    "request_max_images": int(request_max_images),
                 },
                 "candidate_preview": {
                     "provided": bool(candidate_preview_url),
@@ -271,7 +281,7 @@ class ToolBasedLayoutEditor:
                     prompt=json.dumps(payload, ensure_ascii=False),
                     system_prompt=system_prompt,
                     tools=tools,
-                    image_urls=image_urls,
+                    image_urls=image_urls if send_images_to_model else [],
                     max_steps=max(5, int(max_steps)),
                 )
             except Exception as e:
@@ -291,7 +301,7 @@ class ToolBasedLayoutEditor:
                 write_doc(did, patched_whole)
 
             req = data.get("request_image_urls")
-            if request_budget > 0 and isinstance(req, list) and req:
+            if send_images_to_model and request_budget > 0 and isinstance(req, list) and req:
                 urls = [str(u).strip() for u in req if str(u).strip()]
                 if allowed_urls:
                     urls = [u for u in urls if u in allowed_urls]
@@ -311,7 +321,7 @@ class ToolBasedLayoutEditor:
 
             # Some models keep requesting images even when budget is 0.
             # If we already provided a candidate preview, force a follow-up round that forbids further requests.
-            if (
+            if send_images_to_model and (
                 isinstance(req, list)
                 and req
                 and request_budget <= 0

@@ -25,6 +25,7 @@ class ImageLabelEntry:
     local_path: str = ""
     width: int = 0
     height: int = 0
+    skip: bool = False
 
 
 def _store_path() -> Path:
@@ -51,6 +52,7 @@ def load_labels() -> Dict[str, ImageLabelEntry]:
                 local_path=str(v.get("local_path") or ""),
                 width=int(v.get("width") or 0),
                 height=int(v.get("height") or 0),
+                skip=bool(v.get("skip") or False),
             )
         return out
     except Exception as e:
@@ -69,6 +71,7 @@ def save_labels(labels: Dict[str, ImageLabelEntry]) -> None:
             "local_path": entry.local_path,
             "width": int(entry.width),
             "height": int(entry.height),
+            "skip": bool(entry.skip),
         }
         for url, entry in (labels or {}).items()
         if isinstance(url, str) and isinstance(entry, ImageLabelEntry)
@@ -85,6 +88,7 @@ def upsert_label(
     local_path: str = "",
     width: int = 0,
     height: int = 0,
+    skip: bool = False,
     updated_at: Optional[str] = None,
 ) -> ImageLabelEntry:
     ts = updated_at or datetime.now().isoformat(timespec="seconds")
@@ -96,7 +100,7 @@ def upsert_label(
         local_path=local_path,
         width=int(width or 0),
         height=int(height or 0),
+        skip=bool(skip),
     )
     labels[url] = entry
     return entry
-

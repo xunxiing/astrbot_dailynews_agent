@@ -70,26 +70,6 @@
     "description": "是否将窄图优先与文字并排（浮动排版）",
     "default": true
   },
-  "render_img_float_threshold": {
-    "type": "int",
-    "description": "图片标准化后，若宽度 <= 阈值，则优先并排（px）",
-    "default": 480
-  },
-  "render_img_full_max_width": {
-    "type": "int",
-    "description": "大图的最大显示宽度（px）",
-    "default": 1000
-  },
-  "render_img_medium_max_width": {
-    "type": "int",
-    "description": "中图的最大显示宽度（px）",
-    "default": 820
-  },
-  "render_img_narrow_max_width": {
-    "type": "int",
-    "description": "窄图的最大显示宽度（px）",
-    "default": 420
-  },
   "preferred_source_types": {
     "type": "list",
     "description": "优先处理的来源类型",
@@ -161,6 +141,21 @@
     "type": "bool",
     "description": "强制重新打标（忽略缓存）",
     "default": false
+  },
+  "image_label_llm_max_retries": {
+    "type": "int",
+    "description": "图片打标调用 LLM 的重试次数（并发下更容易触发限额）",
+    "default": 2
+  },
+  "image_label_llm_retry_base_s": {
+    "type": "float",
+    "description": "图片打标 LLM 重试基础退避秒数（指数退避）",
+    "default": 1.0
+  },
+  "image_label_llm_retry_max_s": {
+    "type": "float",
+    "description": "图片打标 LLM 单次退避最大秒数",
+    "default": 12.0
   },
   "image_layout_enabled": {
     "type": "bool",

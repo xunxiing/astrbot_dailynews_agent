@@ -49,19 +49,22 @@ def _to_str(value: Any, default: str = "") -> str:
 
 @dataclass(frozen=True)
 class RenderImageStyleConfig:
-    full_max_width: int = 1000
-    medium_max_width: int = 820
-    narrow_max_width: int = 420
+    # NOTE: These values are intentionally hard-coded (see user request).
+    # The dashboard config fields for these widths/threshold are disabled/removed.
+    full_max_width: int = 400
+    medium_max_width: int = 500
+    narrow_max_width: int = 300
     float_threshold: int = 480
     float_enabled: bool = True
 
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> "RenderImageStyleConfig":
         return cls(
-            full_max_width=max(200, _to_int(cfg.get("render_img_full_max_width"), 1000)),
-            medium_max_width=max(200, _to_int(cfg.get("render_img_medium_max_width"), 820)),
-            narrow_max_width=max(160, _to_int(cfg.get("render_img_narrow_max_width"), 420)),
-            float_threshold=max(160, _to_int(cfg.get("render_img_float_threshold"), 480)),
+            # Hard-coded layout constants, only float_enabled remains configurable.
+            full_max_width=400,
+            medium_max_width=500,
+            narrow_max_width=300,
+            float_threshold=480,
             float_enabled=_to_bool(cfg.get("render_img_float_enabled"), True),
         )
 
@@ -140,6 +143,9 @@ class ImageLabelConfig:
     batch_size: int = 2
     concurrency: int = 4
     force_refresh: bool = False
+    llm_max_retries: int = 2
+    llm_retry_base_s: float = 1.0
+    llm_retry_max_s: float = 12.0
 
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> "ImageLabelConfig":
@@ -150,6 +156,9 @@ class ImageLabelConfig:
             batch_size=max(1, min(2, _to_int(cfg.get("image_label_batch_size"), 2))),
             concurrency=max(1, _to_int(cfg.get("image_label_concurrency"), 4)),
             force_refresh=_to_bool(cfg.get("image_label_force_refresh"), False),
+            llm_max_retries=max(0, _to_int(cfg.get("image_label_llm_max_retries"), 2)),
+            llm_retry_base_s=max(0.1, _to_float(cfg.get("image_label_llm_retry_base_s"), 1.0)),
+            llm_retry_max_s=max(0.5, _to_float(cfg.get("image_label_llm_retry_max_s"), 12.0)),
         )
 
 

@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv/
+env/
+venv/
+build/
+dist/
+
+# IDEs
+.vscode/
+.trae/
+.idea/
+
+# Project specific caches and outputs
+data/html_image_cache/
+data/image_cache/
+data/image_label_cache/
+data/image_previews/
+data/layout_tool_previews/
+data/layout_tool_requests/
+data/image_layout_requests/
+data/md_docs/
+data/render_fallback/
+analysis/wechatanalysis/output/
+
+# Data states (optional, but often ignored for individual deployments)
+# data/cmd_config.json
+# data/scheduler_config.json
+# data/wechat_seed_state.json
+
+# Logs
+*.log

@@ -93,12 +93,19 @@ class LayoutRefiner:
                 float_if_width_le=style.float_threshold,
                 float_enabled=style.float_enabled,
             )
+            portrait_max_h = max(360, min(560, int(style.full_max_width * 0.68)))
+            panorama_max_h = max(260, min(420, int(style.medium_max_width * 0.5)))
             ctx = {
                 "title": safe_text("每日资讯日报"),
                 "subtitle": safe_text(f"预览 {idx}/{len(pages)}"),
                 "body_html": body_html,
                 "bg_img": bg_img,
                 "char_img": char_img,
+                "img_full_px": int(style.full_max_width),
+                "img_medium_px": int(style.medium_max_width),
+                "img_narrow_px": int(style.narrow_max_width),
+                "img_portrait_max_h": int(portrait_max_h),
+                "img_panorama_max_h": int(panorama_max_h),
             }
             out_path = get_plugin_data_dir("layout_refine_previews") / (
                 f"layout_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
