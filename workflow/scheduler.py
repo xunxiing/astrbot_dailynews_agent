@@ -18,6 +18,7 @@ except Exception:  # pragma: no cover
     MessageChain = None  # type: ignore
 
 from .agents import MiyousheSubAgent, NewsSourceConfig, NewsWorkflowManager, WechatSubAgent
+from .github_agent import GitHubSubAgent
 from .rendering import load_template
 from .config_models import (
     ImageLayoutConfig,
@@ -74,6 +75,7 @@ class DailyNewsScheduler:
     def _init_workflow_manager(self):
         self.workflow_manager.register_sub_agent("wechat", WechatSubAgent)
         self.workflow_manager.register_sub_agent("miyoushe", MiyousheSubAgent)
+        self.workflow_manager.register_sub_agent("github", GitHubSubAgent)
 
     def _save_config(self):
         if hasattr(self.config, "save_config"):
@@ -148,6 +150,13 @@ class DailyNewsScheduler:
         cfg.setdefault("render_img_narrow_max_width", style.narrow_max_width)
 
         cfg.setdefault("preferred_source_types", ["wechat"])
+        cfg.setdefault("github_enabled", False)
+        cfg.setdefault("github_repos", [])
+        cfg.setdefault("github_token", "")
+        cfg.setdefault("github_since_hours", 30)
+        cfg.setdefault("github_max_releases", 3)
+        cfg.setdefault("github_max_commits", 6)
+        cfg.setdefault("github_max_prs", 6)
         cfg.setdefault("llm_timeout_s", 180)
         cfg.setdefault("llm_write_timeout_s", 360)
         cfg.setdefault("llm_merge_timeout_s", 240)
@@ -196,6 +205,8 @@ class DailyNewsScheduler:
             cfg["preferred_source_types"] = ["wechat"]
         if not isinstance(cfg.get("image_layout_sources"), list):
             cfg["image_layout_sources"] = []
+        if not isinstance(cfg.get("github_repos"), list):
+            cfg["github_repos"] = []
 
         return cfg
 
@@ -283,6 +294,32 @@ class DailyNewsScheduler:
                 ),
             )
             self.workflow_manager.add_source(source)
+
+        # GitHub repos live in a dedicated list, but we map each repo into a source for the workflow.
+        if bool(cfg.get("github_enabled", False)):
+            repos = cfg.get("github_repos") or []
+            if isinstance(repos, list):
+                for r in repos:
+                    s = str(r or "").strip()
+                    if not s:
+                        continue
+                    # Accept "owner/repo" or URL; the GitHub agent will normalize further.
+                    name = s
+                    if "github.com/" in s:
+                        try:
+                            name = s.split("github.com/", 1)[1].strip().strip("/")
+                        except Exception:
+                            name = s
+                    name = f"GitHub {name}"
+                    self.workflow_manager.add_source(
+                        NewsSourceConfig(
+                            name=name,
+                            url=s,
+                            type="github",
+                            priority=1,
+                            max_articles=1,
+                        )
+                    )
 
         astrbot_logger.info(
             "[dailynews] loaded %s news_sources: %s",

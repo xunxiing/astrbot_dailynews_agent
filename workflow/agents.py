@@ -6,6 +6,7 @@
 from .llm import LLMRunner
 from .main_agent import MainNewsAgent
 from .miyoushe_agent import MiyousheSubAgent
+from .github_agent import GitHubSubAgent
 from .models import MainAgentDecision, NewsSourceConfig, SubAgentResult
 from .wechat_agent import WechatSubAgent
 from .workflow_manager import NewsWorkflowManager
@@ -14,10 +15,10 @@ __all__ = [
     "LLMRunner",
     "MainAgentDecision",
     "MainNewsAgent",
+    "GitHubSubAgent",
     "MiyousheSubAgent",
     "NewsSourceConfig",
     "NewsWorkflowManager",
     "SubAgentResult",
     "WechatSubAgent",
 ]
-

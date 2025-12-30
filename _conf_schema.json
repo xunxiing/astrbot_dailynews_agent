@@ -74,8 +74,46 @@
     "type": "list",
     "description": "优先处理的来源类型",
     "default": ["wechat"],
-    "hint": "例如：[\"wechat\", \"miyoushe\"]",
-    "options": ["wechat", "miyoushe"]
+    "hint": "例如：[\"wechat\", \"miyoushe\", \"github\"]",
+    "options": ["wechat", "miyoushe", "github"]
+  },
+  "github_enabled": {
+    "type": "bool",
+    "description": "启用 GitHub 信息源（读取近 N 小时 release/commit/pr）",
+    "default": false,
+    "obvious_hint": true
+  },
+  "github_repos": {
+    "type": "list",
+    "description": "GitHub 仓库列表（owner/repo 或 https://github.com/owner/repo）",
+    "default": [],
+    "hint": "例如：[\"openai/openai-python\", \"https://github.com/astrbot/astrbot\"]"
+  },
+  "github_token": {
+    "type": "string",
+    "description": "GitHub Token（推荐填写，避免限额/用于私有仓库）",
+    "default": "",
+    "hint": "建议使用 Fine-grained token：至少拥有 repo 读取权限"
+  },
+  "github_since_hours": {
+    "type": "int",
+    "description": "抓取近多少小时内的更新（release/commit/pr）",
+    "default": 30
+  },
+  "github_max_releases": {
+    "type": "int",
+    "description": "每个仓库最多展示多少条 Release 更新（近 N 小时）",
+    "default": 3
+  },
+  "github_max_commits": {
+    "type": "int",
+    "description": "每个仓库最多展示多少条 Commit 更新（近 N 小时）",
+    "default": 6
+  },
+  "github_max_prs": {
+    "type": "int",
+    "description": "每个仓库最多展示多少条 PR 更新（近 N 小时）",
+    "default": 6
   },
   "llm_timeout_s": {
     "type": "int",
