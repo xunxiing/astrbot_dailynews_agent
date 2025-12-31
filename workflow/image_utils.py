@@ -30,12 +30,50 @@ _INLINE_NOOP_WARNED: Set[str] = set()
 
 
 def get_plugin_data_dir(subdir: str) -> Path:
-    if StarTools is not None:
+    """
+    Get the plugin data directory (persisted under AstrBot's data/plugin_data/<plugin_name>/).
+
+    Temporary files (previews/caches) are stored under .../tmp/<subdir>/.
+    """
+
+    plugin_name = "astrbot_dailynews_agent"
+    temp_subdirs = {
+        # images / previews / caches / render artifacts (temp)
+        "html_image_cache",
+        "image_cache",
+        "image_label_cache",
+        "image_layout_requests",
+        "image_previews",
+        "layout_refine_previews",
+        "layout_refine_requests",
+        "layout_tool_previews",
+        "layout_tool_requests",
+        "render_fallback",
+    }
+
+    base: Optional[Path] = None
+    try:
+        from astrbot.core.utils.astrbot_path import get_astrbot_data_path  # type: ignore
+
+        base = Path(get_astrbot_data_path()) / "plugin_data" / plugin_name
+    except Exception:
+        base = None
+
+    if base is None and StarTools is not None:
         try:
-            return Path(StarTools.get_data_dir()) / subdir
+            base = Path(StarTools.get_data_dir())
         except Exception:
-            pass
-    return Path(__file__).resolve().parent.parent / "data" / subdir
+            base = None
+
+    if base is None:
+        base = Path(__file__).resolve().parent.parent / "data"
+
+    s = str(subdir or "").strip().replace("\\", "/").strip("/")
+    if not s:
+        return base
+    if s in temp_subdirs:
+        return base / "tmp" / s
+    return base / s
 
 
 def _normalize_urls(urls: Iterable[str]) -> List[str]:

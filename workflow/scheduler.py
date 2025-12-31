@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover
 
 from .agents import MiyousheSubAgent, NewsSourceConfig, NewsWorkflowManager, WechatSubAgent
 from .github_agent import GitHubSubAgent
+from .github_source import build_github_sources_from_config
 from .rendering import load_template
 from .config_models import (
     ImageLayoutConfig,
@@ -296,30 +297,8 @@ class DailyNewsScheduler:
             self.workflow_manager.add_source(source)
 
         # GitHub repos live in a dedicated list, but we map each repo into a source for the workflow.
-        if bool(cfg.get("github_enabled", False)):
-            repos = cfg.get("github_repos") or []
-            if isinstance(repos, list):
-                for r in repos:
-                    s = str(r or "").strip()
-                    if not s:
-                        continue
-                    # Accept "owner/repo" or URL; the GitHub agent will normalize further.
-                    name = s
-                    if "github.com/" in s:
-                        try:
-                            name = s.split("github.com/", 1)[1].strip().strip("/")
-                        except Exception:
-                            name = s
-                    name = f"GitHub {name}"
-                    self.workflow_manager.add_source(
-                        NewsSourceConfig(
-                            name=name,
-                            url=s,
-                            type="github",
-                            priority=1,
-                            max_articles=1,
-                        )
-                    )
+        for src in build_github_sources_from_config(cfg):
+            self.workflow_manager.add_source(src)
 
         astrbot_logger.info(
             "[dailynews] loaded %s news_sources: %s",
