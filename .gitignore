@@ -22,3 +22,7 @@ analysis/wechatanalysis/output/
 
 # Logs
 *.log
+
+astrbot开发文档，务必阅读完成后再开始写插件.txt
+AGENTS.md
+test_plugin.py
