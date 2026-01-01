@@ -15,21 +15,10 @@ dist/
 .idea/
 
 # Project specific caches and outputs
-data/html_image_cache/
-data/image_cache/
-data/image_label_cache/
-data/image_previews/
-data/layout_tool_previews/
-data/layout_tool_requests/
-data/image_layout_requests/
-data/md_docs/
-data/render_fallback/
-analysis/wechatanalysis/output/
+data/
 
-# Data states (optional, but often ignored for individual deployments)
-# data/cmd_config.json
-# data/scheduler_config.json
-# data/wechat_seed_state.json
+# Analysis outputs
+analysis/wechatanalysis/output/
 
 # Logs
 *.log
