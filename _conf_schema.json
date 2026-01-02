@@ -115,6 +115,31 @@
     "description": "每个仓库最多展示多少条 PR 更新（近 N 小时）",
     "default": 6
   },
+  "twitter_enabled": {
+    "type": "bool",
+    "description": "是否启用 X/Twitter 信息源（需要 Playwright + 代理）",
+    "default": false
+  },
+  "twitter_targets": {
+    "type": "list",
+    "description": "X/Twitter 主页列表（例如：https://x.com/openai）",
+    "default": []
+  },
+  "twitter_proxy": {
+    "type": "string",
+    "description": "X/Twitter 代理地址（支持 http/socks5，例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:7890）",
+    "default": ""
+  },
+  "twitter_max_tweets": {
+    "type": "int",
+    "description": "每个主页最多抓取推文数（忽略置顶）",
+    "default": 3
+  },
+  "twitter_priority": {
+    "type": "int",
+    "description": "X/Twitter 信息源优先级（数值越大越先处理）",
+    "default": 1
+  },
   "llm_timeout_s": {
     "type": "int",
     "description": "LLM 请求超时时间（秒）",
@@ -322,31 +347,6 @@
     "description": "迭代预览渲染页数（建议 1）",
     "default": 1
   },
-  "image_layout_refine_preview_timeout_ms": {
-    "type": "int",
-    "description": "迭代预览渲染超时（毫秒，Playwright）",
-    "default": 20000
-  },
-  "wechat_seed_persist": {
-    "type": "bool",
-    "description": "是否持久化“追逐到最新”的种子文章（加速下次抓取）",
-    "default": true
-  },
-  "wechat_chase_max_hops": {
-    "type": "int",
-    "description": "追逐到最新的最大跳转次数",
-    "default": 6
-  },
-  "miyoushe_headless": {
-    "type": "bool",
-    "description": "米游社抓取使用无头浏览器",
-    "default": true
-  },
-  "miyoushe_sleep_between_s": {
-    "type": "float",
-    "description": "米游社列表点开间隔（秒）",
-    "default": 0.6
-  },
   "target_sessions": {
     "type": "list",
     "description": "推送目标会话 unified_msg_origin 列表",
@@ -363,6 +363,12 @@
     "description": "新闻源（链接列表）",
     "default": ["https://mp.weixin.qq.com/s/K1FGe-TiAk52B8lD6Kg8Mw","https://www.miyoushe.com/ys/accountCenter/postList?id=75276539"],
     "hint": "每一项填一个链接：公众号文章（mp.weixin.qq.com）或米游社用户帖子列表（miyoushe.com/.../accountCenter/postList?id=...）。可混用。"
+  },
+  "last_run_schedule_time": {
+    "type": "string",
+    "description": "内部字段：上次运行时的 schedule_time（用于 schedule_time 变更后的补跑）",
+    "default": "",
+    "invisible": true
   },
   "last_run_date": {
     "type": "string",

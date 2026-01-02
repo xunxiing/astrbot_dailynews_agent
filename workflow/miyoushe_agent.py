@@ -117,6 +117,7 @@ class MiyousheSubAgent:
         instruction: str,
         articles: List[Dict[str, str]],
         llm: LLMRunner,
+        user_config: Dict[str, Any] | None = None,
     ) -> SubAgentResult:
         if not articles:
             return SubAgentResult(

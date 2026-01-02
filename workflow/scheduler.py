@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,7 @@ except Exception:  # pragma: no cover
 from .agents import MiyousheSubAgent, NewsSourceConfig, NewsWorkflowManager, WechatSubAgent
 from .github_agent import GitHubSubAgent
 from .github_source import build_github_sources_from_config
+from .twitter_agent import TwitterSubAgent
 from .rendering import load_template
 from .config_models import (
     ImageLayoutConfig,
@@ -38,6 +40,95 @@ try:
     from astrbot.core import html_renderer as _astrbot_html_renderer
 except Exception:  # pragma: no cover
     _astrbot_html_renderer = None  # type: ignore
+
+
+_UMO_PATTERN = re.compile(r"(?P<umo>[A-Za-z0-9_-]+:[A-Za-z]+Message:[^\s\"'“”‘’「」<>]+)")
+
+
+UMO_DEFAULT_PLATFORM_ID = "napcat"
+UMO_DEFAULT_MESSAGE_TYPE = "GroupMessage"
+
+WECHAT_SEED_PERSIST = True
+WECHAT_CHASE_MAX_HOPS = 6
+
+MIYOUSHE_HEADLESS = True
+MIYOUSHE_SLEEP_BETWEEN_S = 0.6
+
+LAYOUT_REFINE_PREVIEW_TIMEOUT_MS = 20000
+
+
+def _normalize_umo(
+    raw: Any,
+    *,
+    default_platform_id: str = UMO_DEFAULT_PLATFORM_ID,
+    default_message_type: str = UMO_DEFAULT_MESSAGE_TYPE,
+) -> Optional[str]:
+    """
+    Normalize an AstrBot session string to `platform:MessageType:session_id`.
+
+    Accepts:
+    - full UMO: `napcat:GroupMessage:1030223077`
+    - shorthand: `1030223077` (expanded using defaults)
+    - wrapped text: `UMO: 「napcat:GroupMessage:1030223077」`
+    """
+    if raw is None:
+        return None
+
+    s = str(raw).strip()
+    if not s:
+        return None
+
+    s2 = s.strip(" \t\r\n\"'“”‘’「」[]()<>")
+
+    parts = [p.strip() for p in s2.split(":")]
+    if len(parts) == 3 and all(parts):
+        return ":".join(parts)
+
+    if s2.isdigit():
+        if not default_platform_id or not default_message_type:
+            return None
+        return f"{default_platform_id}:{default_message_type}:{s2}"
+
+    m = _UMO_PATTERN.search(s)
+    if not m:
+        return None
+
+    candidate = m.group("umo").strip()
+    parts = [p.strip() for p in candidate.split(":")]
+    if len(parts) == 3 and all(parts):
+        return ":".join(parts)
+    return None
+
+
+def _normalize_umo_list(
+    raw_list: Any,
+    *,
+    default_platform_id: str = UMO_DEFAULT_PLATFORM_ID,
+    default_message_type: str = UMO_DEFAULT_MESSAGE_TYPE,
+) -> tuple[list[str], list[str]]:
+    normalized: list[str] = []
+    invalid: list[str] = []
+    seen: set[str] = set()
+
+    if not isinstance(raw_list, list):
+        return normalized, invalid
+
+    for raw in raw_list:
+        umo = _normalize_umo(
+            raw,
+            default_platform_id=default_platform_id,
+            default_message_type=default_message_type,
+        )
+        if not umo:
+            if raw is not None and str(raw).strip():
+                invalid.append(str(raw))
+            continue
+        if umo in seen:
+            continue
+        seen.add(umo)
+        normalized.append(umo)
+
+    return normalized, invalid
 
 
 def _is_valid_image_file(path: Path) -> bool:
@@ -77,6 +168,7 @@ class DailyNewsScheduler:
         self.workflow_manager.register_sub_agent("wechat", WechatSubAgent)
         self.workflow_manager.register_sub_agent("miyoushe", MiyousheSubAgent)
         self.workflow_manager.register_sub_agent("github", GitHubSubAgent)
+        self.workflow_manager.register_sub_agent("twitter", TwitterSubAgent)
 
     def _save_config(self):
         if hasattr(self.config, "save_config"):
@@ -165,6 +257,12 @@ class DailyNewsScheduler:
         cfg.setdefault("main_agent_provider_id", "")
         cfg.setdefault("image_plan_enabled", True)
 
+        cfg.setdefault("twitter_enabled", False)
+        cfg.setdefault("twitter_targets", [])
+        cfg.setdefault("twitter_proxy", "")
+        cfg.setdefault("twitter_priority", 1)
+        cfg.setdefault("twitter_max_tweets", 3)
+
         layout = ImageLayoutConfig.from_mapping(cfg)
         cfg.setdefault("image_layout_enabled", layout.enabled)
         cfg.setdefault("image_layout_provider_id", layout.provider_id)
@@ -187,15 +285,18 @@ class DailyNewsScheduler:
         cfg.setdefault("image_layout_refine_request_max_images", refine.request_max_images)
         cfg.setdefault("image_layout_refine_preview_page_chars", refine.preview_page_chars)
         cfg.setdefault("image_layout_refine_preview_pages", refine.preview_pages)
-        cfg.setdefault("image_layout_refine_preview_timeout_ms", refine.preview_timeout_ms)
+        # Hardcode these to keep UI/config simple.
+        cfg["image_layout_refine_preview_timeout_ms"] = LAYOUT_REFINE_PREVIEW_TIMEOUT_MS
 
-        cfg.setdefault("wechat_seed_persist", True)
-        cfg.setdefault("wechat_chase_max_hops", 6)
-        cfg.setdefault("miyoushe_headless", True)
-        cfg.setdefault("miyoushe_sleep_between_s", 0.6)
+        # Hardcode these to keep UI/config simple.
+        cfg["wechat_seed_persist"] = WECHAT_SEED_PERSIST
+        cfg["wechat_chase_max_hops"] = WECHAT_CHASE_MAX_HOPS
+        cfg["miyoushe_headless"] = MIYOUSHE_HEADLESS
+        cfg["miyoushe_sleep_between_s"] = MIYOUSHE_SLEEP_BETWEEN_S
         cfg.setdefault("target_sessions", [])
         cfg.setdefault("admin_sessions", [])
         cfg.setdefault("last_run_date", "")
+        cfg.setdefault("last_run_schedule_time", "")
 
         cfg["news_sources"] = self.get_news_sources()
         if not isinstance(cfg.get("target_sessions"), list):
@@ -208,6 +309,8 @@ class DailyNewsScheduler:
             cfg["image_layout_sources"] = []
         if not isinstance(cfg.get("github_repos"), list):
             cfg["github_repos"] = []
+        if not isinstance(cfg.get("twitter_targets"), list):
+            cfg["twitter_targets"] = []
 
         return cfg
 
@@ -216,7 +319,16 @@ class DailyNewsScheduler:
             return
         self.running = True
         self.task = asyncio.create_task(self._loop())
-        astrbot_logger.info("[dailynews] scheduler started")
+        try:
+            cfg = self._normalized_config()
+            astrbot_logger.info(
+                "[dailynews] scheduler started (enabled=%s, schedule_time=%s, last_run_date=%s)",
+                bool(cfg.get("enabled", False)),
+                cfg.get("schedule_time", ""),
+                cfg.get("last_run_date", ""),
+            )
+        except Exception:
+            astrbot_logger.info("[dailynews] scheduler started")
 
     async def stop(self):
         self.running = False
@@ -244,13 +356,49 @@ class DailyNewsScheduler:
                 except Exception:
                     schedule_time = datetime.strptime("09:00", "%H:%M").time()
 
-                last_run = str(self.config.get("last_run_date", "") or "")
-                due = now.time().hour == schedule_time.hour and now.time().minute == schedule_time.minute
+                today = now.strftime("%Y-%m-%d")
+                last_run_date = str(self.config.get("last_run_date", "") or "")
+                last_run_schedule_time = str(self.config.get("last_run_schedule_time", "") or "")
 
-                if due and last_run != now.strftime("%Y-%m-%d"):
-                    await self.generate_and_send(cfg)
-                    self.config["last_run_date"] = now.strftime("%Y-%m-%d")
-                    self._save_config()
+                # Run once per day per configured schedule_time.
+                already_ran = last_run_date == today and last_run_schedule_time == schedule_time_str
+                should_run = (not already_ran) and (now.time() >= schedule_time)
+
+                if should_run:
+                    raw_targets = list(cfg.get("target_sessions", []) or [])
+                    targets, invalid = _normalize_umo_list(
+                        raw_targets,
+                        default_platform_id=UMO_DEFAULT_PLATFORM_ID,
+                        default_message_type=UMO_DEFAULT_MESSAGE_TYPE,
+                    )
+
+                    if raw_targets and not targets:
+                        astrbot_logger.warning(
+                            "[dailynews] scheduled run skipped: all target_sessions invalid (example=%s). Expected `napcat:GroupMessage:1030223077` or shorthand `1030223077`.",
+                            invalid[:3],
+                        )
+                        await asyncio.sleep(120)
+                        continue
+
+                    if not raw_targets:
+                        astrbot_logger.info("[dailynews] scheduled run skipped: no target_sessions configured")
+                        await asyncio.sleep(120)
+                        continue
+
+                    content = await self.generate_once(cfg)
+                    sent = await self._send_to_targets(content, targets, config=cfg)
+
+                    if sent > 0:
+                        self.config["last_run_date"] = today
+                        self.config["last_run_schedule_time"] = schedule_time_str
+                        self._save_config()
+                    else:
+                        astrbot_logger.warning(
+                            "[dailynews] scheduled run generated content but sent=0; will retry later (check platform_id/message_type/targets)"
+                        )
+                        await asyncio.sleep(180)
+                        continue
+
                     await asyncio.sleep(65)
                     continue
 
@@ -299,6 +447,42 @@ class DailyNewsScheduler:
         # GitHub repos live in a dedicated list, but we map each repo into a source for the workflow.
         for src in build_github_sources_from_config(cfg):
             self.workflow_manager.add_source(src)
+
+        # Twitter/X targets live in a dedicated list, but we map each into a source for the workflow.
+        if bool(cfg.get("twitter_enabled", False)):
+            raw_targets = cfg.get("twitter_targets", []) or []
+            if isinstance(raw_targets, list):
+                for idx, u in enumerate(raw_targets, start=1):
+                    if not isinstance(u, str):
+                        continue
+                    url = u.strip()
+                    if not url:
+                        continue
+                    if url.lower().startswith(("socks5://", "socks5h://")):
+                        astrbot_logger.warning(
+                            "[dailynews] twitter_targets[%s] looks like a proxy (%s). You may have swapped twitter_targets and twitter_proxy.",
+                            idx,
+                            url,
+                        )
+                        continue
+                    if not url.lower().startswith(("http://", "https://")) or (
+                        "x.com" not in url.lower() and "twitter.com" not in url.lower()
+                    ):
+                        astrbot_logger.warning(
+                            "[dailynews] twitter_targets[%s] invalid (%s). Expected https://x.com/<user> or https://twitter.com/<user>.",
+                            idx,
+                            url,
+                        )
+                        continue
+                    self.workflow_manager.add_source(
+                        NewsSourceConfig(
+                            name=f"X/{idx}",
+                            url=url,
+                            type="twitter",
+                            priority=int(cfg.get("twitter_priority") or 1),
+                            max_articles=int(cfg.get("twitter_max_tweets") or 3),
+                        )
+                    )
 
         astrbot_logger.info(
             "[dailynews] loaded %s news_sources: %s",
@@ -400,14 +584,26 @@ class DailyNewsScheduler:
             out.append(Path(r.image_path).resolve().as_posix())
         return out
 
-    async def _send_to_targets(self, content: str, target_sessions: List[str], config: Dict[str, Any]):
+    async def _send_to_targets(self, content: str, target_sessions: List[str], config: Dict[str, Any]) -> int:
+        normalized_targets, invalid_targets = _normalize_umo_list(
+            target_sessions,
+            default_platform_id=UMO_DEFAULT_PLATFORM_ID,
+            default_message_type=UMO_DEFAULT_MESSAGE_TYPE,
+        )
+        if invalid_targets:
+            astrbot_logger.warning(
+                "[dailynews] invalid target_sessions entries skipped (example=%s). Expected `napcat:GroupMessage:1030223077` or shorthand `1030223077`.",
+                invalid_targets[:3],
+            )
+        target_sessions = normalized_targets
+
         if not target_sessions:
             astrbot_logger.info("[dailynews] no target_sessions configured; skip sending")
-            return
+            return 0
 
         if MessageChain is None:
             astrbot_logger.warning("[dailynews] MessageChain unavailable; skip sending")
-            return
+            return 0
 
         delivery_mode = str(config.get("delivery_mode", "html_image") or "html_image")
         img_paths: List[str] = []
@@ -417,7 +613,9 @@ class DailyNewsScheduler:
                 astrbot_logger.warning("[dailynews] html_image enabled but render returned empty; fallback to text")
                 delivery_mode = "plain"
 
+        sent_sessions = 0
         for umo in target_sessions:
+            sent_this = False
             try:
                 if delivery_mode == "html_image":
                     for img_path in img_paths:
@@ -429,13 +627,20 @@ class DailyNewsScheduler:
                         else:
                             chain = MessageChain().file_image(p)
                         await self.context.send_message(umo, chain)
+                        sent_this = True
                 else:
                     chain = MessageChain().message(content)
                     await self.context.send_message(umo, chain)
+                    sent_this = True
             except Exception as e:
                 astrbot_logger.error("[dailynews] send_message failed: %s", e, exc_info=True)
+
+            if sent_this:
+                sent_sessions += 1
+
+        return sent_sessions
 
     async def notify_admin(self, text: str):
         cfg = self._normalized_config()
         admins = list(cfg.get("admin_sessions", []) or [])
-        await self._send_to_targets(f"dailynews error\n\n{text}", admins)
+        await self._send_to_targets(f"dailynews error\n\n{text}", admins, config=cfg)

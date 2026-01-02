@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
       :root {
-        --w: 1080px;
+        /* Slightly wider to reduce right-side whitespace on some renderers */
+        --w: 1120px;
         --radius: 18px;
         --text: #111827;
         --muted: rgba(17, 24, 39, 0.70);
@@ -13,7 +14,7 @@
         --paper-border: rgba(17, 24, 39, 0.10);
       }
       * { box-sizing: border-box; }
-      body { margin: 0; padding: 0; background: transparent; }
+      html, body { margin: 0; padding: 0; width: var(--w); overflow-x: hidden; background: #ffffff; }
       .wrap {
         width: var(--w);
         position: relative;
@@ -97,7 +98,7 @@
         padding: 20px 22px;
       }
       /* Markdown styles */
-      .md { font-size: 18px; line-height: 1.72; color: var(--text); }
+      .md { font-size: 23px; line-height: 1.72; color: var(--text); }
       .md h1 { margin: 10px 0 12px; line-height: 1.2; font-size: 28px; }
       .md h2, .md h3 { margin: 0; line-height: 1.2; }
       /* Heading + divider should stack vertically (fix multi-line headings) */

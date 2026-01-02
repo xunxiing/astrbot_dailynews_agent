@@ -213,7 +213,15 @@ class NewsWorkflowManager:
                     continue
                 agent = agent_cls()
                 instruction = decision.processing_instructions.get(source_name, "")
-                write_tasks.append(agent.process_source(source, instruction, fetched.get(source_name, []), llm_write))
+                write_tasks.append(
+                    agent.process_source(
+                        source,
+                        instruction,
+                        fetched.get(source_name, []),
+                        llm_write,
+                        user_config=user_config,
+                    )
+                )
 
             astrbot_logger.debug("[dailynews] write_tasks: %s", len(write_tasks))
 

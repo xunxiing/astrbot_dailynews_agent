@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import difflib
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import Field
@@ -16,6 +17,54 @@ from ..workflow.md_doc_store import create_doc, read_doc, write_doc
 
 def _json_dump(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2)
+
+
+_FUZZY_STRIP_RE = re.compile(r"[\s`*_>#\-\.\(\)\[\]{}:：，,。！？!？“”‘’\"'…—]+")
+
+
+def _fuzzy_norm(s: str) -> str:
+    return _FUZZY_STRIP_RE.sub("", (s or "").strip()).lower()
+
+
+def _fuzzy_suggest_lines(
+    text: str,
+    query: str,
+    *,
+    limit: int = 5,
+    min_score: float = 0.55,
+) -> List[Dict[str, Any]]:
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    qn = _fuzzy_norm(q)
+    if not qn:
+        return []
+
+    items: List[Tuple[float, int, str]] = []
+    for idx, raw_line in enumerate((text or "").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if len(line) > 180:
+            continue
+        ln = _fuzzy_norm(line)
+        if not ln:
+            continue
+        # quick boosts for substring matches
+        if qn in ln or ln in qn:
+            score = 0.99
+        else:
+            score = difflib.SequenceMatcher(a=qn, b=ln).ratio()
+        if score < min_score:
+            continue
+        items.append((score, idx, line))
+
+    items.sort(key=lambda x: (-x[0], x[1]))
+    out: List[Dict[str, Any]] = []
+    for score, line_no, line in items[: max(1, min(int(limit), 20))]:
+        out.append({"line_no": line_no, "text": line, "score": round(float(score), 3)})
+    return out
 
 
 def _normalize_occurrence(value: Any, default: int = 1) -> int:
@@ -99,6 +148,7 @@ def _apply_edits(text: str, edits: List[Dict[str, Any]]) -> Tuple[str, Dict[str,
     md = text or ""
     applied = 0
     errors: List[str] = []
+    not_found: List[Dict[str, Any]] = []
 
     for e in edits or []:
         if not isinstance(e, dict):
@@ -114,6 +164,13 @@ def _apply_edits(text: str, edits: List[Dict[str, Any]]) -> Tuple[str, Dict[str,
         spans = _find_spans(md, match=match, regex=regex, occurrence=occurrence if occurrence != 0 else 10**9)
         if not spans:
             errors.append(f"match not found: {match[:60]}")
+            if not regex and match and len(match) <= 240:
+                not_found.append(
+                    {
+                        "match": match,
+                        "suggestions": _fuzzy_suggest_lines(md, match, limit=5),
+                    }
+                )
             continue
         # only apply to the first match unless occurrence==0 (all)
         targets = spans if occurrence == 0 else spans[:1]
@@ -138,7 +195,7 @@ def _apply_edits(text: str, edits: List[Dict[str, Any]]) -> Tuple[str, Dict[str,
                 applied += 1
                 continue
 
-    return md, {"applied": applied, "errors": errors}
+    return md, {"applied": applied, "errors": errors, "not_found": not_found}
 
 
 @dataclass
@@ -299,13 +356,24 @@ class MarkdownDocApplyEditsTool(FunctionTool[AstrAgentContext]):
         doc_id = str(kwargs.get("doc_id") or "").strip()
         edits = kwargs.get("edits") or []
         if not isinstance(edits, list) or not edits:
-            return _json_dump({"doc_id": doc_id, "changed": False, "applied": 0, "errors": ["edits empty"]})
+            return _json_dump(
+                {
+                    "ok": False,
+                    "doc_id": doc_id,
+                    "changed": False,
+                    "applied": 0,
+                    "errors": ["edits empty"],
+                    "not_found": [],
+                }
+            )
         md = read_doc(doc_id)
         patched, rep = _apply_edits(md, edits=[e for e in edits if isinstance(e, dict)])
         changed = patched != md
         if changed:
             write_doc(doc_id, patched)
-        return _json_dump({"doc_id": doc_id, "changed": changed, **rep})
+        errors = rep.get("errors") if isinstance(rep, dict) else None
+        ok = bool(isinstance(errors, list) and len(errors) == 0)
+        return _json_dump({"ok": ok, "doc_id": doc_id, "changed": changed, **rep})
 
 
 @dataclass
@@ -328,6 +396,10 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
                     "type": "boolean",
                     "description": "Ensure blank lines around insertion, default true",
                 },
+                "suggestions_limit": {
+                    "type": "integer",
+                    "description": "How many fuzzy suggestions to return on failure, default 5",
+                },
             },
             "required": ["doc_id", "match", "image_url"],
         }
@@ -341,17 +413,51 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
         image_url = str(kwargs.get("image_url") or "").strip()
         alt = str(kwargs.get("alt") or "")
         ensure_blank_line = bool(kwargs.get("ensure_blank_line", True))
+        suggestions_limit = int(kwargs.get("suggestions_limit", 5) or 5)
 
         if not image_url:
-            return _json_dump({"doc_id": doc_id, "changed": False, "error": "image_url empty"})
+            return _json_dump(
+                {
+                    "ok": False,
+                    "doc_id": doc_id,
+                    "changed": False,
+                    "inserted": 0,
+                    "error": "image_url empty",
+                }
+            )
 
         md = read_doc(doc_id)
         # idempotency: avoid inserting the same image URL repeatedly
         if image_url in md:
-            return _json_dump({"doc_id": doc_id, "changed": False, "inserted": 0, "skipped": "already_exists"})
+            return _json_dump(
+                {
+                    "ok": True,
+                    "doc_id": doc_id,
+                    "changed": False,
+                    "inserted": 0,
+                    "skipped": "already_exists",
+                    "image_url": image_url,
+                }
+            )
         spans = _find_spans(md, match=match, regex=regex, occurrence=occurrence if occurrence != 0 else 10**9)
         if not spans:
-            return _json_dump({"doc_id": doc_id, "changed": False, "error": "match not found"})
+            suggestions: List[Dict[str, Any]] = []
+            if not regex and match and len(match) <= 240:
+                suggestions = _fuzzy_suggest_lines(md, match, limit=suggestions_limit)
+            return _json_dump(
+                {
+                    "ok": False,
+                    "doc_id": doc_id,
+                    "changed": False,
+                    "inserted": 0,
+                    "error": "match not found",
+                    "requested_match": match,
+                    "regex": regex,
+                    "occurrence": occurrence,
+                    "suggestions": suggestions,
+                    "hint": "Try using one of the suggestions as `match`, or set `regex=true` for flexible matching.",
+                }
+            )
 
         img_md = f"![{alt}]({image_url})"
         targets = spans if occurrence == 0 else spans[:1]
@@ -359,6 +465,8 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
         inserted = 0
         # apply in reverse order
         for start, _ in reversed(targets):
+            ls, le = _line_bounds(patched, start)
+            matched_line = patched[ls:le].strip()
             patched = _insert_after_line(
                 patched,
                 line_pos=start,
@@ -370,4 +478,16 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
         changed = patched != md
         if changed:
             write_doc(doc_id, patched)
-        return _json_dump({"doc_id": doc_id, "changed": changed, "inserted": inserted})
+        return _json_dump(
+            {
+                "ok": True,
+                "doc_id": doc_id,
+                "changed": changed,
+                "inserted": inserted,
+                "requested_match": match,
+                "regex": regex,
+                "occurrence": occurrence,
+                "image_url": image_url,
+                "matched_line": matched_line if inserted == 1 else None,
+            }
+        )

@@ -28,6 +28,7 @@ from .workflow.image_layout_agent import ImageLayoutAgent
 from .workflow.models import SubAgentResult
 from .workflow.config_models import RenderImageStyleConfig, RenderPipelineConfig
 from .workflow.render_pipeline import render_daily_news_pages, split_pages
+from .workflow.playwright_bootstrap import ensure_playwright_chromium_installed
 
 try:
     from astrbot.core.message.components import Image as _ImageComponent
@@ -92,6 +93,7 @@ class DailyNewsPlugin(Star):
 
         self.scheduler = DailyNewsScheduler(self.context, self.config)
         self._scheduler_task = None
+        self._playwright_bootstrap_task = None
         try:
             self._scheduler_task = self.context.loop.create_task(self.scheduler.start())
         except Exception:
@@ -101,6 +103,21 @@ class DailyNewsPlugin(Star):
                 self._scheduler_task = asyncio.create_task(self.scheduler.start())
             except Exception:
                 astrbot_logger.error("[dailynews] failed to start scheduler", exc_info=True)
+
+        # Warm up Playwright browser install in background (best-effort, non-blocking).
+        try:
+            self._playwright_bootstrap_task = self.context.loop.create_task(
+                ensure_playwright_chromium_installed()
+            )
+        except Exception:
+            try:
+                import asyncio
+
+                self._playwright_bootstrap_task = asyncio.create_task(
+                    ensure_playwright_chromium_installed()
+                )
+            except Exception:
+                self._playwright_bootstrap_task = None
 
     async def terminate(self):
         if getattr(self, "scheduler", None) is not None:

@@ -75,8 +75,11 @@ AstrBot 会把配置落盘到 `data/config/astrbot_dailynews_agent_config.json` 
 关键配置项：
 - `enabled`: 是否启用自动推送
 - `schedule_time`: 每日生成时间（HH:MM）
-- `target_sessions`: 推送目标会话（`unified_msg_origin` 列表，可用 `/news_subscribe` 加入）
+- `target_sessions`: 推送目标会话（`unified_msg_origin` 列表；也支持直接填群号/会话ID如 `1030223077`）
 - `news_sources`: 新闻源（list，每项填一个公众号文章链接）
+- `twitter_enabled`: 是否启用 X/Twitter 信息源（需要代理）
+- `twitter_targets`: X/Twitter 主页列表（例如 `https://x.com/openai`）
+- `twitter_proxy`: 代理地址（支持 `http://` / `socks5://`）
 
 ### 配置说明
 

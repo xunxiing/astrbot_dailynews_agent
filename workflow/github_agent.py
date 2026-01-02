@@ -76,6 +76,7 @@ class GitHubSubAgent:
         instruction: str,
         articles: List[Dict[str, Any]],
         llm: LLMRunner,
+        user_config: Dict[str, Any] | None = None,
     ) -> SubAgentResult:
         if not articles or not isinstance(articles[0], dict):
             return SubAgentResult(
@@ -165,4 +166,3 @@ class GitHubSubAgent:
             images=None,
             error=None,
         )
-

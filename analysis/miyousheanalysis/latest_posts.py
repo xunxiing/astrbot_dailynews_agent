@@ -47,7 +47,22 @@ def get_user_latest_posts(
     out: List[Dict[str, str]] = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
+        executable_path = None
+        try:
+            from ...workflow.playwright_bootstrap import get_chromium_executable_path
+
+            exe = get_chromium_executable_path()
+            executable_path = str(exe) if exe else None
+        except Exception:
+            executable_path = None
+
+        if executable_path:
+            browser = p.chromium.launch(headless=headless, executable_path=executable_path)
+        else:
+            astrbot_logger.warning(
+                "[dailynews] playwright chromium not ready; falling back to default Playwright browser path (may fail)."
+            )
+            browser = p.chromium.launch(headless=headless)
         context = browser.new_context()
         page = context.new_page()
 
@@ -151,4 +166,3 @@ def get_user_latest_posts(
         seen.add(u)
         dedup.append({"title": (it.get("title") or "").strip(), "url": u})
     return dedup[: max(1, int(limit))]
-

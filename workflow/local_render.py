@@ -45,7 +45,18 @@ async def screenshot_html_playwright(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        executable_path = None
+        try:
+            from .playwright_bootstrap import get_chromium_executable_path
+
+            executable_path = get_chromium_executable_path()
+        except Exception:
+            executable_path = None
+
+        if executable_path:
+            browser = await p.chromium.launch(headless=True, executable_path=str(executable_path))
+        else:
+            browser = await p.chromium.launch(headless=True)
         try:
             page = await browser.new_page(
                 viewport={"width": int(viewport[0]), "height": int(viewport[1])}
@@ -108,4 +119,3 @@ async def wait_for_file_ready(
         return bool(is_valid(path))
     except Exception:
         return False
-

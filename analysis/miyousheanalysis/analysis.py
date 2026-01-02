@@ -113,7 +113,22 @@ def fetch_miyoushe_post(article_url: str) -> Dict[str, Any]:
     post_id = m.group(1) if m else ""
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        executable_path = None
+        try:
+            from ...workflow.playwright_bootstrap import get_chromium_executable_path
+
+            exe = get_chromium_executable_path()
+            executable_path = str(exe) if exe else None
+        except Exception:
+            executable_path = None
+
+        if executable_path:
+            browser = p.chromium.launch(headless=True, executable_path=executable_path)
+        else:
+            astrbot_logger.warning(
+                "[dailynews] playwright chromium not ready; falling back to default Playwright browser path (may fail)."
+            )
+            browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
