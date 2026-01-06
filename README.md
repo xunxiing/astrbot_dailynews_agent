@@ -2,7 +2,7 @@
 
 ## 🎯 功能概述
 
-这是一个基于AstrBot的AI日报插件，采用多Agent工作流架构，实现每日自动新闻汇总功能。
+这是一个基于AstrBot的AI日报插件，采用多Agent工作流架构，实现每日自动新闻汇总功能。 加入qq群：1054962131鞭策我开发和改进
 
 ### ✨ 核心特性
 
@@ -16,8 +16,6 @@
 
 <details>
 <summary>科技类</summary>
-
-这里是被折叠的内容
 
 - https://mp.weixin.qq.com/s/QAVCOnnA5M8olmy7peBqsQ   *每日ai日报*
 - 
