@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 import re
+import time
 from typing import Any, Dict, List
 
 try:
@@ -31,9 +32,17 @@ class NewsWorkflowManager:
     def register_sub_agent(self, source_type: str, agent_class):
         self.sub_agents[source_type] = agent_class
 
-    async def run_workflow(self, user_config: Dict[str, Any], astrbot_context: Any, source: str = "unknown") -> Dict[str, Any]:
+    async def run_workflow(
+        self,
+        user_config: Dict[str, Any],
+        astrbot_context: Any,
+        source: str = "unknown",
+    ) -> Dict[str, Any]:
         if self._lock.locked():
-            astrbot_logger.warning("[dailynews] [workflow] run_workflow rejected: another workflow is already running. Source: %s", source)
+            astrbot_logger.warning(
+                "[dailynews] [workflow] run_workflow rejected: another workflow is already running. Source: %s",
+                source,
+            )
             return {
                 "status": "error",
                 "error": "已有日报任务正在运行中，请稍后再试。",
@@ -42,322 +51,470 @@ class NewsWorkflowManager:
 
         async with self._lock:
             astrbot_logger.info("[dailynews] [workflow] run_workflow started from source: %s", source)
+
             llm_timeout_s = int(user_config.get("llm_timeout_s", 180))
             llm_write_timeout_s = int(user_config.get("llm_write_timeout_s", max(llm_timeout_s, 360)))
             llm_merge_timeout_s = int(user_config.get("llm_merge_timeout_s", max(llm_timeout_s, 240)))
+            llm_max_retries = int(user_config.get("llm_max_retries", 1))
+
+            # 主 Agent provider 轮询链（主 + 备用），用于决策/汇总/图片计划等关键步骤
             main_provider_id = str(user_config.get("main_agent_provider_id") or "").strip()
-        fallback_providers: list[str] = []
-        raw_list = user_config.get("main_agent_fallback_provider_ids") or []
-        if isinstance(raw_list, list):
-            fallback_providers.extend(
-                [str(x).strip() for x in raw_list if isinstance(x, str) and str(x).strip()]
+            fallback_providers: list[str] = []
+            raw_list = user_config.get("main_agent_fallback_provider_ids") or []
+            if isinstance(raw_list, list):
+                fallback_providers.extend(
+                    [str(x).strip() for x in raw_list if isinstance(x, str) and str(x).strip()]
+                )
+            for k in (
+                "main_agent_fallback_provider_id_1",
+                "main_agent_fallback_provider_id_2",
+                "main_agent_fallback_provider_id_3",
+            ):
+                v = user_config.get(k)
+                if isinstance(v, str) and v.strip():
+                    fallback_providers.append(v.strip())
+
+            uniq: list[str] = []
+            for p in [main_provider_id] + fallback_providers:
+                if not p or p in uniq:
+                    continue
+                uniq.append(p)
+            main_provider_chain = uniq
+
+            llm_scout = LLMRunner(
+                astrbot_context,
+                timeout_s=llm_timeout_s,
+                max_retries=llm_max_retries,
+                provider_ids=main_provider_chain or None,
+            )
+            llm_write = LLMRunner(
+                astrbot_context,
+                timeout_s=llm_write_timeout_s,
+                max_retries=llm_max_retries,
+                provider_ids=main_provider_chain or None,
+            )
+            llm_main_decision = LLMRunner(
+                astrbot_context,
+                timeout_s=llm_timeout_s,
+                max_retries=llm_max_retries,
+                provider_ids=main_provider_chain or None,
+            )
+            llm_main_merge = LLMRunner(
+                astrbot_context,
+                timeout_s=llm_merge_timeout_s,
+                max_retries=llm_max_retries,
+                provider_ids=main_provider_chain or None,
+            )
+            llm_image_plan = LLMRunner(
+                astrbot_context,
+                timeout_s=llm_timeout_s,
+                max_retries=llm_max_retries,
+                provider_ids=main_provider_chain or None,
             )
 
-        for k in (
-            "main_agent_fallback_provider_id_1",
-            "main_agent_fallback_provider_id_2",
-            "main_agent_fallback_provider_id_3",
-        ):
-            v = user_config.get(k)
-            if isinstance(v, str) and v.strip():
-                fallback_providers.append(v.strip())
+            async def _wait_with_heartbeat(
+                tasks: List[asyncio.Task], *, label: str, interval_s: float = 30.0
+            ) -> List[Any]:
+                pending = set(tasks)
+                results: List[Any] = [None] * len(tasks)
+                index_map = {t: i for i, t in enumerate(tasks)}
 
-        # de-dup while preserving order
-        uniq: list[str] = []
-        for p in [main_provider_id] + fallback_providers:
-            if not p or p in uniq:
-                continue
-            uniq.append(p)
-        main_provider_chain = uniq
+                while pending:
+                    done, pending = await asyncio.wait(pending, timeout=float(interval_s))
+                    for t in done:
+                        idx = index_map.get(t)
+                        if idx is None:
+                            continue
+                        try:
+                            results[idx] = t.result()
+                        except Exception as e:
+                            results[idx] = e
 
-        llm_scout = LLMRunner(
-            astrbot_context,
-            timeout_s=llm_timeout_s,
-            max_retries=int(user_config.get("llm_max_retries", 1)),
-        )
-        llm_write = LLMRunner(
-            astrbot_context,
-            timeout_s=llm_write_timeout_s,
-            max_retries=int(user_config.get("llm_max_retries", 1)),
-        )
-        llm_merge = LLMRunner(
-            astrbot_context,
-            timeout_s=llm_merge_timeout_s,
-            max_retries=int(user_config.get("llm_max_retries", 1)),
-        )
-        llm_main_decision = LLMRunner(
-            astrbot_context,
-            timeout_s=llm_timeout_s,
-            max_retries=int(user_config.get("llm_max_retries", 1)),
-            provider_ids=main_provider_chain or None,
-        )
-        llm_main_merge = LLMRunner(
-            astrbot_context,
-            timeout_s=llm_merge_timeout_s,
-            max_retries=int(user_config.get("llm_max_retries", 1)),
-            provider_ids=main_provider_chain or None,
-        )
-        llm_image_plan = LLMRunner(
-            astrbot_context,
-            timeout_s=llm_timeout_s,
-            max_retries=int(user_config.get("llm_max_retries", 1)),
-            provider_ids=main_provider_chain or None,
-        )
+                    if pending:
+                        names: List[str] = []
+                        for t in list(pending)[:6]:
+                            try:
+                                names.append(t.get_name())
+                            except Exception:
+                                names.append("task")
+                        astrbot_logger.info(
+                            "[dailynews] [%s] heartbeat pending=%d examples=%s",
+                            label,
+                            len(pending),
+                            names,
+                        )
 
-        try:
-            sources = list(self.news_sources)
-            if not sources:
+                return results
+
+            async def _cancel_tasks(tasks: List[asyncio.Task], *, label: str):
+                alive = [t for t in tasks if t is not None and not t.done()]
+                if not alive:
+                    return
+                for t in alive:
+                    try:
+                        t.cancel()
+                    except Exception:
+                        pass
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*alive, return_exceptions=True),
+                        timeout=5.0,
+                    )
+                except Exception:
+                    astrbot_logger.warning("[dailynews] cancel %s tasks timeout", label, exc_info=True)
+
+            fetch_tasks: List[asyncio.Task] = []
+            report_tasks: List[asyncio.Task] = []
+            write_tasks: List[asyncio.Task] = []
+
+            try:
+                sources = list(self.news_sources)
+                if not sources:
+                    return {
+                        "status": "error",
+                        "error": "未配置任何 news_sources",
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
+                # 1) 每个来源抓一次「最新文章列表」
+                fetched: Dict[str, List[Dict[str, str]]] = {}
+                fetch_task_sources: List[NewsSourceConfig] = []
+                fetch_concurrency = max(
+                    1, min(6, int(user_config.get("max_sources_per_day", 3)) * 2)
+                )
+                fetch_sem = asyncio.Semaphore(fetch_concurrency)
+                fetch_list_timeout_s = 180.0
+
+                async def _timed_fetch(src: NewsSourceConfig, agent) -> Any:
+                    start = time.monotonic()
+                    astrbot_logger.info("[dailynews] [fetch_list] start source=%s type=%s", src.name, src.type)
+                    try:
+                        async with fetch_sem:
+                            return await asyncio.wait_for(
+                                agent.fetch_latest_articles(src, user_config),
+                                timeout=float(fetch_list_timeout_s),
+                            )
+                    finally:
+                        astrbot_logger.info(
+                            "[dailynews] [fetch_list] done source=%s type=%s cost_ms=%s",
+                            src.name,
+                            src.type,
+                            int((time.monotonic() - start) * 1000),
+                        )
+
+                for src in sources:
+                    agent_cls = self.sub_agents.get(src.type)
+                    if not agent_cls:
+                        continue
+                    t = asyncio.create_task(_timed_fetch(src, agent_cls()))
+                    try:
+                        t.set_name(f"fetch_list:{src.name}")
+                    except Exception:
+                        pass
+                    fetch_tasks.append(t)
+                    fetch_task_sources.append(src)
+
+                astrbot_logger.info(
+                    "[dailynews] [workflow] stage 1: fetching article lists for %d sources (concurrency=%d timeout_s=%s)",
+                    len(fetch_tasks),
+                    fetch_concurrency,
+                    int(fetch_list_timeout_s),
+                )
+                fetch_results = await _wait_with_heartbeat(fetch_tasks, label="stage1/fetch_list", interval_s=20.0)
+                astrbot_logger.info("[dailynews] [workflow] stage 1: finished fetching article lists")
+                for idx, r in enumerate(fetch_results):
+                    if isinstance(r, Exception):
+                        src = fetch_task_sources[idx] if idx < len(fetch_task_sources) else None
+                        astrbot_logger.warning(
+                            "[dailynews] fetch_latest_articles failed for %s: %s",
+                            getattr(src, "name", "unknown"),
+                            r,
+                            exc_info=True,
+                        )
+                        continue
+                    name, articles = r
+                    fetched[name] = articles
+
+                # 2) 子 Agent 汇报：快速判断“今日看点”
+                reports: List[Dict[str, Any]] = []
+                report_task_sources: List[NewsSourceConfig] = []
+                report_concurrency = max(1, min(6, len(sources)))
+                report_sem = asyncio.Semaphore(report_concurrency)
+
+                async def _timed_analyze(src: NewsSourceConfig, agent) -> Any:
+                    start = time.monotonic()
+                    astrbot_logger.info("[dailynews] [analyze] start source=%s type=%s", src.name, src.type)
+                    try:
+                        async with report_sem:
+                            return await asyncio.wait_for(
+                                agent.analyze_source(src, fetched.get(src.name, []), llm_scout),
+                                timeout=float(llm_timeout_s + 30),
+                            )
+                    finally:
+                        astrbot_logger.info(
+                            "[dailynews] [analyze] done source=%s type=%s cost_ms=%s",
+                            src.name,
+                            src.type,
+                            int((time.monotonic() - start) * 1000),
+                        )
+
+                for src in sources:
+                    agent_cls = self.sub_agents.get(src.type)
+                    if not agent_cls:
+                        continue
+                    t = asyncio.create_task(_timed_analyze(src, agent_cls()))
+                    try:
+                        t.set_name(f"analyze:{src.name}")
+                    except Exception:
+                        pass
+                    report_tasks.append(t)
+                    report_task_sources.append(src)
+
+                astrbot_logger.info(
+                    "[dailynews] [workflow] stage 2: sub-agent analyzing sources (%d tasks, concurrency=%d)",
+                    len(report_tasks),
+                    report_concurrency,
+                )
+                report_results = await _wait_with_heartbeat(report_tasks, label="stage2/analyze", interval_s=20.0)
+                astrbot_logger.info("[dailynews] [workflow] stage 2: finished sub-agent analysis")
+                for idx, r in enumerate(report_results):
+                    if isinstance(r, Exception):
+                        src = report_task_sources[idx] if idx < len(report_task_sources) else None
+                        astrbot_logger.warning(
+                            "[dailynews] analyze_source failed for %s: %s",
+                            getattr(src, "name", "unknown"),
+                            r,
+                            exc_info=True,
+                        )
+                        if src is not None:
+                            reports.append(
+                                {
+                                    "source_name": src.name,
+                                    "source_type": src.type,
+                                    "source_url": src.url,
+                                    "priority": src.priority,
+                                    "article_count": len(fetched.get(src.name, []) or []),
+                                    "topics": [],
+                                    "quality_score": 0,
+                                    "today_angle": "",
+                                    "sample_articles": (fetched.get(src.name, []) or [])[:3],
+                                    "error": str(r) or type(r).__name__,
+                                }
+                            )
+                        continue
+                    reports.append(r)
+
+                # 3) 主 Agent 听汇报 -> 做分工决策
+                main_agent = MainNewsAgent()
+                decision = await main_agent.analyze_sub_agent_reports(reports, user_config, llm_main_decision)
+
+                # 兜底：当 LLM 只选择部分来源时，按“优先类型 + 其它类型”补齐到 max_sources_per_day
+                preferred_types = user_config.get("preferred_source_types", ["wechat"])
+                if not isinstance(preferred_types, list):
+                    preferred_types = ["wechat"]
+                preferred_set = {str(x).strip() for x in preferred_types if str(x).strip()}
+                max_sources = int(user_config.get("max_sources_per_day", 3))
+                preferred_sources = [s for s in sources if (not preferred_set) or s.type in preferred_set]
+                other_sources = [s for s in sources if preferred_set and s.type not in preferred_set]
+                candidate_sources = preferred_sources + other_sources
+                wanted = min(len(candidate_sources), max_sources)
+
+                selected: List[str] = []
+                for name in decision.sources_to_process or []:
+                    if not isinstance(name, str):
+                        continue
+                    n = name.strip()
+                    if not n or n in selected:
+                        continue
+                    if any(s.name == n for s in candidate_sources):
+                        selected.append(n)
+                    if len(selected) >= wanted:
+                        break
+
+                if len(selected) < wanted:
+                    for s in candidate_sources:
+                        if s.name in selected:
+                            continue
+                        selected.append(s.name)
+                        if len(selected) >= wanted:
+                            break
+
+                decision.sources_to_process = selected
+
+                # 填充 processing_instructions（优先使用 LLM 给的；缺失则使用 today_angle）
+                report_map: Dict[str, Dict[str, Any]] = {
+                    r.get("source_name"): r for r in reports if isinstance(r, dict)
+                }
+                decision.processing_instructions = decision.processing_instructions or {}
+                for name in decision.sources_to_process:
+                    instr = str(decision.processing_instructions.get(name, "") or "").strip()
+                    if instr:
+                        continue
+                    rep = report_map.get(name) or {}
+                    angle = str(rep.get("today_angle") or "").strip()
+                    if angle:
+                        decision.processing_instructions[name] = angle
+                        continue
+                    topics = rep.get("topics", []) if isinstance(rep.get("topics"), list) else []
+                    topic_str = " / ".join([str(t) for t in topics[:3]]) if topics else "热点"
+                    decision.processing_instructions[name] = f"请聚焦{topic_str}，输出精炼要点并附上文章链接。"
+
+                astrbot_logger.info(
+                    "[dailynews] sources_to_process=%s (max=%s, candidates=%s)",
+                    decision.sources_to_process,
+                    max_sources,
+                    [s.name for s in candidate_sources],
+                )
+
+                # 4) 子 Agent 按分工写各自部分（会再次抓取正文内容）
+                write_concurrency = max(1, min(4, len(decision.sources_to_process or [])))
+                write_sem = asyncio.Semaphore(write_concurrency)
+
+                async def _timed_write(src: NewsSourceConfig, agent, instruction: str) -> Any:
+                    start = time.monotonic()
+                    astrbot_logger.info("[dailynews] [write] start source=%s type=%s", src.name, src.type)
+                    try:
+                        async with write_sem:
+                            return await asyncio.wait_for(
+                                agent.process_source(
+                                    src,
+                                    instruction,
+                                    fetched.get(src.name, []),
+                                    llm_write,
+                                    user_config=user_config,
+                                ),
+                                timeout=float(llm_write_timeout_s + 60),
+                            )
+                    finally:
+                        astrbot_logger.info(
+                            "[dailynews] [write] done source=%s type=%s cost_ms=%s",
+                            src.name,
+                            src.type,
+                            int((time.monotonic() - start) * 1000),
+                        )
+
+                for source_name in decision.sources_to_process:
+                    src = next((s for s in sources if s.name == source_name), None)
+                    if not src:
+                        continue
+                    agent_cls = self.sub_agents.get(src.type)
+                    if not agent_cls:
+                        continue
+                    instruction = str(decision.processing_instructions.get(source_name, "") or "")
+                    t = asyncio.create_task(_timed_write(src, agent_cls(), instruction))
+                    try:
+                        t.set_name(f"write:{src.name}")
+                    except Exception:
+                        pass
+                    write_tasks.append(t)
+
+                astrbot_logger.info(
+                    "[dailynews] [workflow] stage 4: sub-agents writing content (%d tasks, concurrency=%d)",
+                    len(write_tasks),
+                    write_concurrency,
+                )
+                sub_results = await _wait_with_heartbeat(write_tasks, label="stage4/write", interval_s=30.0)
+                astrbot_logger.info("[dailynews] [workflow] stage 4: finished writing content")
+
+                image_plan = None
+                if bool(user_config.get("image_layout_enabled", False)):
+                    try:
+                        img_counts = {
+                            r.source_name: len(r.images or [])
+                            for r in sub_results
+                            if isinstance(r, SubAgentResult)
+                        }
+                        astrbot_logger.info("[dailynews] sub_results image counts: %s", img_counts)
+                    except Exception:
+                        pass
+                    try:
+                        image_plan = await ImagePlanAgent().decide_plan(
+                            reports=reports,
+                            decision=decision,
+                            sub_results=sub_results,
+                            user_config=user_config,
+                            llm=llm_image_plan,
+                        )
+                    except Exception as e:
+                        astrbot_logger.warning("[dailynews] image_plan failed: %s", e, exc_info=True)
+
+                final_summary = await main_agent.summarize_all_results(
+                    sub_results, decision.final_format, llm_main_merge
+                )
+
+                if not (final_summary or "").strip():
+                    astrbot_logger.warning("[dailynews] final_summary is empty; fallback to concat sections")
+                    parts: List[str] = [
+                        "# 每日资讯日报",
+                        f"*生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+                        "",
+                    ]
+                    failed_msgs: List[str] = []
+                    for r in sub_results:
+                        if isinstance(r, Exception):
+                            failed_msgs.append(str(r) or type(r).__name__)
+                            continue
+                        if isinstance(r, SubAgentResult):
+                            if r.content and r.content.strip():
+                                parts.append(r.content.strip())
+                                parts.append("")
+                            elif r.error:
+                                failed_msgs.append(f"{r.source_name}: {r.error}")
+                    if failed_msgs:
+                        parts.append("## 错误信息")
+                        for msg in failed_msgs:
+                            parts.append(f"- {msg}")
+                    final_summary = "\n".join(parts).strip()
+
+                # 5) 图片排版 Agent（可选）
+                if bool(user_config.get("image_layout_enabled", False)) and (final_summary or "").strip():
+                    try:
+                        astrbot_logger.info(
+                            "[dailynews] image_layout start enabled=%s provider=%s",
+                            bool(user_config.get("image_layout_enabled", False)),
+                            str(user_config.get("image_layout_provider_id") or ""),
+                        )
+                        final_summary = await ImageLayoutAgent().enhance_markdown(
+                            draft_markdown=final_summary,
+                            sub_results=sub_results,
+                            user_config=user_config,
+                            astrbot_context=astrbot_context,
+                            image_plan=image_plan,
+                        )
+                        astrbot_logger.info(
+                            "[dailynews] image_layout done has_image=%s",
+                            bool(re.search(r"!\[[^\]]*\]\(", (final_summary or "")))
+                            or ("<img" in (final_summary or "")),
+                        )
+                    except Exception as e:
+                        astrbot_logger.warning("[dailynews] image_layout failed: %s", e, exc_info=True)
+
+                astrbot_logger.info("[dailynews] [workflow] run_workflow completed successfully from source: %s", source)
                 return {
-                    "status": "error",
-                    "error": "未配置任何 news_sources",
+                    "status": "success",
+                    "decision": decision,
+                    "sub_reports": reports,
+                    "sub_results": sub_results,
+                    "image_plan": image_plan,
+                    "final_summary": final_summary,
                     "timestamp": datetime.now().isoformat(),
                 }
 
-            # 1) 每个来源抓一次「最新文章列表」
-            fetched: Dict[str, List[Dict[str, str]]] = {}
-            fetch_tasks = []
-            fetch_task_sources: List[NewsSourceConfig] = []
-            for source in sources:
-                agent_cls = self.sub_agents.get(source.type)
-                if not agent_cls:
-                    continue
-                agent = agent_cls()
-                fetch_tasks.append(agent.fetch_latest_articles(source, user_config))
-                fetch_task_sources.append(source)
+            except asyncio.CancelledError:
+                astrbot_logger.warning("[dailynews] [workflow] run_workflow cancelled (source=%s)", source)
+                await _cancel_tasks(write_tasks, label="write")
+                await _cancel_tasks(report_tasks, label="analyze")
+                await _cancel_tasks(fetch_tasks, label="fetch_list")
+                raise
+            except Exception as e:
+                import traceback
 
-            astrbot_logger.info("[dailynews] [workflow] stage 1: fetching article lists for %d sources", len(fetch_tasks))
-            fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
-            astrbot_logger.info("[dailynews] [workflow] stage 1: finished fetching article lists")
-            for idx, r in enumerate(fetch_results):
-                if isinstance(r, Exception):
-                    src = fetch_task_sources[idx] if idx < len(fetch_task_sources) else None
-                    astrbot_logger.warning(
-                        "[dailynews] fetch_latest_articles failed for %s: %s",
-                        getattr(src, "name", "unknown"),
-                        r,
-                        exc_info=True,
-                    )
-                    continue
-                name, articles = r
-                fetched[name] = articles
-
-            # 2) 子 Agent 汇报：把文章链接发给各自子 Agent，让其输出“今日看点/主题”
-            reports: List[Dict[str, Any]] = []
-            report_tasks = []
-            report_task_sources: List[NewsSourceConfig] = []
-            for source in sources:
-                agent_cls = self.sub_agents.get(source.type)
-                if not agent_cls:
-                    continue
-                agent = agent_cls()
-                report_tasks.append(agent.analyze_source(source, fetched.get(source.name, []), llm_scout))
-                report_task_sources.append(source)
-            astrbot_logger.info("[dailynews] [workflow] stage 2: sub-agent analyzing sources (%d tasks)", len(report_tasks))
-            report_results = await asyncio.gather(*report_tasks, return_exceptions=True)
-            astrbot_logger.info("[dailynews] [workflow] stage 2: finished sub-agent analysis")
-            for idx, r in enumerate(report_results):
-                if isinstance(r, Exception):
-                    src = report_task_sources[idx] if idx < len(report_task_sources) else None
-                    astrbot_logger.warning(
-                        "[dailynews] analyze_source failed for %s: %s",
-                        getattr(src, "name", "unknown"),
-                        r,
-                        exc_info=True,
-                    )
-                    if src is not None:
-                        reports.append(
-                            {
-                                "source_name": src.name,
-                                "source_type": src.type,
-                                "source_url": src.url,
-                                "priority": src.priority,
-                                "article_count": len(fetched.get(src.name, []) or []),
-                                "topics": [],
-                                "quality_score": 0,
-                                "today_angle": "",
-                                "sample_articles": (fetched.get(src.name, []) or [])[:3],
-                                "error": str(r) or type(r).__name__,
-                            }
-                        )
-                    continue
-                reports.append(r)
-
-            # 3) 主 Agent 听汇报 -> 做分工决策
-            main_agent = MainNewsAgent()
-            decision = await main_agent.analyze_sub_agent_reports(reports, user_config, llm_main_decision)
-
-            # 兜底：当 LLM 只选择部分来源时，按“优先类型 + 其它类型”补齐到 max_sources_per_day
-            preferred_types = user_config.get("preferred_source_types", ["wechat"])
-            if not isinstance(preferred_types, list):
-                preferred_types = ["wechat"]
-            preferred_set = {str(x).strip() for x in preferred_types if str(x).strip()}
-            max_sources = int(user_config.get("max_sources_per_day", 3))
-            preferred_sources = [s for s in sources if (not preferred_set) or s.type in preferred_set]
-            other_sources = [s for s in sources if preferred_set and s.type not in preferred_set]
-            candidate_sources = preferred_sources + other_sources
-            wanted = min(len(candidate_sources), max_sources)
-
-            selected: List[str] = []
-            for name in decision.sources_to_process or []:
-                if not isinstance(name, str):
-                    continue
-                n = name.strip()
-                if not n or n in selected:
-                    continue
-                if any(s.name == n for s in candidate_sources):
-                    selected.append(n)
-            if len(selected) < wanted:
-                for s in candidate_sources:
-                    if s.name not in selected:
-                        selected.append(s.name)
-                    if len(selected) >= wanted:
-                        break
-            if selected:
-                decision.sources_to_process = selected
-
-            report_map = {
-                str(r.get("source_name")): r
-                for r in reports
-                if isinstance(r, dict) and r.get("source_name")
-            }
-            for name in decision.sources_to_process:
-                instr = (decision.processing_instructions.get(name) or "").strip()
-                if instr:
-                    continue
-                rep = report_map.get(name) or {}
-                angle = str(rep.get("today_angle") or "").strip()
-                if angle:
-                    decision.processing_instructions[name] = angle
-                    continue
-                topics = rep.get("topics", []) if isinstance(rep.get("topics"), list) else []
-                topic_str = " / ".join([str(t) for t in topics[:3]]) if topics else "热点"
-                decision.processing_instructions[name] = f"请聚焦{topic_str}，输出精炼要点并附上文章链接。"
-
-            astrbot_logger.info(
-                "[dailynews] sources_to_process=%s (max=%s, candidates=%s)",
-                decision.sources_to_process,
-                max_sources,
-                [s.name for s in candidate_sources],
-            )
-
-            # 4) 子 Agent 按分工写各自部分（会再次抓取正文内容）
-            write_tasks = []
-            for source_name in decision.sources_to_process:
-                source = next((s for s in sources if s.name == source_name), None)
-                if not source:
-                    continue
-                agent_cls = self.sub_agents.get(source.type)
-                if not agent_cls:
-                    continue
-                agent = agent_cls()
-                instruction = decision.processing_instructions.get(source_name, "")
-                write_tasks.append(
-                    agent.process_source(
-                        source,
-                        instruction,
-                        fetched.get(source_name, []),
-                        llm_write,
-                        user_config=user_config,
-                    )
-                )
-
-            astrbot_logger.debug("[dailynews] write_tasks: %s", len(write_tasks))
-
-            astrbot_logger.info("[dailynews] [workflow] stage 4: sub-agents writing content (%d tasks)", len(write_tasks))
-            sub_results = await asyncio.gather(*write_tasks, return_exceptions=True)
-            astrbot_logger.info("[dailynews] [workflow] stage 4: finished writing content")
-
-            image_plan = None
-            if bool(user_config.get("image_layout_enabled", False)):
-                try:
-                    img_counts = {
-                        r.source_name: len(r.images or [])
-                        for r in sub_results
-                        if isinstance(r, SubAgentResult)
-                    }
-                    astrbot_logger.info("[dailynews] sub_results image counts: %s", img_counts)
-                except Exception:
-                    pass
-                try:
-                    image_plan = await ImagePlanAgent().decide_plan(
-                        reports=reports,
-                        decision=decision,
-                        sub_results=sub_results,
-                        user_config=user_config,
-                        llm=llm_image_plan,
-                    )
-                except Exception as e:
-                    astrbot_logger.warning("[dailynews] image_plan failed: %s", e, exc_info=True)
-
-            final_summary = await main_agent.summarize_all_results(sub_results, decision.final_format, llm_main_merge)
-
-            if not (final_summary or "").strip():
-                astrbot_logger.warning("[dailynews] final_summary is empty; fallback to concat sections")
-                parts: List[str] = [
-                    "# 每日资讯日报",
-                    f"*生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
-                    "",
-                ]
-                failed_msgs: List[str] = []
-                for r in sub_results:
-                    if isinstance(r, Exception):
-                        failed_msgs.append(str(r) or type(r).__name__)
-                        continue
-                    if isinstance(r, SubAgentResult):
-                        if r.content and r.content.strip():
-                            parts.append(r.content.strip())
-                            parts.append("")
-                        elif r.error:
-                            failed_msgs.append(f"{r.source_name}: {r.error}")
-                if failed_msgs:
-                    parts.append("## 错误信息")
-                    for msg in failed_msgs:
-                        parts.append(f"- {msg}")
-                final_summary = "\n".join(parts).strip()
-
-            # 5) 图片排版 Agent（可选）：从抓取到的图片 URL 中挑选并插入到日报 Markdown
-            if bool(user_config.get("image_layout_enabled", False)) and (final_summary or "").strip():
-                try:
-                    astrbot_logger.info(
-                        "[dailynews] image_layout start enabled=%s provider=%s",
-                        bool(user_config.get("image_layout_enabled", False)),
-                        str(user_config.get("image_layout_provider_id") or ""),
-                    )
-                    final_summary = await ImageLayoutAgent().enhance_markdown(
-                        draft_markdown=final_summary,
-                        sub_results=sub_results,
-                        user_config=user_config,
-                        astrbot_context=astrbot_context,
-                        image_plan=image_plan,
-                    )
-                    astrbot_logger.info(
-                        "[dailynews] image_layout done has_image=%s",
-                        bool(re.search(r"!\[[^\]]*\]\(", (final_summary or "")))
-                        or ("<img" in (final_summary or "")),
-                    )
-                except Exception as e:
-                    astrbot_logger.warning("[dailynews] image_layout failed: %s", e, exc_info=True)
-
-            astrbot_logger.info("[dailynews] [workflow] run_workflow completed successfully from source: %s", source)
-            return {
-                "status": "success",
-                "decision": decision,
-                "sub_reports": reports,
-                "sub_results": sub_results,
-                "image_plan": image_plan,
-                "final_summary": final_summary,
-                "timestamp": datetime.now().isoformat(),
-            }
-
-        except asyncio.CancelledError:
-            astrbot_logger.warning("[dailynews] [workflow] run_workflow cancelled (source=%s)", source)
-            raise
-        except Exception as e:
-            import traceback
-
-            return {
-                "status": "error",
-                "error": str(e),
-                "traceback": traceback.format_exc(),
-                "timestamp": datetime.now().isoformat(),
-            }
+                await _cancel_tasks(write_tasks, label="write")
+                await _cancel_tasks(report_tasks, label="analyze")
+                await _cancel_tasks(fetch_tasks, label="fetch_list")
+                return {
+                    "status": "error",
+                    "error": str(e),
+                    "traceback": traceback.format_exc(),
+                    "timestamp": datetime.now().isoformat(),
+                }

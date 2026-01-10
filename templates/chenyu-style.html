@@ -432,25 +432,30 @@
 
       <div class="hero">
         <!-- 如果没有 bg_img，默认使用透明或者淡色 -->
-        <img class="hero-bg" src="image/sunsetbackground.jpg" style="opacity: 0.3;" />
+        <img class="hero-bg" src="data:image/jpeg;base64,{{ bg_img }}" style="opacity: 0.3;" />
         <div class="hero-overlay"></div>
-        <img class="hero-char" src="image/transparent_output.png" />
+        <img class="hero-char" src="data:image/png;base64,{{ char_img }}" />
         <div class="hero-text">
           <div class="brand">ASTRBOT DAILY NEWS</div>
-          <div class="title"><span class="title-text">每日资讯日报</span></div>
-          <div class="subtitle" id="current-date"></div>
+          <div class="title"><span class="title-text">{{ title | safe }}</span></div>
+          <div class="subtitle">{{ subtitle | safe }}</div>
         </div>
       </div>
 
-      <script>
+      {% if false %}<script>
         const now = new Date();
         const month = now.getMonth() + 1;
         const day = now.getDate();
         document.getElementById('current-date').innerText = `${month}月${day}日`;
-      </script>
+      </script>{% endif %}
 
       <div class="content">
         <div class="paper">
+          <div class="section-box">
+            <div class="md">{{ body_html | safe }}</div>
+          </div>
+
+          {% if false %}
           <!-- 这里使用后端渲染逻辑（假设）：遍历 HTML 内容，遇到 h1 就闭合上一个 box，开启新 box -->
           <!-- 为了静态演示，手动分割了结构 -->
           
@@ -515,6 +520,7 @@
             </div>
           </div>
           
+          {% endif %}
         </div>
       </div>
     </div>

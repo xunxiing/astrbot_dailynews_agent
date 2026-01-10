@@ -30,6 +30,7 @@ class MiyousheSubAgent:
         limit = max(int(source.max_articles), 5)
         headless = bool(user_config.get("miyoushe_headless", True))
         sleep_between = float(user_config.get("miyoushe_sleep_between_s", 0.6) or 0.6)
+        list_timeout_s = 120.0
 
         url = (source.url or "").strip()
         if not url:
@@ -39,16 +40,28 @@ class MiyousheSubAgent:
             last_err: Optional[str] = None
             for attempt in range(1, 4):
                 try:
-                    posts = await _run_sync(
-                        get_user_latest_posts,
-                        url,
-                        limit,
-                        headless=headless,
-                        sleep_between=sleep_between,
+                    posts = await asyncio.wait_for(
+                        _run_sync(
+                            get_user_latest_posts,
+                            url,
+                            limit,
+                            headless=headless,
+                            sleep_between=sleep_between,
+                        ),
+                        timeout=float(list_timeout_s),
                     )
                     if posts:
                         return source.name, posts
                     last_err = "empty posts"
+                except asyncio.TimeoutError:
+                    last_err = f"timeout>{int(list_timeout_s)}s"
+                    astrbot_logger.warning(
+                        "[dailynews] get_user_latest_posts timeout for %s (attempt %s/3): %s",
+                        source.name,
+                        attempt,
+                        last_err,
+                        exc_info=True,
+                    )
                 except Exception as e:
                     last_err = str(e) or type(e).__name__
                     astrbot_logger.warning(

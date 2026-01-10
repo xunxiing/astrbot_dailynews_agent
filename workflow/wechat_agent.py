@@ -34,6 +34,7 @@ class WechatSubAgent:
         limit = max(int(source.max_articles), 5)
         max_hops = int(user_config.get("wechat_chase_max_hops", 6))
         persist_seed = bool(user_config.get("wechat_seed_persist", True))
+        chase_timeout_s = 150.0
 
         album_keyword = source.album_keyword
         key = f"{source.url}||{album_keyword or ''}"
@@ -77,13 +78,27 @@ class WechatSubAgent:
         for start_url in candidates[: max(1, len(candidates))]:
             for attempt in range(1, 3):
                 try:
-                    seed_url, articles = await _run_sync(
-                        get_album_articles_chasing_latest_with_seed,
-                        start_url,
-                        limit,
-                        album_keyword=album_keyword,
-                        max_hops=max_hops,
+                    seed_url, articles = await asyncio.wait_for(
+                        _run_sync(
+                            get_album_articles_chasing_latest_with_seed,
+                            start_url,
+                            limit,
+                            album_keyword=album_keyword,
+                            max_hops=max_hops,
+                        ),
+                        timeout=float(chase_timeout_s),
                     )
+                except asyncio.TimeoutError:
+                    last_err = f"timeout>{int(chase_timeout_s)}s"
+                    astrbot_logger.warning(
+                        "[dailynews] chasing latest timeout for %s (start=%s, attempt %s/2): %s",
+                        source.name,
+                        start_url,
+                        attempt,
+                        last_err,
+                        exc_info=True,
+                    )
+                    seed_url, articles = start_url, []
                 except Exception as e:
                     last_err = str(e) or type(e).__name__
                     astrbot_logger.warning(

@@ -169,6 +169,54 @@ async def _build_body_html(page_markdown: str, *, style: RenderImageStyleConfig)
     )
 
 
+def _looks_like_chenyu_template(template_str: str) -> bool:
+    s = template_str or ""
+    return ("chenyu_bg_top" in s) or ("bg-container" in s and "chenyu_bg_" in s)
+
+
+def _promote_headings_for_chenyu(md: str) -> str:
+    """
+    chenyu-style.html 对「一级标题」(h1) 有特殊样式，但日报正文通常只在最顶部有一个 `#`。
+    这里做一个仅在渲染阶段的“标题层级调整”：
+    - 去掉第一行文档标题 `# ...`（避免与 Hero 重复）
+    - 将 `##` 提升为 `#`，`###` 提升为 `##`（跳过 fenced code block）
+    """
+    text = (md or "").strip("\n")
+    if not text:
+        return ""
+
+    lines = text.splitlines()
+    out: List[str] = []
+    in_fence = False
+    removed_first_h1 = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+
+        if not in_fence:
+            # Remove the very first H1 title to avoid duplicating the template's hero title.
+            if (not removed_first_h1) and stripped.startswith("# "):
+                removed_first_h1 = True
+                continue
+
+            if stripped.startswith("### "):
+                # promote H3 -> H2
+                out.append(line.replace("### ", "## ", 1))
+                continue
+            if stripped.startswith("## "):
+                # promote H2 -> H1
+                out.append(line.replace("## ", "# ", 1))
+                continue
+
+        out.append(line)
+
+    return "\n".join(out).strip("\n")
+
+
 async def render_daily_news_pages(
     *,
     pages: Sequence[str],
@@ -197,7 +245,8 @@ async def render_daily_news_pages(
     out: List[RenderedPage] = []
     total = len(pages_list)
     for idx, page in enumerate(pages_list, start=1):
-        body_html = await _build_body_html(page, style=style)
+        page_md = _promote_headings_for_chenyu(page) if _looks_like_chenyu_template(template_str) else page
+        body_html = await _build_body_html(page_md, style=style)
         portrait_max_h = max(360, min(560, int(style.full_max_width * 0.68)))
         panorama_max_h = max(260, min(420, int(style.medium_max_width * 0.5)))
         ctx = {
