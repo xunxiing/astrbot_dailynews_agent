@@ -43,9 +43,9 @@ class NewsWorkflowManager:
         async with self._lock:
             astrbot_logger.info("[dailynews] [workflow] run_workflow started from source: %s", source)
             llm_timeout_s = int(user_config.get("llm_timeout_s", 180))
-        llm_write_timeout_s = int(user_config.get("llm_write_timeout_s", max(llm_timeout_s, 360)))
-        llm_merge_timeout_s = int(user_config.get("llm_merge_timeout_s", max(llm_timeout_s, 240)))
-        main_provider_id = str(user_config.get("main_agent_provider_id") or "").strip()
+            llm_write_timeout_s = int(user_config.get("llm_write_timeout_s", max(llm_timeout_s, 360)))
+            llm_merge_timeout_s = int(user_config.get("llm_merge_timeout_s", max(llm_timeout_s, 240)))
+            main_provider_id = str(user_config.get("main_agent_provider_id") or "").strip()
         fallback_providers: list[str] = []
         raw_list = user_config.get("main_agent_fallback_provider_ids") or []
         if isinstance(raw_list, list):
@@ -349,6 +349,9 @@ class NewsWorkflowManager:
                 "timestamp": datetime.now().isoformat(),
             }
 
+        except asyncio.CancelledError:
+            astrbot_logger.warning("[dailynews] [workflow] run_workflow cancelled (source=%s)", source)
+            raise
         except Exception as e:
             import traceback
 

@@ -165,6 +165,7 @@ class DailyNewsScheduler:
         self.workflow_manager = NewsWorkflowManager()
         self.running = False
         self.task: Optional[asyncio.Task] = None
+        self._workflow_task: Optional[asyncio.Task] = None
 
         self._init_workflow_manager()
 
@@ -339,6 +340,7 @@ class DailyNewsScheduler:
 
     async def stop(self):
         self.running = False
+        await self.cancel_running_workflow()
         if self.task:
             self.task.cancel()
             try:
@@ -347,6 +349,21 @@ class DailyNewsScheduler:
                 pass
         self.task = None
         astrbot_logger.info("[dailynews] scheduler stopped")
+
+    async def cancel_running_workflow(self):
+        t = self._workflow_task
+        if t is None or t.done():
+            self._workflow_task = None
+            return
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        finally:
+            self._workflow_task = None
 
     async def _loop(self):
         while self.running:
@@ -506,7 +523,13 @@ class DailyNewsScheduler:
     async def generate_once(self, cfg: Optional[Dict[str, Any]] = None, source: str = "manual") -> str:
         config = cfg or self._normalized_config()
         await self.update_workflow_sources_from_config(config)
-        result = await self.workflow_manager.run_workflow(config, astrbot_context=self.context, source=source)
+        self._workflow_task = asyncio.create_task(
+            self.workflow_manager.run_workflow(config, astrbot_context=self.context, source=source)
+        )
+        try:
+            result = await self._workflow_task
+        finally:
+            self._workflow_task = None
         if result.get("status") == "success":
             return str(result.get("final_summary") or "")
         return f"生成失败：{result.get('error') or '未知错误'}"

@@ -124,8 +124,26 @@ class DailyNewsPlugin(Star):
                 self._playwright_bootstrap_task = None
 
     async def terminate(self):
+        # Best-effort: cancel any in-flight workflow & background tasks to avoid leaking across reloads.
         if getattr(self, "scheduler", None) is not None:
-            await self.scheduler.stop()
+            try:
+                await self.scheduler.stop()
+            except Exception:
+                pass
+
+        t = getattr(self, "_playwright_bootstrap_task", None)
+        if t is not None and hasattr(t, "cancel"):
+            try:
+                t.cancel()
+            except Exception:
+                pass
+
+        t = getattr(self, "_scheduler_task", None)
+        if t is not None and hasattr(t, "cancel"):
+            try:
+                t.cancel()
+            except Exception:
+                pass
 
     # ====== commands ======
 
