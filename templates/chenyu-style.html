@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {% if base_href %}<base href="{{ base_href }}">{% endif %}
+    <style>
+      @font-face {
+        font-family: 'CustomFont';
+        src: url('{{ chenyu_font }}') format('truetype');
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+      }
+      :root {
+        /* Slightly wider to reduce right-side whitespace on some renderers */
+        --w: 1120px;
+        --radius: 18px;
+        --text: #1a3c1a;
+        --muted: rgba(45, 90, 39, 0.70);
+        --paper: rgba(255, 255, 255, 0.92);
+        --paper-border: rgba(45, 90, 39, 0.15);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; width: var(--w); overflow-x: hidden; background: #eef5ee; }
+      .wrap {
+        width: var(--w);
+        position: relative;
+        font-family: "CustomFont", "Optima", "Candara", "Source Han Serif SC", "Source Han Serif CN", "Noto Serif CJK SC", "Songti SC", "SimSun", serif;
+        color: var(--text);
+        border-radius: var(--radius);
+        overflow: hidden;
+        /* box-shadow: 0 10px 40px rgba(0,0,0,0.2); */
+        background: transparent; /* 让背景图透出来 */
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* 沉玉谷风格三段式背景 */
+      .bg-container {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        display: flex;
+        flex-direction: column;
+        pointer-events: none;
+        background: #f0f4f0;
+      }
+      .bg-top {
+        height: 600px;
+        background: url('{{ chenyu_bg_top }}') no-repeat top center;
+        background-size: cover;
+        flex-shrink: 0;
+        z-index: 1;
+        position: relative;
+        margin-top: 0px; /* 取消上移，让背景完全归位，分界线自然下移 */
+        filter: saturate(1.3) contrast(1.1);
+      }
+      /* 在 top 和 middle 之间增加渐变过渡 */
+      .bg-top::after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 200px; /* 调整高度 */
+        /* 使用更自然的遮罩渐变，消除明暗突兀 */
+        background: linear-gradient(to bottom, rgba(240,244,240,0) 0%, rgba(240,244,240,0.8) 100%);
+        pointer-events: none;
+      }
+      .bg-middle {
+        flex-grow: 1;
+        background: url('{{ chenyu_bg_middle }}') repeat-y center;
+        background-size: cover;
+        z-index: 0;
+        margin-top: -100px; /* 调整重叠区域 */
+        margin-bottom: -100px;
+        /* 移除之前复杂的 mask，改用简单的混合模式配合透明度，或者调整不透明度 */
+        opacity: 0.9;
+        /* 尝试使用 screen 或 soft-light 混合模式来提亮中间部分，避免黑边 */
+        /* mix-blend-mode: soft-light; */ 
+        /* 重新设计：让中间背景更亮一点，减少与上下图的明暗反差 */
+        filter: brightness(1.1);
+      }
+      .bg-bottom {
+        height: 800px;
+        background: url('{{ chenyu_bg_bottom }}') no-repeat bottom center;
+        background-size: cover;
+        flex-shrink: 0;
+        z-index: 1;
+        position: relative;
+      }
+      /* 在 middle 和 bottom 之间增加渐变过渡 */
+      .bg-bottom::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 300px;
+        /* 同上，修改渐变策略 */
+        background: linear-gradient(to top, rgba(240,244,240,0) 0%, rgba(240,244,240,0.5) 100%);
+        pointer-events: none;
+      }
+
+      /* Hero (top cover image) */
+      .hero {
+        position: relative;
+        height: 280px; /* 减小 Hero 区域高度，因为钟离变小了 */
+        overflow: visible;
+        background: transparent;
+        margin-bottom: 20px;
+      }
+      .hero-bg {
+        /* 移除 hero 自己的背景图，完全依赖 bg-container */
+        display: none;
+      }
+      .hero-overlay {
+        display: none;
+      }
+      .hero-char {
+        position: absolute;
+        right: -200px; /* 进一步向右移动，让人物更多部分超出画框边缘 */
+        top: -40px; /* 保持在右上角 */
+        height: 340px; 
+        width: auto;
+        pointer-events: none;
+        filter: drop-shadow(8px 8px 18px rgba(0,0,0,0.35)); /* 镜像后阴影方向也微调 */
+        opacity: 1;
+        z-index: 10;
+        transform: scaleX(-1); /* 水平镜像翻转 */
+      }
+      .hero-text {
+        position: relative;
+        z-index: 2;
+        padding: 60px 30px 18px 60px;
+        width: 65%; /* 避让右侧人物 */
+        text-align: left;
+      }
+      .brand {
+        font-size: 28px;
+        letter-spacing: 2px;
+        color: #fff;
+        font-weight:200;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+      }
+      .title {
+        margin-top: 0;
+        text-align: left;
+        padding: 5px 0 5px 25px;
+        background: none;
+        display: block;
+        border-left: 12px solid #c33b2a;
+        line-height: 1.1;
+      }
+      .title-text {
+        font-size: 60px;
+        font-weight: 900;
+        color: #1a1a2e;
+        letter-spacing: 2px; /* 增加标题字间距，防止粘连 */
+        font-family: "CustomFont", "Source Han Sans CN", "Microsoft YaHei", sans-serif;
+        /* 为了在深浅背景下都清晰，可以加一点非常淡的描边或阴影 */
+        text-shadow: 0 1px 2px rgba(255,255,255,0.5);
+      }
+      .subtitle {
+        margin-top: 20px;
+        font-size: 24px;
+        font-weight: 500;
+        color: #ffffff; 
+        padding: 4px 12px;
+        background: rgba(45, 90, 39, 0.4); /* 使用深绿色透明背景，解决撞色并呼应主题 */
+        display: inline-block;
+        border-radius: 6px;
+        backdrop-filter: blur(4px);
+        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+      
+      .content {
+        padding: 0; /* 移除内边距，完全由 section-box 控制 */
+        position: relative;
+        z-index: 2;
+      }
+      .paper {
+        /* 移除原有的 paper 样式，功能被 section-box 取代 */
+        background: transparent;
+        border: none;
+        box-shadow: none;
+        backdrop-filter: none;
+        padding: 0;
+        margin: 0;
+      }
+
+      /* Section Box 样式：每个大标题及其内容的大框 */
+      .section-box {
+        position: relative;
+        margin: 0 40px 20px 40px; /* 减小底部外边距 35px -> 20px */
+        padding: 0;
+        background: rgba(255, 255, 255, 0.7); /* 不透明度回调：0.5 -> 0.7，更白一些 */
+        border: 2px solid #2d5a27;
+        border-radius: 12px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.05);
+        backdrop-filter: blur(5px);
+        overflow: visible;
+      }
+      /* 框左上角的装饰 */
+      .section-box::before {
+        content: "";
+        position: absolute;
+        top: -30px; /* 向上移动装饰，原为 0px */
+        left: -120px;
+        width: 350px;
+        height: 500px; /* 140px * 1.3 = 182px */
+        background: url('image/tower_no_bg.png') no-repeat;
+        background-size: contain;/* 强制拉伸图片以填充新的长宽比 */
+        z-index: 5;
+        pointer-events: none;
+        filter: drop-shadow(4px 4px 4px rgba(0,0,0,0.25));
+      }
+      
+      /* 调整 md 样式以适应新的结构 */
+      .md { 
+        font-size: 30px; /* 增大字号 22px -> 24px */
+        line-height: 1.8; /* 增加行高 1.6 -> 1.8，防止文字粘连 */
+        letter-spacing: 0.5px; /* 增加字间距，防止文字粘连 */
+        color: #0d1f0d; /* 加深文字颜色，接近黑色但带绿调，增强对比度 */
+        padding: 10px 40px; /* 减小上下内边距 20px -> 10px */
+        font-weight: 500; /* 增加字重，让文字更实 */
+      }
+      
+      /* 重置 h1 样式，现在它是框的标题 */
+      .md h1 {
+        position: relative;
+        margin: 0 0 5px 0; /* 减小底部外边距 10px -> 5px */
+        padding: 15px 0 10px 50px; /* 减小顶部内边距 25px -> 15px */
+        font-size: 34px; /* H1 也相应增大 */
+        color: #0a1a0a; /* 更深的颜色 */
+        background: transparent;
+        border-radius: 0;
+        display: block;
+        width: 100%;
+        min-width: auto;
+        box-shadow: none;
+        border: none;
+        border-bottom: 1px solid rgba(45, 90, 39, 0.3); /* 边框稍微加深一点点 */
+      }
+      .md p { margin: 8px 0; } /* 进一步减小段落间距 */
+      .md h1::before {
+        /* 移除原来 h1 的伪元素装饰，改用 .section-box::before */
+        content: none;
+      }
+
+      .md h2, .md h3 { margin: 0; line-height: 1.2; }
+      /* Heading + divider should stack vertically (fix multi-line headings) */
+      .md-heading { display: block; margin: 18px 0 10px; }
+      .md-heading.md-h2 h2 { font-size: 28px; font-weight: 900; color: #1a3c1a; }
+      .md-heading.md-h3 h3 { font-size: 24px; font-weight: 900; color: #2d5a27; }
+      .md-heading .css-snow-divider { margin-top: 10px; }
+      .md p { margin: 15px 0; }
+      .md ul, .md ol { margin: 12px 0 12px 25px; padding: 0; }
+      .md li { margin: 10px 0; }
+      .md li::marker { color: #2d5a27; font-size: 1.1em; }
+      /* 强调语法支持：更具古风和设计感的强调样式 */
+      .md strong, .md em {
+        background: linear-gradient(to bottom, transparent 60%, rgba(45, 90, 39, 0.2) 60%); /* 底部浅绿色划线感 */
+        padding: 0 4px;
+        color: #1a3c1a; /* 回归深绿色，不使用反白 */
+        font-weight: 800;
+        font-style: normal;
+        border-bottom: 2px solid #2d5a27; /* 底部实线强调 */
+        box-shadow: none;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+      }
+      .md em {
+        font-style: italic;
+        background: linear-gradient(to bottom, transparent 60%, rgba(195, 59, 42, 0.1) 60%);
+        border-bottom-color: #c33b2a; /* 强调（斜体）使用暗红色下划线区分 */
+        color: #c33b2a;
+      }
+      .md a { color: #2d5a27; text-decoration: none; border-bottom: 1px solid rgba(45,90,39,0.3); }
+      .md a:hover { border-bottom-color: rgba(37,99,235,0.8); }
+      /* Images: standardize size then decide side-by-side (float) */
+      .md {
+        /* hard-coded sizes (do not expose in config UI) */
+        --img-full: 400px;
+        --img-medium: 500px;
+        --img-narrow: 300px;
+        --img-portrait-max-h: 420;
+        --img-panorama-max-h: 320;
+      }
+      .md img { max-width: 100%; height: auto; display: block; margin: 12px 0; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.35); box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10); }
+      .md p.md-imgp { margin: 10px 0; }
+      .md img.md-img--full { width: min(var(--img-full), 100%); margin-left: auto; margin-right: auto; }
+      .md img.md-img--medium { width: min(var(--img-medium), 100%); margin-left: auto; margin-right: auto; }
+      .md img.md-img--narrow { width: min(var(--img-narrow), 100%); }
+      .md img.md-img--narrow:not(.md-img--float-r):not(.md-img--float-l) { margin-left: auto; margin-right: auto; }
+      .md img.md-img--portrait { max-height: calc(var(--img-portrait-max-h) * 1px); object-fit: contain; }
+      .md img.md-img--panorama { max-height: calc(var(--img-panorama-max-h) * 1px); object-fit: contain; }
+      .md img.md-img--float-r,
+      .md img.md-img--float-l {
+        width: clamp(260px, 38%, var(--img-narrow));
+        max-width: 42%;
+        height: auto;
+        display: block;
+        margin-top: 8px;
+        margin-bottom: 8px;
+      }
+      .md img.md-img--float-r { float: right; margin-left: 16px; margin-right: 0; }
+      .md img.md-img--float-l { float: left; margin-right: 16px; margin-left: 0; }
+      /* Prevent floats from leaking into next sections */
+      .md-heading,
+      .md h1,
+      .md h2,
+      .md h3,
+      .md hr,
+      .md .css-snow-divider { clear: both; }
+      .md code {
+        font-family: Consolas, "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, "Liberation Mono", monospace;
+        background: rgba(15, 23, 42, 0.06);
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        padding: 0 6px;
+        border-radius: 6px;
+        font-size: 0.95em;
+      }
+      /* Code blocks (with language label) */
+      .codebox { margin: 12px 0; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.55); overflow: hidden; background: rgba(248, 250, 252, 0.96); }
+      .codebox-head { height: 40px; display: flex; align-items: center; padding: 0 12px; background: rgba(226, 232, 240, 0.75); border-bottom: 1px solid rgba(148, 163, 184, 0.35); }
+      .codebox-lang { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 10px; background: rgba(100, 116, 139, 0.85); color: #f8fafc; font-weight: 800; font-size: 16px; letter-spacing: 0.5px; }
+      .codebox-lang::before { content: "▼"; font-size: 12px; opacity: 0.85; }
+      .codebox-body { margin: 0; padding: 14px 14px; background: transparent; }
+      .codebox-body code { background: transparent; border: 0; padding: 0; color: #0f172a; white-space: pre-wrap; word-break: break-word; font-size: 16px; line-height: 1.7; }
+      .md blockquote {
+        margin: 12px 0;
+        padding: 0;
+        border: 1px solid rgba(148, 163, 184, 0.55);
+        background: rgba(241, 245, 249, 0.78);
+        border-radius: 12px;
+        overflow: hidden;
+        color: rgba(17,24,39,0.88);
+      }
+      .md blockquote > p {
+        margin: 0;
+        padding: 12px 14px 12px 44px;
+        position: relative;
+      }
+      .md blockquote > p + p { border-top: 1px solid rgba(148, 163, 184, 0.35); }
+      .md blockquote > p::before {
+        content: "›";
+        position: absolute;
+        left: 14px;
+        top: 10px;
+        font-size: 22px;
+        line-height: 1;
+        color: rgba(100, 116, 139, 0.85);
+        font-weight: 900;
+      }
+      .md blockquote ul,
+      .md blockquote ol {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        border-top: 1px solid rgba(148, 163, 184, 0.35);
+      }
+      .md blockquote li {
+        margin: 0;
+        padding: 12px 14px 12px 44px;
+        position: relative;
+      }
+      .md blockquote li + li { border-top: 1px solid rgba(148, 163, 184, 0.35); }
+      .md blockquote li::before {
+        content: "›";
+        position: absolute;
+        left: 14px;
+        top: 10px;
+        font-size: 22px;
+        line-height: 1;
+        color: rgba(100, 116, 139, 0.85);
+        font-weight: 900;
+      }
+      .md blockquote li p { margin: 0; display: inline; }
+      .md hr {
+        border: 0;
+        height: 0;
+        margin: 16px 0;
+      }
+
+      /* Snow divider (provided) */
+      .css-snow-divider {
+        display: flex;
+        align-items: flex-end;
+        height: 22px;
+        gap: 2px;
+        width: 100%;
+        margin: 0;
+      }
+      .divider-line {
+        flex-grow: 1;
+        height: 2px;
+        border-radius: 1px;
+        background: linear-gradient(to right, #2d5a27 0%, #2d5a27 40%, rgba(255, 255, 255, 0) 100%);
+        opacity: 0.6;
+      }
+      .divider-mountain {
+        flex-shrink: 0;
+        position: relative;
+        width: 30px;
+        height: 16px;
+        clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+        background-color: #2d5a27;
+      }
+      .divider-mountain::after {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: #d1e2d1;
+        clip-path: polygon(50% 0%, 75% 50%, 0% 100%);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <!-- 沉玉谷风格背景 -->
+      <div class="bg-container">
+        <div class="bg-top"></div>
+        <div class="bg-middle"></div>
+        <div class="bg-bottom"></div>
+      </div>
+
+      <div class="hero">
+        <!-- 如果没有 bg_img，默认使用透明或者淡色 -->
+        <img class="hero-bg" src="image/sunsetbackground.jpg" style="opacity: 0.3;" />
+        <div class="hero-overlay"></div>
+        <img class="hero-char" src="image/transparent_output.png" />
+        <div class="hero-text">
+          <div class="brand">ASTRBOT DAILY NEWS</div>
+          <div class="title"><span class="title-text">每日资讯日报</span></div>
+          <div class="subtitle" id="current-date"></div>
+        </div>
+      </div>
+
+      <script>
+        const now = new Date();
+        const month = now.getMonth() + 1;
+        const day = now.getDate();
+        document.getElementById('current-date').innerText = `${month}月${day}日`;
+      </script>
+
+      <div class="content">
+        <div class="paper">
+          <!-- 这里使用后端渲染逻辑（假设）：遍历 HTML 内容，遇到 h1 就闭合上一个 box，开启新 box -->
+          <!-- 为了静态演示，手动分割了结构 -->
+          
+          <div class="section-box">
+            <div class="md">
+              <h1>沉玉谷·晨间要闻</h1>
+              <p>清晨的灵濛山笼罩在薄雾之中，古老的翘英庄茶香四溢。在这里，每一片茶叶都承载着悠久的历史，每一阵山风都诉说着仙人的传说。</p>
+              
+              <h2>今日焦点</h2>
+              <p>根据总务司的最新通告，沉玉谷的雨林修护计划已取得阶段性进展。以下是本次简报的详细内容：</p>
+              <ul>
+                <li><strong>遗迹考察：</strong> 考古队在赤璋城垣附近发现了新的碑文残片。</li>
+                <li><strong>古华派近况：</strong> 王平安表示古华派的招新工作进展顺利。</li>
+                <li><strong>茶市动态：</strong> 翘英庄今年春茶的产量预计将提升百分之二十。</li>
+              </ul>
+  
+              <blockquote>
+                <p>“山川之美，古来共谈。沉玉谷之景，实乃璃月一绝。” —— 某位不愿透露姓名的旅行者</p>
+              </blockquote>
+  
+              <p>最近，沉玉谷的天气格外晴朗，正是出游的好时节。无论是去翘英庄品茶，还是去遗珑埠赏景，都能让人心旷神怡。不少游客表示，沉玉谷的风景让人流连忘返。</p>
+              <p>此外，关于沉玉谷的传说也在坊间流传。有人说在深山之中，隐藏着古代仙人的洞府；还有人说在碧水之下，埋藏着失落的宝藏。这些传说为沉玉谷增添了一层神秘的色彩。</p>
+            </div>
+          </div>
+
+          <div class="section-box">
+            <div class="md">
+              <h1>技术与创新</h1>
+              <p>在枫丹机械技术的启发下，当地茶农开始尝试使用半自动化的灌溉系统，旨在提高采茶效率的同时，保持沉玉谷自然生态的平衡。</p>
+              
+              <div class="codebox">
+                <div class="codebox-head">
+                  <div class="codebox-lang">Tea-Steeping-Protocol</div>
+                </div>
+                <div class="codebox-body">
+                  <code>function steepTea(temp, time) {
+    if (temp > 90) return "Tea burned!";
+    return `Steeping for ${time} minutes at ${temp}°C... Perfect!`;
+  }</code>
+                </div>
+              </div>
+  
+              <h2>未来展望</h2>
+              <p>随着沉玉谷与外界联系的日益增强，我们期待看到更多文化与技术的融合，让这片世外桃源焕发出新的光彩。</p>
+              <img class="md-img--medium" src="image/sunsetbackground.jpg" alt="沉玉谷晚霞" />
+              <p style="text-align: center; font-size: 16px; color: var(--muted);">图：暮色下的沉玉谷山脉</p>
+  
+              <hr />
+  
+              <h2>附录：沉玉谷特产名录</h2>
+              <p>为了促进贸易往来，总务司特别整理了一份沉玉谷特产清单，供以此地为目的地的商队参考。</p>
+              <ul>
+                <li><strong>沉玉仙茗：</strong> 口感醇厚，回甘悠长，是璃月港茶室的抢手货。</li>
+                <li><strong>玉石工艺品：</strong> 采用当地特有的“沉玉”雕刻而成，质地温润。</li>
+                <li><strong>清心花酿：</strong> 采集高山清心花酿造的蜜露，具有清热解毒的功效。</li>
+                <li><strong>竹制家具：</strong> 轻便耐用，带有淡淡的竹香。</li>
+              </ul>
+              
+              <p>商队在进出沉玉谷时，请务必遵守当地的法律法规，切勿破坏生态环境。特别是对于<strong>野生仙鹤</strong>等保护动物，严禁捕猎或惊扰。</p>
+              <p>此外，由于近期山间雾气较重，建议商队携带足够的照明设备，并聘请当地经验丰富的向导引路，以确保行程安全。</p>
+              <p>我们相信，在大家的共同努力下，沉玉谷的明天一定会更加美好！</p>
+            </div>
+          </div>
+          
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

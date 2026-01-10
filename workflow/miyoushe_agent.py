@@ -36,15 +36,35 @@ class MiyousheSubAgent:
             return source.name, []
 
         if "accountCenter/postList" in url:
-            posts = await _run_sync(
-                get_user_latest_posts,
-                url,
-                limit,
-                headless=headless,
-                sleep_between=sleep_between,
+            last_err: Optional[str] = None
+            for attempt in range(1, 4):
+                try:
+                    posts = await _run_sync(
+                        get_user_latest_posts,
+                        url,
+                        limit,
+                        headless=headless,
+                        sleep_between=sleep_between,
+                    )
+                    if posts:
+                        return source.name, posts
+                    last_err = "empty posts"
+                except Exception as e:
+                    last_err = str(e) or type(e).__name__
+                    astrbot_logger.warning(
+                        "[dailynews] get_user_latest_posts failed for %s (attempt %s/3): %s",
+                        source.name,
+                        attempt,
+                        last_err,
+                        exc_info=True,
+                    )
+                await asyncio.sleep(0.8 * attempt)
+
+            astrbot_logger.warning(
+                "[dailynews] %s miyoushe list still empty after retries: %s",
+                source.name,
+                last_err or "unknown",
             )
-            if posts:
-                return source.name, posts
 
         astrbot_logger.warning(
             "[dailynews] %s miyoushe list empty; fallback to single url: %s",

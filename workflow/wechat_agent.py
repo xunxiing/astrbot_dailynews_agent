@@ -38,58 +38,100 @@ class WechatSubAgent:
         album_keyword = source.album_keyword
         key = f"{source.url}||{album_keyword or ''}"
 
-        start_url = source.url
-        if persist_seed:
-            state = await _get_seed_state()
-            entry = state.get(key) if isinstance(state, dict) else None
-            if isinstance(entry, dict) and entry.get("seed_url"):
-                start_url = str(entry.get("seed_url"))
+        state = await _get_seed_state() if persist_seed else {}
+        entry = state.get(key) if isinstance(state, dict) else None
+        if not isinstance(entry, dict):
+            entry = {}
 
-        seed_url = start_url
+        # Keep a small pool of last-known seed URLs to avoid occasional bad redirects/pages.
+        candidates: List[str] = []
+        seen = set()
+
+        def _push(u: str):
+            s = (u or "").strip()
+            if not s or s in seen:
+                return
+            seen.add(s)
+            candidates.append(s)
+
+        seed_urls = entry.get("seed_urls")
+        if isinstance(seed_urls, list):
+            for u in seed_urls:
+                if isinstance(u, str):
+                    _push(u)
+        if isinstance(entry.get("seed_url"), str):
+            _push(str(entry.get("seed_url")))
+
+        # Always try the user-configured URL as a stable baseline.
+        _push(source.url)
+
+        last_good_seed_url = str(entry.get("last_good_seed_url") or "").strip()
+        # Only used as a last resort for fallback.
+        if last_good_seed_url:
+            _push(last_good_seed_url)
+
+        seed_url = ""
         articles: List[Dict[str, str]] = []
+        last_err: str = ""
 
-        for attempt in range(1, 3):
-            try:
-                seed_url, articles = await _run_sync(
-                    get_album_articles_chasing_latest_with_seed,
-                    start_url,
-                    limit,
-                    album_keyword=album_keyword,
-                    max_hops=max_hops,
-                )
-            except Exception as e:
-                astrbot_logger.warning(
-                    "[dailynews] chasing latest failed for %s (attempt %s/2): %s",
-                    source.name,
-                    attempt,
-                    e,
-                    exc_info=True,
-                )
-                seed_url, articles = start_url, []
+        for start_url in candidates[: max(1, len(candidates))]:
+            for attempt in range(1, 3):
+                try:
+                    seed_url, articles = await _run_sync(
+                        get_album_articles_chasing_latest_with_seed,
+                        start_url,
+                        limit,
+                        album_keyword=album_keyword,
+                        max_hops=max_hops,
+                    )
+                except Exception as e:
+                    last_err = str(e) or type(e).__name__
+                    astrbot_logger.warning(
+                        "[dailynews] chasing latest failed for %s (start=%s, attempt %s/2): %s",
+                        source.name,
+                        start_url,
+                        attempt,
+                        last_err,
+                        exc_info=True,
+                    )
+                    seed_url, articles = start_url, []
+
+                if articles:
+                    break
+                await asyncio.sleep(0.8 * attempt)
 
             if articles:
+                # Update pool: put latest seed_url at front, keep up to 3.
+                if persist_seed and seed_url:
+                    new_pool: List[str] = []
+                    for u in [seed_url] + [x for x in candidates if x != seed_url]:
+                        if u and u not in new_pool and "mp.weixin.qq.com/s" in u:
+                            new_pool.append(u)
+                        if len(new_pool) >= 3:
+                            break
+                    await _update_seed_entry(
+                        key,
+                        {
+                            "seed_url": seed_url,
+                            "seed_urls": new_pool,
+                            "last_good_seed_url": seed_url,
+                            "source_url": source.url,
+                            "album_keyword": album_keyword or "",
+                            "updated_at": datetime.now().isoformat(),
+                        },
+                    )
                 break
-            await asyncio.sleep(0.8 * attempt)
 
         if not articles:
+            fallback_url = last_good_seed_url or source.url
             astrbot_logger.warning(
-                "[dailynews] %s has no album articles; fallback to configured URL as single article: %s",
+                "[dailynews] %s has no album articles after retries; fallback to single url: %s (last_err=%s)",
                 source.name,
-                start_url,
+                fallback_url,
+                last_err or "unknown",
             )
-            seed_url = start_url
-            articles = [{"title": "", "url": start_url}]
-
-        if persist_seed and seed_url:
-            await _update_seed_entry(
-                key,
-                {
-                    "seed_url": seed_url,
-                    "source_url": source.url,
-                    "album_keyword": album_keyword or "",
-                    "updated_at": datetime.now().isoformat(),
-                },
-            )
+            seed_url = fallback_url
+            articles = [{"title": "", "url": fallback_url}]
 
         return source.name, articles
 

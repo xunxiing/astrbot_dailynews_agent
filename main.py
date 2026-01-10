@@ -59,7 +59,11 @@ def _is_valid_image_file(path: Path) -> bool:
         return False
 
 
-DAILY_NEWS_HTML_TMPL = load_template("templates/daily_news.html").strip()
+def _select_render_template(cfg) -> str:
+    name = str((cfg or {}).get("render_template_name") or "daily_news").strip().lower()
+    if name in {"chenyu", "chenyu_style", "chenyu-style"}:
+        return load_template("templates/chenyu-style.html").strip()
+    return load_template("templates/daily_news.html").strip()
 
 
 @register(
@@ -155,9 +159,10 @@ class DailyNewsPlugin(Star):
 
         async def _render_html(ctx: dict) -> Path | None:
             try:
-                p = await self.html_render(DAILY_NEWS_HTML_TMPL, ctx, return_url=False)
+                p = await self.html_render(_select_render_template(self.config), ctx, return_url=False)
                 return Path(str(p)).resolve()
             except Exception:
+                astrbot_logger.error("[dailynews] html_render failed", exc_info=True)
                 return None
 
         async def _render_t2i(text: str) -> Path | None:
@@ -177,7 +182,7 @@ class DailyNewsPlugin(Star):
 
         rendered = await render_daily_news_pages(
             pages=pages,
-            template_str=DAILY_NEWS_HTML_TMPL,
+            template_str=_select_render_template(self.config),
             render_html=_render_html,
             render_t2i=_render_t2i,
             pipeline=pipeline_cfg,
@@ -204,6 +209,7 @@ class DailyNewsPlugin(Star):
     @filter.command("daily_news")
     async def daily_news(self, event: AstrMessageEvent):
         """手动生成一次日报（并回发到当前会话）"""
+        yield event.plain_result("正在生成日报，请稍候...")
         content = await self.scheduler.generate_once()
         if not (content or "").strip():
             astrbot_logger.warning("[dailynews] /daily_news got empty content; sending fallback text")
@@ -644,13 +650,15 @@ class DailyNewsPlugin(Star):
             yield event.plain_result("URL 不能为空")
             return
 
-        sources: List[str] = list(self.config.get("news_sources", []) or [])
+        # New config: wechat_sources / miyoushe_sources are configured separately in panel.
+        # Keep this command for convenience: default to wechat_sources.
+        sources: List[str] = list(self.config.get("wechat_sources", []) or [])
         if url not in sources:
             sources.append(url)
-        self.config["news_sources"] = sources
+        self.config["wechat_sources"] = sources
         if hasattr(self.config, "save_config"):
             self.config.save_config()
-        yield event.plain_result("已添加来源")
+        yield event.plain_result("已添加来源（已加入 wechat_sources；米游社请在面板填 miyoushe_sources）")
 
     @filter.command("news_remove_source")
     async def news_remove_source(self, event: AstrMessageEvent, name: str):
@@ -660,8 +668,8 @@ class DailyNewsPlugin(Star):
             yield event.plain_result("用法：/news_remove_source URL")
             return
 
-        sources: List[str] = list(self.config.get("news_sources", []) or [])
-        self.config["news_sources"] = [x for x in sources if x != url]
+        sources: List[str] = list(self.config.get("wechat_sources", []) or [])
+        self.config["wechat_sources"] = [x for x in sources if x != url]
         if hasattr(self.config, "save_config"):
             self.config.save_config()
-        yield event.plain_result("已删除来源")
+        yield event.plain_result("已删除来源（仅从 wechat_sources 移除；米游社请在面板删 miyoushe_sources）")

@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -16,24 +16,60 @@ class LLMRunner:
         timeout_s: int = 180,
         max_retries: int = 1,
         provider_id: Optional[str] = None,
+        provider_ids: Optional[Iterable[str]] = None,
     ):
         self._ctx = astrbot_context
         self._timeout_s = timeout_s
         self._max_retries = max_retries
         self._provider_id = provider_id or None
 
+        ids: list[str] = []
+        if provider_ids is not None:
+            for x in provider_ids:
+                if not isinstance(x, str):
+                    continue
+                s = x.strip()
+                if not s or s in ids:
+                    continue
+                ids.append(s)
+        # keep explicit provider_id at the front for backward-compat
+        if self._provider_id and self._provider_id not in ids:
+            ids.insert(0, self._provider_id)
+        self._provider_ids = ids
+
     async def ask(self, *, system_prompt: str, prompt: str) -> str:
         last_exc: Optional[BaseException] = None
         for attempt in range(1, int(self._max_retries) + 2):
             try:
-                if self._provider_id:
-                    coro = self._ctx.llm_generate(
-                        chat_provider_id=self._provider_id,
-                        prompt=prompt,
-                        system_prompt=system_prompt,
-                    )
-                    resp = await asyncio.wait_for(coro, timeout=self._timeout_s)
-                    return getattr(resp, "completion_text", "") or ""
+                if self._provider_ids:
+                    for pid in self._provider_ids:
+                        try:
+                            coro = self._ctx.llm_generate(
+                                chat_provider_id=pid,
+                                prompt=prompt,
+                                system_prompt=system_prompt,
+                            )
+                            resp = await asyncio.wait_for(coro, timeout=self._timeout_s)
+                            return getattr(resp, "completion_text", "") or ""
+                        except asyncio.TimeoutError as e:
+                            last_exc = e
+                            astrbot_logger.warning(
+                                "[dailynews] LLM timeout after %ss (provider=%s, attempt %s/%s)",
+                                self._timeout_s,
+                                pid,
+                                attempt,
+                                int(self._max_retries) + 1,
+                            )
+                        except Exception as e:
+                            last_exc = e
+                            astrbot_logger.warning(
+                                "[dailynews] LLM call failed (provider=%s, attempt %s/%s): %s",
+                                pid,
+                                attempt,
+                                int(self._max_retries) + 1,
+                                e,
+                                exc_info=True,
+                            )
 
                 provider = self._ctx.get_using_provider()
                 coro = provider.text_chat(

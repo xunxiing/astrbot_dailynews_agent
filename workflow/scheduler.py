@@ -149,7 +149,11 @@ def _is_valid_image_file(path: Path) -> bool:
         return False
 
 
-DAILY_NEWS_HTML_TMPL = load_template("templates/daily_news.html").strip()
+def _select_render_template(cfg: Dict[str, Any]) -> str:
+    name = str(cfg.get("render_template_name") or "daily_news").strip().lower()
+    if name in {"chenyu", "chenyu_style", "chenyu-style"}:
+        return load_template("templates/chenyu-style.html").strip()
+    return load_template("templates/daily_news.html").strip()
 
 
 class DailyNewsScheduler:
@@ -177,44 +181,35 @@ class DailyNewsScheduler:
             except Exception:
                 astrbot_logger.error("[dailynews] config.save_config failed", exc_info=True)
 
-    def get_news_sources(self) -> List[Dict[str, Any]]:
-        raw = self.config.get("news_sources", [])
-        if isinstance(raw, list):
-            out: List[Dict[str, Any]] = []
-            for x in raw:
-                if isinstance(x, dict):
-                    out.append(x)
-                    continue
-                if isinstance(x, str):
-                    s = x.strip()
-                    if not s:
-                        continue
-                    # 兼容：列表元素也允许填 JSON 对象字符串
-                    if s.startswith("{") and s.endswith("}"):
-                        try:
-                            obj = json.loads(s)
-                            if isinstance(obj, dict):
-                                out.append(obj)
-                                continue
-                        except Exception:
-                            pass
-                    out.append({"url": s})
-            return out
-        if not isinstance(raw, str):
+    def _split_sources(self, raw: Any) -> List[str]:
+        """
+        Config UI uses list items, but users often paste multiple URLs into one item.
+        Split by whitespace/newlines and return a de-duplicated list.
+        """
+        urls: List[str] = []
+        seen = set()
+
+        if isinstance(raw, str):
+            raw = [raw]
+
+        if not isinstance(raw, list):
             return []
-        try:
-            data = json.loads(raw or "[]")
-            if isinstance(data, list):
-                out: List[Dict[str, Any]] = []
-                for x in data:
-                    if isinstance(x, dict):
-                        out.append(x)
-                    elif isinstance(x, str) and x.strip():
-                        out.append({"url": x.strip()})
-                return out
-        except Exception:
-            pass
-        return []
+
+        for item in raw:
+            if not isinstance(item, str):
+                continue
+            s = item.strip()
+            if not s:
+                continue
+            for part in re.split(r"[\s\r\n]+", s):
+                u = part.strip()
+                if not u:
+                    continue
+                if u in seen:
+                    continue
+                seen.add(u)
+                urls.append(u)
+        return urls
 
     def get_config_snapshot(self) -> Dict[str, Any]:
         return self._normalized_config()
@@ -225,6 +220,7 @@ class DailyNewsScheduler:
         cfg.setdefault("schedule_time", "09:00")
         cfg.setdefault("output_format", "markdown")
         cfg.setdefault("delivery_mode", "html_image")
+        cfg.setdefault("render_template_name", "daily_news")
         cfg.setdefault("max_sources_per_day", 3)
 
         pipeline = RenderPipelineConfig.from_mapping(cfg)
@@ -255,6 +251,10 @@ class DailyNewsScheduler:
         cfg.setdefault("llm_merge_timeout_s", 240)
         cfg.setdefault("llm_max_retries", 1)
         cfg.setdefault("main_agent_provider_id", "")
+        cfg.setdefault("main_agent_fallback_provider_ids", [])
+        cfg.setdefault("main_agent_fallback_provider_id_1", "")
+        cfg.setdefault("main_agent_fallback_provider_id_2", "")
+        cfg.setdefault("main_agent_fallback_provider_id_3", "")
         cfg.setdefault("image_plan_enabled", True)
 
         cfg.setdefault("twitter_enabled", False)
@@ -298,7 +298,12 @@ class DailyNewsScheduler:
         cfg.setdefault("last_run_date", "")
         cfg.setdefault("last_run_schedule_time", "")
 
-        cfg["news_sources"] = self.get_news_sources()
+        cfg.setdefault("wechat_sources", [])
+        cfg.setdefault("miyoushe_sources", [])
+        if not isinstance(cfg.get("wechat_sources"), list):
+            cfg["wechat_sources"] = []
+        if not isinstance(cfg.get("miyoushe_sources"), list):
+            cfg["miyoushe_sources"] = []
         if not isinstance(cfg.get("target_sessions"), list):
             cfg["target_sessions"] = []
         if not isinstance(cfg.get("admin_sessions"), list):
@@ -311,6 +316,8 @@ class DailyNewsScheduler:
             cfg["github_repos"] = []
         if not isinstance(cfg.get("twitter_targets"), list):
             cfg["twitter_targets"] = []
+        if not isinstance(cfg.get("main_agent_fallback_provider_ids"), list):
+            cfg["main_agent_fallback_provider_ids"] = []
 
         return cfg
 
@@ -385,7 +392,7 @@ class DailyNewsScheduler:
                         await asyncio.sleep(120)
                         continue
 
-                    content = await self.generate_once(cfg)
+                    content = await self.generate_once(cfg, source="scheduled")
                     sent = await self._send_to_targets(content, targets, config=cfg)
 
                     if sent > 0:
@@ -409,40 +416,46 @@ class DailyNewsScheduler:
 
     async def update_workflow_sources_from_config(self, cfg: Dict[str, Any]):
         self.workflow_manager.news_sources.clear()
-        for idx, source_data in enumerate(cfg.get("news_sources", []), start=1):
-            # 支持两种写法：
-            # 1) list[str]：每项是公众号文章 URL
-            # 2) list[dict]：带 name/type/priority/max_articles/album_keyword 等字段
-            if isinstance(source_data, str):
-                source_data = {"url": source_data}
-            if not isinstance(source_data, dict):
-                continue
 
-            url = str(source_data.get("url") or "").strip()
-            if not url:
+        # WeChat sources
+        for idx, url in enumerate(self._split_sources(cfg.get("wechat_sources", [])), start=1):
+            if "mp.weixin.qq.com" not in url.lower():
+                astrbot_logger.warning(
+                    "[dailynews] wechat_sources[%s] doesn't look like a wechat article url; skipping: %s",
+                    idx,
+                    url,
+                )
                 continue
-            source_type = str(source_data.get("type") or "").strip()
-            if not source_type:
-                u = url.lower()
-                if "miyoushe.com" in u:
-                    source_type = "miyoushe"
-                elif "mp.weixin.qq.com" in u:
-                    source_type = "wechat"
-                else:
-                    source_type = "wechat"
-            source = NewsSourceConfig(
-                name=str(source_data.get("name") or f"来源{idx}"),
-                url=url,
-                type=source_type,
-                priority=int(source_data.get("priority") or 1),
-                max_articles=int(source_data.get("max_articles") or 3),
-                album_keyword=(
-                    str(source_data.get("album_keyword")).strip()
-                    if source_data.get("album_keyword")
-                    else None
-                ),
+            self.workflow_manager.add_source(
+                NewsSourceConfig(
+                    name=f"公众号{idx}",
+                    url=url,
+                    type="wechat",
+                    priority=1,
+                    max_articles=3,
+                    album_keyword=None,
+                )
             )
-            self.workflow_manager.add_source(source)
+
+        # MiYoShe sources
+        for idx, url in enumerate(self._split_sources(cfg.get("miyoushe_sources", [])), start=1):
+            if "miyoushe.com" not in url.lower():
+                astrbot_logger.warning(
+                    "[dailynews] miyoushe_sources[%s] doesn't look like a miyoushe post list url; skipping: %s",
+                    idx,
+                    url,
+                )
+                continue
+            self.workflow_manager.add_source(
+                NewsSourceConfig(
+                    name=f"米游社{idx}",
+                    url=url,
+                    type="miyoushe",
+                    priority=1,
+                    max_articles=3,
+                    album_keyword=None,
+                )
+            )
 
         # GitHub repos live in a dedicated list, but we map each repo into a source for the workflow.
         for src in build_github_sources_from_config(cfg):
@@ -490,10 +503,10 @@ class DailyNewsScheduler:
             [s.name for s in self.workflow_manager.news_sources],
         )
 
-    async def generate_once(self, cfg: Optional[Dict[str, Any]] = None) -> str:
+    async def generate_once(self, cfg: Optional[Dict[str, Any]] = None, source: str = "manual") -> str:
         config = cfg or self._normalized_config()
         await self.update_workflow_sources_from_config(config)
-        result = await self.workflow_manager.run_workflow(config, astrbot_context=self.context)
+        result = await self.workflow_manager.run_workflow(config, astrbot_context=self.context, source=source)
         if result.get("status") == "success":
             return str(result.get("final_summary") or "")
         return f"生成失败：{result.get('error') or '未知错误'}"
@@ -538,12 +551,13 @@ class DailyNewsScheduler:
         async def _render_html(ctx: dict) -> Path | None:
             try:
                 p = await html_renderer.render_custom_template(
-                    DAILY_NEWS_HTML_TMPL,
+                    _select_render_template(config),
                     ctx,
                     return_url=False,
                 )
                 return Path(str(p)).resolve()
             except Exception:
+                astrbot_logger.error("[dailynews] render_custom_template failed", exc_info=True)
                 return None
 
         async def _render_t2i(text: str) -> Path | None:
@@ -568,7 +582,7 @@ class DailyNewsScheduler:
 
         rendered = await render_daily_news_pages(
             pages=pages,
-            template_str=DAILY_NEWS_HTML_TMPL,
+            template_str=_select_render_template(config),
             render_html=_render_html,
             render_t2i=_render_t2i,
             pipeline=pipeline_cfg,

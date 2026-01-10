@@ -56,18 +56,35 @@ def get_user_latest_posts(
         except Exception:
             executable_path = None
 
-        if executable_path:
-            browser = p.chromium.launch(headless=headless, executable_path=executable_path)
-        else:
-            astrbot_logger.warning(
-                "[dailynews] playwright chromium not ready; falling back to default Playwright browser path (may fail)."
-            )
-            browser = p.chromium.launch(headless=headless)
+        try:
+            if executable_path:
+                browser = p.chromium.launch(headless=headless, executable_path=executable_path)
+            else:
+                astrbot_logger.warning(
+                    "[dailynews] playwright chromium not ready; falling back to default Playwright browser path (may fail)."
+                )
+                browser = p.chromium.launch(headless=headless)
+        except Exception as e:
+            astrbot_logger.error("[dailynews] failed to launch playwright browser: %s", e)
+            return []
+
         context = browser.new_context()
         page = context.new_page()
 
         astrbot_logger.info("[dailynews] opening miyoushe post list: %s", user_post_list_url)
-        page.goto(user_post_list_url, wait_until="domcontentloaded", timeout=60000)
+        try:
+            page.goto(user_post_list_url, wait_until="domcontentloaded", timeout=90000)
+        except PWTimeoutError:
+            astrbot_logger.warning("[dailynews] miyoushe list goto timeout, attempting fallback to networkidle")
+            try:
+                page.goto(user_post_list_url, wait_until="networkidle", timeout=30000)
+            except Exception:
+                browser.close()
+                return []
+        except Exception as e:
+            astrbot_logger.error("[dailynews] miyoushe list goto failed: %s", e)
+            browser.close()
+            return []
 
         try:
             page.wait_for_selector(".mhy-article-card", timeout=20000)

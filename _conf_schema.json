@@ -24,6 +24,13 @@
     "options": ["html_image", "plain"],
     "hint": "html_image 使用 AstrBot 的网页渲染服务生成图片发送，可规避部分 markdown 渲染插件输出空白的问题"
   },
+  "render_template_name": {
+    "type": "string",
+    "description": "渲染模板",
+    "default": "daily_news",
+    "options": ["daily_news", "chenyu_style"],
+    "hint": "daily_news=默认模板；chenyu_style=沉玉谷风格（chenyu-style.html）"
+  },
   "max_sources_per_day": {
     "type": "int",
     "description": "每天最多处理多少个来源",
@@ -164,6 +171,30 @@
   "main_agent_provider_id": {
     "type": "string",
     "description": "主Agent 使用的 Provider（用于主 Agent 决策/汇总）",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "main_agent_fallback_provider_ids": {
+    "type": "list",
+    "description": "主 Agent 备用 Provider 列表（主 Provider 次数/限额耗尽时自动轮询）",
+    "default": [],
+    "hint": "例如：[\"providerA\", \"providerB\"]（会按顺序尝试，成功即停止）"
+  },
+  "main_agent_fallback_provider_id_1": {
+    "type": "string",
+    "description": "主 Agent 备用 Provider 1（优先级最高）",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "main_agent_fallback_provider_id_2": {
+    "type": "string",
+    "description": "主 Agent 备用 Provider 2",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "main_agent_fallback_provider_id_3": {
+    "type": "string",
+    "description": "主 Agent 备用 Provider 3",
     "_special": "select_provider",
     "default": ""
   },
@@ -358,11 +389,17 @@
     "description": "错误通知目标会话 unified_msg_origin 列表",
     "default": []
   },
-  "news_sources": {
+  "wechat_sources": {
     "type": "list",
-    "description": "新闻源（链接列表）",
-    "default": ["https://mp.weixin.qq.com/s/K1FGe-TiAk52B8lD6Kg8Mw","https://www.miyoushe.com/ys/accountCenter/postList?id=75276539"],
-    "hint": "每一项填一个链接：公众号文章（mp.weixin.qq.com）或米游社用户帖子列表（miyoushe.com/.../accountCenter/postList?id=...）。可混用。"
+    "description": "微信公众号新闻源（链接列表）",
+    "default": ["https://mp.weixin.qq.com/s/K1FGe-TiAk52B8lD6Kg8Mw"],
+    "hint": "每一项填一个链接：公众号文章（mp.weixin.qq.com）。支持一次粘贴多条链接（空白分隔）。"
+  },
+  "miyoushe_sources": {
+    "type": "list",
+    "description": "米游社新闻源（用户帖子列表链接）",
+    "default": ["https://www.miyoushe.com/ys/accountCenter/postList?id=75276539"],
+    "hint": "每一项填一个链接：米游社用户帖子列表（miyoushe.com/.../accountCenter/postList?id=...）。支持一次粘贴多条链接（空白分隔）。"
   },
   "last_run_schedule_time": {
     "type": "string",

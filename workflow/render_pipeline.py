@@ -35,6 +35,31 @@ def _asset_b64(filename: str) -> str:
     return ""
 
 
+def _templates_base_href() -> str:
+    try:
+        # Use plugin root so templates can reference `image/...` and `font/...` paths consistently.
+        return _plugin_root().resolve().as_uri().rstrip("/") + "/"
+    except Exception:
+        return ""
+
+
+def _root_asset_data_uri(rel_path: str, mime: str) -> str:
+    """
+    Read an asset under plugin root and return a data URI. Used for templates that rely on local images/fonts.
+    """
+    rp = (rel_path or "").strip().replace("\\", "/").lstrip("/")
+    if not rp:
+        return ""
+    try:
+        p = (_plugin_root() / rp).resolve()
+        if not p.exists() or not p.is_file():
+            return ""
+        b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        return ""
+
+
 def split_pages(text: str, page_chars: int, max_pages: int) -> List[str]:
     s = (text or "").strip()
     if not s:
@@ -161,6 +186,13 @@ async def render_daily_news_pages(
 
     bg_img = _asset_b64("sunsetbackground.jpg")
     char_img = _asset_b64("transparent_output.png")
+    base_href = _templates_base_href()
+
+    # chenyu-style assets (inline to avoid renderer not having local file access)
+    chenyu_font = _root_asset_data_uri("font/HYWenHei-75W-2.ttf", "font/ttf")
+    chenyu_bg_top = _root_asset_data_uri("image/上半背景.png", "image/png")
+    chenyu_bg_middle = _root_asset_data_uri("image/过渡图片.png", "image/png")
+    chenyu_bg_bottom = _root_asset_data_uri("image/下半图片.jpg", "image/jpeg")
 
     out: List[RenderedPage] = []
     total = len(pages_list)
@@ -174,6 +206,11 @@ async def render_daily_news_pages(
             "body_html": body_html,
             "bg_img": bg_img,
             "char_img": char_img,
+            "base_href": base_href,
+            "chenyu_font": chenyu_font,
+            "chenyu_bg_top": chenyu_bg_top,
+            "chenyu_bg_middle": chenyu_bg_middle,
+            "chenyu_bg_bottom": chenyu_bg_bottom,
             "img_full_px": int(style.full_max_width),
             "img_medium_px": int(style.medium_max_width),
             "img_narrow_px": int(style.narrow_max_width),

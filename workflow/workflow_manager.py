@@ -23,6 +23,7 @@ class NewsWorkflowManager:
     def __init__(self):
         self.sub_agents: Dict[str, Any] = {}
         self.news_sources: List[NewsSourceConfig] = []
+        self._lock = asyncio.Lock()
 
     def add_source(self, config: NewsSourceConfig):
         self.news_sources.append(config)
@@ -30,11 +31,44 @@ class NewsWorkflowManager:
     def register_sub_agent(self, source_type: str, agent_class):
         self.sub_agents[source_type] = agent_class
 
-    async def run_workflow(self, user_config: Dict[str, Any], astrbot_context: Any) -> Dict[str, Any]:
-        llm_timeout_s = int(user_config.get("llm_timeout_s", 180))
+    async def run_workflow(self, user_config: Dict[str, Any], astrbot_context: Any, source: str = "unknown") -> Dict[str, Any]:
+        if self._lock.locked():
+            astrbot_logger.warning("[dailynews] [workflow] run_workflow rejected: another workflow is already running. Source: %s", source)
+            return {
+                "status": "error",
+                "error": "已有日报任务正在运行中，请稍后再试。",
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        async with self._lock:
+            astrbot_logger.info("[dailynews] [workflow] run_workflow started from source: %s", source)
+            llm_timeout_s = int(user_config.get("llm_timeout_s", 180))
         llm_write_timeout_s = int(user_config.get("llm_write_timeout_s", max(llm_timeout_s, 360)))
         llm_merge_timeout_s = int(user_config.get("llm_merge_timeout_s", max(llm_timeout_s, 240)))
         main_provider_id = str(user_config.get("main_agent_provider_id") or "").strip()
+        fallback_providers: list[str] = []
+        raw_list = user_config.get("main_agent_fallback_provider_ids") or []
+        if isinstance(raw_list, list):
+            fallback_providers.extend(
+                [str(x).strip() for x in raw_list if isinstance(x, str) and str(x).strip()]
+            )
+
+        for k in (
+            "main_agent_fallback_provider_id_1",
+            "main_agent_fallback_provider_id_2",
+            "main_agent_fallback_provider_id_3",
+        ):
+            v = user_config.get(k)
+            if isinstance(v, str) and v.strip():
+                fallback_providers.append(v.strip())
+
+        # de-dup while preserving order
+        uniq: list[str] = []
+        for p in [main_provider_id] + fallback_providers:
+            if not p or p in uniq:
+                continue
+            uniq.append(p)
+        main_provider_chain = uniq
 
         llm_scout = LLMRunner(
             astrbot_context,
@@ -55,19 +89,19 @@ class NewsWorkflowManager:
             astrbot_context,
             timeout_s=llm_timeout_s,
             max_retries=int(user_config.get("llm_max_retries", 1)),
-            provider_id=main_provider_id or None,
+            provider_ids=main_provider_chain or None,
         )
         llm_main_merge = LLMRunner(
             astrbot_context,
             timeout_s=llm_merge_timeout_s,
             max_retries=int(user_config.get("llm_max_retries", 1)),
-            provider_id=main_provider_id or None,
+            provider_ids=main_provider_chain or None,
         )
         llm_image_plan = LLMRunner(
             astrbot_context,
             timeout_s=llm_timeout_s,
             max_retries=int(user_config.get("llm_max_retries", 1)),
-            provider_id=main_provider_id or None,
+            provider_ids=main_provider_chain or None,
         )
 
         try:
@@ -91,7 +125,9 @@ class NewsWorkflowManager:
                 fetch_tasks.append(agent.fetch_latest_articles(source, user_config))
                 fetch_task_sources.append(source)
 
+            astrbot_logger.info("[dailynews] [workflow] stage 1: fetching article lists for %d sources", len(fetch_tasks))
             fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+            astrbot_logger.info("[dailynews] [workflow] stage 1: finished fetching article lists")
             for idx, r in enumerate(fetch_results):
                 if isinstance(r, Exception):
                     src = fetch_task_sources[idx] if idx < len(fetch_task_sources) else None
@@ -116,7 +152,9 @@ class NewsWorkflowManager:
                 agent = agent_cls()
                 report_tasks.append(agent.analyze_source(source, fetched.get(source.name, []), llm_scout))
                 report_task_sources.append(source)
+            astrbot_logger.info("[dailynews] [workflow] stage 2: sub-agent analyzing sources (%d tasks)", len(report_tasks))
             report_results = await asyncio.gather(*report_tasks, return_exceptions=True)
+            astrbot_logger.info("[dailynews] [workflow] stage 2: finished sub-agent analysis")
             for idx, r in enumerate(report_results):
                 if isinstance(r, Exception):
                     src = report_task_sources[idx] if idx < len(report_task_sources) else None
@@ -225,7 +263,9 @@ class NewsWorkflowManager:
 
             astrbot_logger.debug("[dailynews] write_tasks: %s", len(write_tasks))
 
+            astrbot_logger.info("[dailynews] [workflow] stage 4: sub-agents writing content (%d tasks)", len(write_tasks))
             sub_results = await asyncio.gather(*write_tasks, return_exceptions=True)
+            astrbot_logger.info("[dailynews] [workflow] stage 4: finished writing content")
 
             image_plan = None
             if bool(user_config.get("image_layout_enabled", False)):
@@ -298,6 +338,7 @@ class NewsWorkflowManager:
                 except Exception as e:
                     astrbot_logger.warning("[dailynews] image_layout failed: %s", e, exc_info=True)
 
+            astrbot_logger.info("[dailynews] [workflow] run_workflow completed successfully from source: %s", source)
             return {
                 "status": "success",
                 "decision": decision,

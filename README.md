@@ -31,8 +31,8 @@
 | `/daily_news` | 手动生成日报 |
 | `/news_config` | 查看当前配置 |
 | `/news_toggle` | 切换自动日报开关 |
-| `/news_add_source URL` | 添加新闻源（公众号文章链接） |
-| `/news_remove_source URL` | 删除新闻源 |
+| `/news_add_source URL` | 添加新闻源（默认添加到公众号列表；建议直接在面板分别配置公众号/米游社） |
+| `/news_remove_source URL` | 删除新闻源（从公众号列表移除） |
 | `/news_config_help` | 显示配置帮助 |
 
 ## 🔍 调试和故障排除
