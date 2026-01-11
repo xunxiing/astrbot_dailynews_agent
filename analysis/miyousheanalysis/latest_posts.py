@@ -32,6 +32,28 @@ def _try_close_popups(page) -> None:
             pass
 
 
+def _find_post_subject_from_nuxt(obj, depth: int = 0, max_depth: int = 10) -> Optional[str]:
+    if depth > max_depth:
+        return None
+
+    if isinstance(obj, dict):
+        if isinstance(obj.get("subject"), str) and obj.get("subject").strip() and "content" in obj:
+            return obj.get("subject").strip()
+        for v in obj.values():
+            if isinstance(v, (dict, list)):
+                hit = _find_post_subject_from_nuxt(v, depth + 1, max_depth)
+                if hit:
+                    return hit
+
+    if isinstance(obj, list):
+        for it in obj:
+            hit = _find_post_subject_from_nuxt(it, depth + 1, max_depth)
+            if hit:
+                return hit
+
+    return None
+
+
 def get_user_latest_posts(
     user_post_list_url: str,
     limit: int = 10,
@@ -124,21 +146,29 @@ def get_user_latest_posts(
 
             article_page = None
             opened_popup = False
+
+            # Prefer opening a new tab by clicking the title (more stable on Nuxt pages).
             try:
-                with page.expect_popup(timeout=8000) as pop:
-                    card.click(timeout=8000)
-                article_page = pop.value
+                with context.expect_page(timeout=10000) as new_page_info:
+                    card.locator(".mhy-article-card__h3").click(timeout=8000)
+                article_page = new_page_info.value
                 opened_popup = True
-            except PWTimeoutError:
-                # 同 tab
+            except Exception:
                 try:
-                    card.click(timeout=8000)
-                    page.wait_for_url("**/article/**", timeout=12000)
-                    article_page = page
-                    opened_popup = False
+                    with page.expect_popup(timeout=8000) as pop:
+                        card.click(timeout=8000)
+                    article_page = pop.value
+                    opened_popup = True
                 except PWTimeoutError:
-                    card_idx += 1
-                    continue
+                    # Last resort: same-tab navigation
+                    try:
+                        card.locator(".mhy-article-card__h3").click(timeout=8000)
+                        page.wait_for_url("**/article/**", timeout=12000)
+                        article_page = page
+                        opened_popup = False
+                    except Exception:
+                        card_idx += 1
+                        continue
 
             try:
                 # 避免 about:blank
@@ -151,6 +181,18 @@ def get_user_latest_posts(
 
                 url = (article_page.url or "").strip()
                 if url and "/article/" in url:
+                    # Try to refine title via window.__NUXT__ (optional).
+                    try:
+                        article_page.wait_for_function(
+                            "() => window.__NUXT__ && Object.keys(window.__NUXT__).length > 0",
+                            timeout=5000,
+                        )
+                        nuxt = article_page.evaluate("() => window.__NUXT__")
+                        nuxt_title = _find_post_subject_from_nuxt(nuxt)
+                        if nuxt_title:
+                            preview = nuxt_title.strip()
+                    except Exception:
+                        pass
                     out.append({"title": preview, "url": url})
             except Exception:
                 pass

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import base64
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -186,35 +187,99 @@ def _promote_headings_for_chenyu(md: str) -> str:
         return ""
 
     lines = text.splitlines()
+
+    # Detect whether the doc uses H2/H3 as main headings (skip fenced code).
+    has_h2 = False
+    has_h3 = False
+    in_fence = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        m = re.match(r"^\s*(#{2,4})\s*(\S.*)?$", line)
+        if not m:
+            continue
+        level = len(m.group(1))
+        if level == 2:
+            has_h2 = True
+        elif level == 3:
+            has_h3 = True
+
+    # If there are no H2 but there are H3, treat H3 as “top sections”.
+    promote_map: dict[int, int] = {}
+    if has_h2:
+        promote_map = {2: 1, 3: 2}
+    elif has_h3:
+        promote_map = {3: 1, 4: 2}
+
     out: List[str] = []
     in_fence = False
     removed_first_h1 = False
-
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("```"):
             in_fence = not in_fence
             out.append(line)
             continue
+        if in_fence:
+            out.append(line)
+            continue
 
-        if not in_fence:
-            # Remove the very first H1 title to avoid duplicating the template's hero title.
-            if (not removed_first_h1) and stripped.startswith("# "):
-                removed_first_h1 = True
-                continue
+        # Remove the very first H1 title to avoid duplicating the template's hero title.
+        if not removed_first_h1 and re.match(r"^\s*#(?!#)\s*\S", line):
+            removed_first_h1 = True
+            continue
 
-            if stripped.startswith("### "):
-                # promote H3 -> H2
-                out.append(line.replace("### ", "## ", 1))
-                continue
-            if stripped.startswith("## "):
-                # promote H2 -> H1
-                out.append(line.replace("## ", "# ", 1))
-                continue
+        m = re.match(r"^(\s*)(#{1,6})\s*(\S.*)?$", line)
+        if not m:
+            out.append(line)
+            continue
 
-        out.append(line)
+        indent, hashes, rest = m.group(1), m.group(2), (m.group(3) or "").rstrip()
+        level = len(hashes)
+        new_level = promote_map.get(level)
+        if not new_level:
+            out.append(line)
+            continue
+        out.append(f"{indent}{'#' * new_level} {rest}".rstrip())
 
     return "\n".join(out).strip("\n")
+
+
+def _wrap_h1_sections_for_chenyu(body_html: str) -> str:
+    """
+    chenyu-style 期望“每个一级标题一块 section-box”。这里把渲染后的 HTML 按 <h1> 分段包装：
+    - preamble（首个 h1 之前的内容）会并入第一个 section
+    - 没有 h1 时，整体包一层 section-box
+    """
+    s = (body_html or "").strip()
+    if not s:
+        return ""
+
+    parts = re.split(r"(<h1>.*?</h1>)", s, flags=re.I | re.S)
+    if len(parts) <= 1:
+        return f'<div class="section-box"><div class="md">{s}</div></div>'
+
+    pre = (parts[0] or "").strip()
+    out: List[str] = []
+    i = 1
+    while i < len(parts):
+        h1 = parts[i] or ""
+        rest = parts[i + 1] if i + 1 < len(parts) else ""
+        chunk = (h1 + rest).strip()
+        if not out and pre:
+            chunk = (pre + "\n" + chunk).strip()
+        if chunk:
+            out.append(f'<div class="section-box"><div class="md">{chunk}</div></div>')
+        i += 2
+
+    if not out and pre:
+        out.append(f'<div class="section-box"><div class="md">{pre}</div></div>')
+
+    return "\n".join(out).strip()
 
 
 async def render_daily_news_pages(
@@ -241,12 +306,16 @@ async def render_daily_news_pages(
     chenyu_bg_top = _root_asset_data_uri("image/上半背景.png", "image/png")
     chenyu_bg_middle = _root_asset_data_uri("image/过渡图片.png", "image/png")
     chenyu_bg_bottom = _root_asset_data_uri("image/下半图片.jpg", "image/jpeg")
+    chenyu_tower = _root_asset_data_uri("image/tower_no_bg.png", "image/png")
 
     out: List[RenderedPage] = []
     total = len(pages_list)
     for idx, page in enumerate(pages_list, start=1):
-        page_md = _promote_headings_for_chenyu(page) if _looks_like_chenyu_template(template_str) else page
+        is_chenyu = _looks_like_chenyu_template(template_str)
+        page_md = _promote_headings_for_chenyu(page) if is_chenyu else page
         body_html = await _build_body_html(page_md, style=style)
+        if is_chenyu:
+            body_html = _wrap_h1_sections_for_chenyu(body_html)
         portrait_max_h = max(360, min(560, int(style.full_max_width * 0.68)))
         panorama_max_h = max(260, min(420, int(style.medium_max_width * 0.5)))
         ctx = {
@@ -260,6 +329,7 @@ async def render_daily_news_pages(
             "chenyu_bg_top": chenyu_bg_top,
             "chenyu_bg_middle": chenyu_bg_middle,
             "chenyu_bg_bottom": chenyu_bg_bottom,
+            "chenyu_tower": chenyu_tower,
             "img_full_px": int(style.full_max_width),
             "img_medium_px": int(style.medium_max_width),
             "img_narrow_px": int(style.narrow_max_width),

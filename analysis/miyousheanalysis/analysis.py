@@ -74,7 +74,21 @@ def _content_to_text(content: Any) -> Tuple[str, List[str]]:
     if content is None:
         return "", []
     if isinstance(content, str):
-        return _html_to_text_basic(content), []
+        html = content or ""
+        # Some Nuxt payloads store rich HTML content, and `image_list` may be empty.
+        # Extract inline images from HTML to improve image candidate coverage.
+        imgs = re.findall(r'(?:src|data-src)=["\']([^"\']+)["\']', html, flags=re.I)
+        seen = set()
+        img_urls = []
+        for u in imgs:
+            s = str(u or "").strip()
+            if not s:
+                continue
+            if s in seen:
+                continue
+            seen.add(s)
+            img_urls.append(s)
+        return _html_to_text_basic(html), img_urls
     if isinstance(content, list):
         lines: List[str] = []
         imgs: List[str] = []

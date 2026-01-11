@@ -54,7 +54,8 @@
         z-index: 1;
         position: relative;
         margin-top: 0px; /* 取消上移，让背景完全归位，分界线自然下移 */
-        filter: saturate(1.3) contrast(1.1);
+        filter: saturate(1.3);
+        opacity: 0.8;
       }
       /* 在 top 和 middle 之间增加渐变过渡 */
       .bg-top::after {
@@ -76,11 +77,11 @@
         margin-top: -100px; /* 调整重叠区域 */
         margin-bottom: -100px;
         /* 移除之前复杂的 mask，改用简单的混合模式配合透明度，或者调整不透明度 */
-        opacity: 0.9;
+        opacity: 0.7;
         /* 尝试使用 screen 或 soft-light 混合模式来提亮中间部分，避免黑边 */
-        /* mix-blend-mode: soft-light; */ 
+        /* mix-blend-mode: soft-light; */
         /* 重新设计：让中间背景更亮一点，减少与上下图的明暗反差 */
-        filter: brightness(1.1);
+        filter: saturate(0.7);
       }
       .bg-bottom {
         height: 800px;
@@ -89,6 +90,8 @@
         flex-shrink: 0;
         z-index: 1;
         position: relative;
+        filter: saturate(0.7);
+        opacity: 0.7;
       }
       /* 在 middle 和 bottom 之间增加渐变过渡 */
       .bg-bottom::before {
@@ -158,8 +161,8 @@
       }
       .title-text {
         font-size: 60px;
-        font-weight: 900;
-        color: #1a1a2e;
+        font-weight: 600;
+        color: #1a242e;
         letter-spacing: 2px; /* 增加标题字间距，防止粘连 */
         font-family: "CustomFont", "Source Han Sans CN", "Microsoft YaHei", sans-serif;
         /* 为了在深浅背景下都清晰，可以加一点非常淡的描边或阴影 */
@@ -211,10 +214,10 @@
         content: "";
         position: absolute;
         top: -30px; /* 向上移动装饰，原为 0px */
-        left: -120px;
-        width: 350px;
-        height: 500px; /* 140px * 1.3 = 182px */
-        background: url('image/tower_no_bg.png') no-repeat;
+        left: -130px; /* 向左平移 20px */
+        width: 315px; /* 缩小 10% */
+        height: 450px; /* 缩小 10% */
+        background: url('{{ chenyu_tower if chenyu_tower else "image/tower_no_bg.png" }}') no-repeat;
         background-size: contain;/* 强制拉伸图片以填充新的长宽比 */
         z-index: 5;
         pointer-events: none;
@@ -224,11 +227,11 @@
       /* 调整 md 样式以适应新的结构 */
       .md { 
         font-size: 30px; /* 增大字号 22px -> 24px */
-        line-height: 1.8; /* 增加行高 1.6 -> 1.8，防止文字粘连 */
+        line-height: 1.2; /* 增加行高 1.6 -> 1.8，防止文字粘连 */
         letter-spacing: 0.5px; /* 增加字间距，防止文字粘连 */
-        color: #0d1f0d; /* 加深文字颜色，接近黑色但带绿调，增强对比度 */
+        color: #2d3848d9; /* 加深文字颜色，接近黑色但带绿调，增强对比度 */
         padding: 10px 40px; /* 减小上下内边距 20px -> 10px */
-        font-weight: 500; /* 增加字重，让文字更实 */
+        font-weight: 400; /* 增加字重，让文字更实 */
       }
       
       /* 重置 h1 样式，现在它是框的标题 */
@@ -451,9 +454,7 @@
 
       <div class="content">
         <div class="paper">
-          <div class="section-box">
-            <div class="md">{{ body_html | safe }}</div>
-          </div>
+          {{ body_html | safe }}
 
           {% if false %}
           <!-- 这里使用后端渲染逻辑（假设）：遍历 HTML 内容，遇到 h1 就闭合上一个 box，开启新 box -->

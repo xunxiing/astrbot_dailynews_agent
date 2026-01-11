@@ -192,7 +192,10 @@ class MainNewsAgent:
             "你是每日资讯编辑（主Agent）。"
             "你会收到多个子Agent写好的 Markdown 小节。"
             "请合并为一篇结构清晰、去重、可读性强的中文 Markdown 日报。"
-            "要求：保留每节的文章链接；不要编造未提供的事实。"
+            "格式要求（重要）："
+            "1) 顶部只保留一个文档标题（# ...），其余各来源必须用二级标题 `## 来源名` 分隔。"
+            "2) 不要把所有来源揉成一个连续列表；几个可以整合的来源建议有 `##` 标题。"
+            "3) 来源内可以用 `###`/列表组织要点，但请保留原文链接；不要编造未提供的事实。"
         )
         prompt = {
             "now": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -213,4 +216,3 @@ class MainNewsAgent:
                 for msg in failed:
                     parts.append(f"- {msg}")
             return "\n".join([p for p in parts if p is not None])
-
