@@ -21,6 +21,7 @@ class SubAgentResult:
     key_points: List[str]
     images: Optional[List[str]] = None
     error: Optional[str] = None
+    no_llm_merge: bool = False
 
 
 @dataclass

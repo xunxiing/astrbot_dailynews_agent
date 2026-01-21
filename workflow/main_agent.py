@@ -170,23 +170,38 @@ class MainNewsAgent:
         self, sub_results: List[Any], format_type: str, llm: LLMRunner
     ) -> str:
         ok: List[SubAgentResult] = []
+        passthrough: List[SubAgentResult] = []
         failed: List[str] = []
         for r in sub_results:
             if isinstance(r, Exception):
                 failed.append(str(r) or f"{type(r).__name__}")
                 continue
             if isinstance(r, SubAgentResult) and not r.error:
-                ok.append(r)
+                if bool(getattr(r, "no_llm_merge", False)):
+                    passthrough.append(r)
+                else:
+                    ok.append(r)
             elif isinstance(r, SubAgentResult):
                 failed.append(f"{r.source_name}: {r.error}")
 
-        if not ok:
+        if not ok and not passthrough:
             lines = ["# 每日资讯日报", "", "未收到子Agent的有效内容小节。"]
             if failed:
                 lines.extend(["", "## 错误信息"])
                 for msg in failed:
                     lines.append(f"- {msg}")
             return "\n".join(lines)
+
+        if not ok and passthrough:
+            parts = ["# 每日资讯日报", f"*生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*", ""]
+            for s in passthrough:
+                parts.append(s.content.strip())
+                parts.append("")
+            if failed:
+                parts.append("## 错误信息")
+                for msg in failed:
+                    parts.append(f"- {msg}")
+            return "\n".join([p for p in parts if p is not None]).strip()
 
         system_prompt = (
             "你是每日资讯编辑（主Agent）。"
@@ -204,13 +219,21 @@ class MainNewsAgent:
             "output_format": format_type,
         }
         try:
-            return await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+            merged = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+            merged = (merged or "").strip()
+            if passthrough:
+                merged = (merged + "\n\n" + "\n\n".join([s.content.strip() for s in passthrough])).strip()
+            return merged
         except Exception as e:
             astrbot_logger.warning("[dailynews] merge failed, fallback to concat: %s", e, exc_info=True)
             parts = ["# 每日资讯日报", f"*生成时间: {prompt['now']}*", ""]
             for s in ok:
                 parts.append(s.content.strip())
                 parts.append("")
+            if passthrough:
+                for s in passthrough:
+                    parts.append(s.content.strip())
+                    parts.append("")
             if failed:
                 parts.append("## 错误信息")
                 for msg in failed:

@@ -343,6 +343,19 @@ class PluginRegistrySubAgent:
                 active_cnt += 1
 
         angle = f"近 {since_hours} 小时：{new_cnt} 个新仓库插件 / {active_cnt} 个活跃插件"
+        sample: List[Dict[str, Any]] = []
+        for a in (articles or [])[:3]:
+            if not isinstance(a, dict):
+                continue
+            sample.append(
+                {
+                    "display_name": a.get("display_name") or a.get("key"),
+                    "repo": a.get("repo_html_url") or a.get("repo"),
+                    "is_new_in_registry_snapshot": bool(a.get("is_new_in_registry_snapshot") or False),
+                    "is_new_repo": bool(a.get("is_new_repo") or False),
+                    "is_active_repo": bool(a.get("is_active_repo") or False),
+                }
+            )
         return {
             "source_name": source.name,
             "source_type": source.type,
@@ -352,7 +365,7 @@ class PluginRegistrySubAgent:
             "topics": ["plugins", "registry", "github"],
             "quality_score": int(new_cnt * 8 + active_cnt * 2),
             "today_angle": angle,
-            "sample_articles": (articles or [])[:3],
+            "sample_articles": sample,
             "error": None,
         }
 
@@ -390,6 +403,7 @@ class PluginRegistrySubAgent:
                 summary="",
                 key_points=[],
                 error=None,
+                no_llm_merge=True,
             )
 
         snapshot_at = ""
@@ -498,6 +512,7 @@ class PluginRegistrySubAgent:
             key_points=[],
             images=[],
             error=None,
+            no_llm_merge=True,
         )
 
     def _resolve_registry_path(self, source: NewsSourceConfig) -> str:
