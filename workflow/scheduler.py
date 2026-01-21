@@ -21,6 +21,7 @@ except Exception:  # pragma: no cover
 from .agents import MiyousheSubAgent, NewsSourceConfig, NewsWorkflowManager, WechatSubAgent
 from .github_agent import GitHubSubAgent
 from .github_source import build_github_sources_from_config
+from .plugin_registry_agent import PluginRegistrySubAgent
 from .twitter_agent import TwitterSubAgent
 from .rendering import load_template
 from .config_models import (
@@ -176,6 +177,7 @@ class DailyNewsScheduler:
         self.workflow_manager.register_sub_agent("miyoushe", MiyousheSubAgent)
         self.workflow_manager.register_sub_agent("github", GitHubSubAgent)
         self.workflow_manager.register_sub_agent("twitter", TwitterSubAgent)
+        self.workflow_manager.register_sub_agent("plugin_registry", PluginRegistrySubAgent)
 
     def _save_config(self):
         if hasattr(self.config, "save_config"):

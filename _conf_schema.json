@@ -82,7 +82,7 @@
     "description": "优先处理的来源类型",
     "default": ["wechat"],
     "hint": "例如：[\"wechat\", \"miyoushe\", \"github\"]",
-    "options": ["wechat", "miyoushe", "github"]
+    "options": ["wechat", "miyoushe", "github", "twitter", "plugin_registry"]
   },
   "github_enabled": {
     "type": "bool",
@@ -256,6 +256,53 @@
             "type": "int",
             "description": "每次最多抓取推文数（忽略置顶）",
             "default": 3
+          }
+        }
+      },
+      "plugin_registry_official": {
+        "name": "插件源（官方）",
+        "hint": "读取 AstrBot 的官方插件索引（data/plugins.json），抓取最近 27 小时新增/活跃的插件并用 GitHub API 校验仓库 created_at/pushed_at。",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "显示名称（可选）",
+            "default": ""
+          },
+          "since_hours": {
+            "type": "int",
+            "description": "时间窗口（小时）",
+            "default": 27
+          },
+          "max_plugins": {
+            "type": "int",
+            "description": "最多收集多少个插件",
+            "default": 20
+          }
+        }
+      },
+      "plugin_registry_custom": {
+        "name": "插件源（第三方）",
+        "hint": "读取第三方插件索引 JSON（结构同 plugins.json）。这里建议只填文件名（与官方 plugins.json 位于同一目录）。抓取最近 27 小时新增/活跃的插件并用 GitHub API 校验仓库 created_at/pushed_at。",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "显示名称（可选）",
+            "default": ""
+          },
+          "path": {
+            "type": "string",
+            "description": "第三方插件索引文件名（JSON）",
+            "default": ""
+          },
+          "since_hours": {
+            "type": "int",
+            "description": "时间窗口（小时）",
+            "default": 27
+          },
+          "max_plugins": {
+            "type": "int",
+            "description": "最多收集多少个插件",
+            "default": 20
           }
         }
       }

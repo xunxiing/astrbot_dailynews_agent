@@ -295,6 +295,47 @@ class NewsSourcesConfig:
                     priority=max(1, priority),
                     max_articles=max(1, max_articles),
                     album_keyword=None,
+                    meta=None,
+                )
+            elif tkey == "plugin_registry_official":
+                since_hours = max(1, _to_int(item.get("since_hours"), 27))
+                max_plugins = max(1, _to_int(item.get("max_plugins"), 20))
+                name = _to_str(item.get("name"), "").strip()
+                src = NewsSourceConfig(
+                    name=name or "插件源（官方）",
+                    url="official",
+                    type="plugin_registry",
+                    priority=1,
+                    max_articles=max_plugins,
+                    album_keyword=None,
+                    meta={
+                        "registry_kind": "official",
+                        "name": name or "插件源（官方）",
+                        "since_hours": since_hours,
+                        "max_plugins": max_plugins,
+                    },
+                )
+            elif tkey == "plugin_registry_custom":
+                path = _to_str(item.get("path"), "").strip()
+                if not path:
+                    continue
+                since_hours = max(1, _to_int(item.get("since_hours"), 27))
+                max_plugins = max(1, _to_int(item.get("max_plugins"), 20))
+                name = _to_str(item.get("name"), "").strip()
+                src = NewsSourceConfig(
+                    name=name or "插件源（第三方）",
+                    url=path,
+                    type="plugin_registry",
+                    priority=1,
+                    max_articles=max_plugins,
+                    album_keyword=None,
+                    meta={
+                        "registry_kind": "custom",
+                        "path": path,
+                        "name": name or "插件源（第三方）",
+                        "since_hours": since_hours,
+                        "max_plugins": max_plugins,
+                    },
                 )
             else:
                 continue

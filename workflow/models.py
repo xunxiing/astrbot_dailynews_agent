@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -10,6 +10,7 @@ class NewsSourceConfig:
     priority: int = 1
     max_articles: int = 3
     album_keyword: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -27,4 +28,3 @@ class MainAgentDecision:
     sources_to_process: List[str]
     processing_instructions: Dict[str, str]
     final_format: str = "markdown"
-
