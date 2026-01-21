@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
+from .models import NewsSourceConfig
+
 
 def _to_int(value: Any, default: int) -> int:
     try:
@@ -45,6 +47,10 @@ def _to_str(value: Any, default: str = "") -> str:
     if value is None:
         return str(default)
     return str(value)
+
+def _to_optional_str(value: Any) -> Optional[str]:
+    s = _to_str(value, "").strip()
+    return s if s else None
 
 
 @dataclass(frozen=True)
@@ -208,3 +214,95 @@ class LayoutPrompts:
             layout_refiner_system=str(load_template(layout_refiner_system_path) or "").strip(),
             image_labeler_system=str(load_template(image_labeler_system_path) or "").strip(),
         )
+
+
+@dataclass(frozen=True)
+class NewsSourcesConfig:
+    sources: list[NewsSourceConfig]
+
+    @classmethod
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> "NewsSourcesConfig":
+        raw = cfg.get("news_sources") or []
+        if not isinstance(raw, list):
+            return cls(sources=[])
+
+        out: list[NewsSourceConfig] = []
+        seen: set[tuple[str, str]] = set()
+
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            tkey = _to_str(item.get("__template_key"), "").strip().lower()
+            if not tkey:
+                continue
+
+            if tkey == "wechat":
+                url = _to_str(item.get("url"), "").strip()
+                if not url:
+                    continue
+                name = _to_str(item.get("name"), "").strip()
+                priority = _to_int(item.get("priority"), 1)
+                max_articles = _to_int(item.get("max_articles"), 3)
+                album_keyword = _to_optional_str(item.get("album_keyword"))
+                src = NewsSourceConfig(
+                    name=name or f"公众号{len(out) + 1}",
+                    url=url,
+                    type="wechat",
+                    priority=max(1, priority),
+                    max_articles=max(1, max_articles),
+                    album_keyword=album_keyword,
+                )
+            elif tkey == "miyoushe":
+                url = _to_str(item.get("url"), "").strip()
+                if not url:
+                    continue
+                name = _to_str(item.get("name"), "").strip()
+                priority = _to_int(item.get("priority"), 1)
+                max_articles = _to_int(item.get("max_articles"), 3)
+                src = NewsSourceConfig(
+                    name=name or f"米游社{len(out) + 1}",
+                    url=url,
+                    type="miyoushe",
+                    priority=max(1, priority),
+                    max_articles=max(1, max_articles),
+                    album_keyword=None,
+                )
+            elif tkey == "github":
+                repo = _to_str(item.get("repo") or item.get("url"), "").strip()
+                if not repo:
+                    continue
+                name = _to_str(item.get("name"), "").strip()
+                priority = _to_int(item.get("priority"), 1)
+                src = NewsSourceConfig(
+                    name=name or f"GitHub {repo}",
+                    url=repo,
+                    type="github",
+                    priority=max(1, priority),
+                    max_articles=1,
+                    album_keyword=None,
+                )
+            elif tkey == "twitter":
+                url = _to_str(item.get("url"), "").strip()
+                if not url:
+                    continue
+                name = _to_str(item.get("name"), "").strip()
+                priority = _to_int(item.get("priority"), 1)
+                max_articles = _to_int(item.get("max_articles"), 3)
+                src = NewsSourceConfig(
+                    name=name or f"X/{len(out) + 1}",
+                    url=url,
+                    type="twitter",
+                    priority=max(1, priority),
+                    max_articles=max(1, max_articles),
+                    album_keyword=None,
+                )
+            else:
+                continue
+
+            key = (src.type, src.url.strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(src)
+
+        return cls(sources=out)

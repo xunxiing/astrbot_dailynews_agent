@@ -663,20 +663,91 @@ class DailyNewsPlugin(Star):
             yield event.plain_result("用法：/news_add_source URL（或 /news_add_source 名称 URL）")
             return
 
+        display_name = ""
         url = parts[0].strip() if len(parts) == 1 else parts[1].strip()
+        if len(parts) >= 2:
+            display_name = parts[0].strip()
         if not url:
             yield event.plain_result("URL 不能为空")
             return
 
-        # New config: wechat_sources / miyoushe_sources are configured separately in panel.
-        # Keep this command for convenience: default to wechat_sources.
-        sources: List[str] = list(self.config.get("wechat_sources", []) or [])
-        if url not in sources:
-            sources.append(url)
-        self.config["wechat_sources"] = sources
+        # Preferred (v4.10.4+): template_list sources.
+        key = "wechat"
+        low = url.lower()
+        if "miyoushe.com" in low:
+            key = "miyoushe"
+        elif "github.com" in low or ("/" in url and " " not in url and "http" not in low and ":" not in url):
+            key = "github"
+        elif "x.com" in low or "twitter.com" in low:
+            key = "twitter"
+
+        items = self.config.get("news_sources", []) or []
+        if not isinstance(items, list):
+            items = []
+
+        def _exists(tk: str, value: str) -> bool:
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                if str(it.get("__template_key") or "").strip().lower() != tk:
+                    continue
+                if tk == "github":
+                    if str(it.get("repo") or "").strip() == value:
+                        return True
+                else:
+                    if str(it.get("url") or "").strip() == value:
+                        return True
+            return False
+
+        if key == "github":
+            if not _exists("github", url):
+                items.append(
+                    {
+                        "__template_key": "github",
+                        "name": display_name,
+                        "repo": url,
+                        "priority": 1,
+                    }
+                )
+        elif key == "twitter":
+            if not _exists("twitter", url):
+                items.append(
+                    {
+                        "__template_key": "twitter",
+                        "name": display_name,
+                        "url": url,
+                        "priority": int(self.config.get("twitter_priority", 1) or 1),
+                        "max_articles": int(self.config.get("twitter_max_tweets", 3) or 3),
+                    }
+                )
+        elif key == "miyoushe":
+            if not _exists("miyoushe", url):
+                items.append(
+                    {
+                        "__template_key": "miyoushe",
+                        "name": display_name,
+                        "url": url,
+                        "priority": 1,
+                        "max_articles": 3,
+                    }
+                )
+        else:
+            if not _exists("wechat", url):
+                items.append(
+                    {
+                        "__template_key": "wechat",
+                        "name": display_name,
+                        "url": url,
+                        "priority": 1,
+                        "max_articles": 3,
+                        "album_keyword": "",
+                    }
+                )
+
+        self.config["news_sources"] = items
         if hasattr(self.config, "save_config"):
             self.config.save_config()
-        yield event.plain_result("已添加来源（已加入 wechat_sources；米游社请在面板填 miyoushe_sources）")
+        yield event.plain_result("已添加来源（已加入 news_sources）")
 
     @filter.command("news_remove_source")
     async def news_remove_source(self, event: AstrMessageEvent, name: str):
@@ -686,8 +757,33 @@ class DailyNewsPlugin(Star):
             yield event.plain_result("用法：/news_remove_source URL")
             return
 
+        items = self.config.get("news_sources", []) or []
+        if isinstance(items, list) and items:
+            kept = []
+            removed = 0
+            for it in items:
+                if not isinstance(it, dict):
+                    kept.append(it)
+                    continue
+                tk = str(it.get("__template_key") or "").strip().lower()
+                if tk == "github":
+                    if str(it.get("repo") or "").strip() == url:
+                        removed += 1
+                        continue
+                else:
+                    if str(it.get("url") or "").strip() == url:
+                        removed += 1
+                        continue
+                kept.append(it)
+            self.config["news_sources"] = kept
+            if hasattr(self.config, "save_config"):
+                self.config.save_config()
+            yield event.plain_result(f"已删除来源（news_sources: removed={removed}）")
+            return
+
+        # Legacy fallback (older configs)
         sources: List[str] = list(self.config.get("wechat_sources", []) or [])
         self.config["wechat_sources"] = [x for x in sources if x != url]
         if hasattr(self.config, "save_config"):
             self.config.save_config()
-        yield event.plain_result("已删除来源（仅从 wechat_sources 移除；米游社请在面板删 miyoushe_sources）")
+        yield event.plain_result("已删除来源（兼容模式：仅从 wechat_sources 移除）")

@@ -92,9 +92,10 @@
   },
   "github_repos": {
     "type": "list",
-    "description": "GitHub 仓库列表（owner/repo 或 https://github.com/owner/repo）",
+    "description": "GitHub 仓库列表（兼容字段：推荐改用 news_sources 模板列表）",
     "default": [],
-    "hint": "例如：[\"openai/openai-python\", \"https://github.com/astrbot/astrbot\"]"
+    "hint": "例如：[\"openai/openai-python\", \"https://github.com/astrbot/astrbot\"]",
+    "invisible": true
   },
   "github_token": {
     "type": "string",
@@ -129,8 +130,9 @@
   },
   "twitter_targets": {
     "type": "list",
-    "description": "X/Twitter 主页列表（例如：https://x.com/openai）",
-    "default": []
+    "description": "X/Twitter 主页列表（兼容字段：推荐改用 news_sources 模板列表）",
+    "default": [],
+    "invisible": true
   },
   "twitter_proxy": {
     "type": "string",
@@ -146,6 +148,118 @@
     "type": "int",
     "description": "X/Twitter 信息源优先级（数值越大越先处理）",
     "default": 1
+  },
+  "news_sources": {
+    "type": "template_list",
+    "description": "新闻源列表（推荐，v4.10.4+）",
+    "default": [],
+    "hint": "使用模板添加不同类型来源；如仍在用 wechat_sources/miyoushe_sources/github_repos/twitter_targets 也会兼容读取。",
+    "templates": {
+      "wechat": {
+        "name": "微信公众号",
+        "hint": "填公众号文章链接（mp.weixin.qq.com）。可选设置抓取篇数/优先级/显示名称。",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "显示名称（可选）",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "description": "文章链接",
+            "default": ""
+          },
+          "priority": {
+            "type": "int",
+            "description": "优先级（数值越大越先处理）",
+            "default": 1
+          },
+          "max_articles": {
+            "type": "int",
+            "description": "每次最多抓取文章数",
+            "default": 3
+          },
+          "album_keyword": {
+            "type": "string",
+            "description": "专辑关键词（可选）",
+            "default": ""
+          }
+        }
+      },
+      "miyoushe": {
+        "name": "米游社",
+        "hint": "填用户帖子列表链接（miyoushe.com/.../postList?id=...）。",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "显示名称（可选）",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "description": "帖子列表链接",
+            "default": ""
+          },
+          "priority": {
+            "type": "int",
+            "description": "优先级（数值越大越先处理）",
+            "default": 1
+          },
+          "max_articles": {
+            "type": "int",
+            "description": "每次最多抓取帖子数",
+            "default": 3
+          }
+        }
+      },
+      "github": {
+        "name": "GitHub",
+        "hint": "填 owner/repo 或 https://github.com/owner/repo；需要 token 时请在 github_token 配置。",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "显示名称（可选）",
+            "default": ""
+          },
+          "repo": {
+            "type": "string",
+            "description": "仓库（owner/repo 或 URL）",
+            "default": ""
+          },
+          "priority": {
+            "type": "int",
+            "description": "优先级（数值越大越先处理）",
+            "default": 1
+          }
+        }
+      },
+      "twitter": {
+        "name": "X/Twitter",
+        "hint": "填主页链接 https://x.com/<user> 或 https://twitter.com/<user>（抓取需要 Playwright，可配 twitter_proxy）。",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "显示名称（可选）",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "description": "主页链接",
+            "default": ""
+          },
+          "priority": {
+            "type": "int",
+            "description": "优先级（数值越大越先处理）",
+            "default": 1
+          },
+          "max_articles": {
+            "type": "int",
+            "description": "每次最多抓取推文数（忽略置顶）",
+            "default": 3
+          }
+        }
+      }
+    }
   },
   "llm_timeout_s": {
     "type": "int",
@@ -391,15 +505,17 @@
   },
   "wechat_sources": {
     "type": "list",
-    "description": "微信公众号新闻源（链接列表）",
+    "description": "微信公众号新闻源（兼容字段：推荐改用 news_sources 模板列表）",
     "default": ["https://mp.weixin.qq.com/s/K1FGe-TiAk52B8lD6Kg8Mw"],
-    "hint": "每一项填一个链接：公众号文章（mp.weixin.qq.com）。支持一次粘贴多条链接（空白分隔）。"
+    "hint": "每一项填一个链接：公众号文章（mp.weixin.qq.com）。支持一次粘贴多条链接（空白分隔）。",
+    "invisible": true
   },
   "miyoushe_sources": {
     "type": "list",
-    "description": "米游社新闻源（用户帖子列表链接）",
+    "description": "米游社新闻源（兼容字段：推荐改用 news_sources 模板列表）",
     "default": ["https://www.miyoushe.com/ys/accountCenter/postList?id=75276539"],
-    "hint": "每一项填一个链接：米游社用户帖子列表（miyoushe.com/.../accountCenter/postList?id=...）。支持一次粘贴多条链接（空白分隔）。"
+    "hint": "每一项填一个链接：米游社用户帖子列表（miyoushe.com/.../accountCenter/postList?id=...）。支持一次粘贴多条链接（空白分隔）。",
+    "invisible": true
   },
   "last_run_schedule_time": {
     "type": "string",

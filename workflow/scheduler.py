@@ -26,6 +26,7 @@ from .rendering import load_template
 from .config_models import (
     ImageLayoutConfig,
     LayoutRefineConfig,
+    NewsSourcesConfig,
     RenderImageStyleConfig,
     RenderPipelineConfig,
 )
@@ -166,6 +167,7 @@ class DailyNewsScheduler:
         self.running = False
         self.task: Optional[asyncio.Task] = None
         self._workflow_task: Optional[asyncio.Task] = None
+        self._did_migrate_news_sources = False
 
         self._init_workflow_manager()
 
@@ -216,6 +218,7 @@ class DailyNewsScheduler:
         return self._normalized_config()
 
     def _normalized_config(self) -> Dict[str, Any]:
+        self._maybe_migrate_legacy_news_sources()
         cfg: Dict[str, Any] = dict(self.config)
         cfg.setdefault("enabled", False)
         cfg.setdefault("schedule_time", "09:00")
@@ -264,6 +267,8 @@ class DailyNewsScheduler:
         cfg.setdefault("twitter_priority", 1)
         cfg.setdefault("twitter_max_tweets", 3)
 
+        cfg.setdefault("news_sources", [])
+
         layout = ImageLayoutConfig.from_mapping(cfg)
         cfg.setdefault("image_layout_enabled", layout.enabled)
         cfg.setdefault("image_layout_provider_id", layout.provider_id)
@@ -301,6 +306,8 @@ class DailyNewsScheduler:
 
         cfg.setdefault("wechat_sources", [])
         cfg.setdefault("miyoushe_sources", [])
+        if not isinstance(cfg.get("news_sources"), list):
+            cfg["news_sources"] = []
         if not isinstance(cfg.get("wechat_sources"), list):
             cfg["wechat_sources"] = []
         if not isinstance(cfg.get("miyoushe_sources"), list):
@@ -321,6 +328,101 @@ class DailyNewsScheduler:
             cfg["main_agent_fallback_provider_ids"] = []
 
         return cfg
+
+    def _maybe_migrate_legacy_news_sources(self) -> None:
+        if self._did_migrate_news_sources:
+            return
+
+        try:
+            raw = self.config.get("news_sources", None)
+        except Exception:
+            self._did_migrate_news_sources = True
+            return
+
+        if isinstance(raw, list) and raw:
+            self._did_migrate_news_sources = True
+            return
+
+        migrated: list[dict[str, Any]] = []
+
+        try:
+            wechat = self._split_sources(self.config.get("wechat_sources", []) or [])
+            miyoushe = self._split_sources(self.config.get("miyoushe_sources", []) or [])
+            github_repos = self.config.get("github_repos", []) or []
+            twitter_targets = self.config.get("twitter_targets", []) or []
+        except Exception:
+            self._did_migrate_news_sources = True
+            return
+
+        for idx, url in enumerate(wechat, start=1):
+            migrated.append(
+                {
+                    "__template_key": "wechat",
+                    "name": f"公众号{idx}",
+                    "url": url,
+                    "priority": 1,
+                    "max_articles": 3,
+                    "album_keyword": "",
+                }
+            )
+
+        for idx, url in enumerate(miyoushe, start=1):
+            migrated.append(
+                {
+                    "__template_key": "miyoushe",
+                    "name": f"米游社{idx}",
+                    "url": url,
+                    "priority": 1,
+                    "max_articles": 3,
+                }
+            )
+
+        if isinstance(github_repos, list):
+            for r in github_repos:
+                s = str(r or "").strip()
+                if not s:
+                    continue
+                migrated.append(
+                    {
+                        "__template_key": "github",
+                        "name": f"GitHub {s}",
+                        "repo": s,
+                        "priority": 1,
+                    }
+                )
+
+        if isinstance(twitter_targets, list):
+            try:
+                prio = int(self.config.get("twitter_priority") or 1)
+            except Exception:
+                prio = 1
+            try:
+                max_tw = int(self.config.get("twitter_max_tweets") or 3)
+            except Exception:
+                max_tw = 3
+            for idx, r in enumerate(twitter_targets, start=1):
+                s = str(r or "").strip()
+                if not s:
+                    continue
+                migrated.append(
+                    {
+                        "__template_key": "twitter",
+                        "name": f"X/{idx}",
+                        "url": s,
+                        "priority": prio,
+                        "max_articles": max_tw,
+                    }
+                )
+
+        if migrated:
+            try:
+                self.config["news_sources"] = migrated
+                self._save_config()
+                astrbot_logger.info("[dailynews] migrated legacy sources -> news_sources (count=%s)", len(migrated))
+            except Exception:
+                pass
+
+        self._did_migrate_news_sources = True
 
     async def start(self):
         if self.running:
@@ -433,6 +535,47 @@ class DailyNewsScheduler:
 
     async def update_workflow_sources_from_config(self, cfg: Dict[str, Any]):
         self.workflow_manager.news_sources.clear()
+
+        # Preferred (v4.10.4+): template_list-based sources.
+        try:
+            templated = NewsSourcesConfig.from_mapping(cfg).sources
+        except Exception:
+            templated = []
+        if templated:
+            validated: list[NewsSourceConfig] = []
+            for s in templated:
+                low = str(s.url or "").lower()
+                if s.type == "wechat" and "mp.weixin.qq.com" not in low:
+                    astrbot_logger.warning(
+                        "[dailynews] news_sources(wechat) doesn't look like a wechat article url; skipping: %s",
+                        s.url,
+                    )
+                    continue
+                if s.type == "miyoushe" and "miyoushe.com" not in low:
+                    astrbot_logger.warning(
+                        "[dailynews] news_sources(miyoushe) doesn't look like a miyoushe post list url; skipping: %s",
+                        s.url,
+                    )
+                    continue
+                if s.type == "twitter" and (
+                    not low.startswith(("http://", "https://"))
+                    or ("x.com" not in low and "twitter.com" not in low)
+                ):
+                    astrbot_logger.warning(
+                        "[dailynews] news_sources(twitter) invalid (%s). Expected https://x.com/<user> or https://twitter.com/<user>.",
+                        s.url,
+                    )
+                    continue
+                validated.append(s)
+
+            for s in validated:
+                self.workflow_manager.add_source(s)
+            astrbot_logger.info(
+                "[dailynews] loaded %s news_sources via template_list: %s",
+                len(self.workflow_manager.news_sources),
+                [s.name for s in self.workflow_manager.news_sources],
+            )
+            return
 
         # WeChat sources
         for idx, url in enumerate(self._split_sources(cfg.get("wechat_sources", [])), start=1):
