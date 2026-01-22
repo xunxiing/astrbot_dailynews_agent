@@ -66,8 +66,24 @@ def get_plugin_data_dir(subdir: str) -> Path:
             base = None
 
     if base is None:
-        # workflow/core/image_utils.py -> parents[2] is root
-        base = Path(__file__).resolve().parents[2] / "data"
+        # Try finding AstrBot data path from known structures
+        try:
+            # plugin root is parents[2] if in core/
+            is_core = Path(__file__).resolve().parent.name == "core"
+            plugin_root = Path(__file__).resolve().parents[2] if is_core else Path(__file__).resolve().parents[1]
+            
+            # Use plugin_root relative path first as it's the most reliable
+            # AstrBot/data/plugins/astrbot_dailynews_agent/
+            # parents[1] -> plugins/
+            # parents[2] -> data/
+            data_dir = plugin_root.parents[1]
+            
+            if (data_dir / "plugin_data").exists():
+                base = data_dir / "plugin_data" / plugin_name
+            else:
+                base = plugin_root / "data"
+        except Exception:
+            base = Path("data")
 
     s = str(subdir or "").strip().replace("\\", "/").strip("/")
     if not s:

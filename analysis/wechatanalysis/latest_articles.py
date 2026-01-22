@@ -37,11 +37,17 @@ def get_album_articles(
     with sync_playwright() as p:
         executable_path = None
         try:
-            from ...workflow.playwright_bootstrap import get_chromium_executable_path
-
+            import sys
+            from pathlib import Path
+            # analysis/wechatanalysis/latest_articles.py -> parents[2] is plugin root
+            root = str(Path(__file__).resolve().parents[2])
+            if root not in sys.path:
+                sys.path.append(root)
+            from workflow.pipeline.playwright_bootstrap import get_chromium_executable_path
             exe = get_chromium_executable_path()
             executable_path = str(exe) if exe else None
-        except Exception:
+        except Exception as e:
+            astrbot_logger.debug(f"[dailynews] get_chromium_executable_path import failed: {e}")
             executable_path = None
 
         if executable_path:

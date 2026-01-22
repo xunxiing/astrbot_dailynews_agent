@@ -11,9 +11,6 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 try:
-    from ....analysis.wechatanalysis.analysis import fetch_wechat_article
-    from ....analysis.wechatanalysis.latest_articles import get_album_articles_chasing_latest_with_seed
-except (ImportError, Exception):  # pragma: no cover
     import sys
     from pathlib import Path
     root = str(Path(__file__).resolve().parents[3])
@@ -21,6 +18,11 @@ except (ImportError, Exception):  # pragma: no cover
         sys.path.append(root)
     from analysis.wechatanalysis.analysis import fetch_wechat_article
     from analysis.wechatanalysis.latest_articles import get_album_articles_chasing_latest_with_seed
+except Exception:  # pragma: no cover
+    from analysis.wechatanalysis.analysis import fetch_wechat_article  # type: ignore
+    from analysis.wechatanalysis.latest_articles import (  # type: ignore
+        get_album_articles_chasing_latest_with_seed,
+    )
 
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult

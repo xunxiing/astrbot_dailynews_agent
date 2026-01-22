@@ -410,7 +410,7 @@ class DailyNewsPlugin(Star):
             source_articles[name] = articles or []
 
         # 2) 抓正文并提取 image_urls（不走 LLM）
-        from .workflow.utils import _run_sync
+        from .workflow import _run_sync
         from .analysis.wechatanalysis.analysis import fetch_wechat_article
         from .analysis.miyousheanalysis.analysis import fetch_miyoushe_post
 
@@ -533,7 +533,7 @@ class DailyNewsPlugin(Star):
             source_articles[name] = articles or []
 
         # 2) 抓正文并提取 image_urls（不走 LLM 写作）
-        from .workflow.utils import _run_sync
+        from .workflow import _run_sync
         from .analysis.wechatanalysis.analysis import fetch_wechat_article
         from .analysis.miyousheanalysis.analysis import fetch_miyoushe_post
 

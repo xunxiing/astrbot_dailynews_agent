@@ -30,19 +30,37 @@ _BOOTSTRAP_LOCK = asyncio.Lock()
 
 
 def _browsers_dir() -> Path:
-    # Large binaries belong to plugin_data/.../tmp/
+    # Look for playwright_browsers under the same directory as plugins/ or plugin_data/
+    # Usually it's in the same parent as plugin_data
     return get_plugin_data_dir("playwright_browsers")
 
 
 def _chromium_root_dir() -> Path:
-    return _browsers_dir() / "chromium-headless-shell-win64-1200"
+    # Use generic names first, then specific versions
+    return _browsers_dir() / "chromium-1169"
 
 
 def get_chromium_executable_path() -> Optional[Path]:
     root = _chromium_root_dir()
     if not root.exists():
-        return None
+        # Auto-detect any folder starting with "chromium-"
+        try:
+            candidates = sorted(list(_browsers_dir().glob("chromium-*")), reverse=True)
+            if candidates:
+                root = candidates[0]
+            else:
+                # Fallback to older directory name if any
+                alt_root = _browsers_dir() / "chromium-headless-shell-win64-1200"
+                if alt_root.exists():
+                    root = alt_root
+                else:
+                    astrbot_logger.debug(f"[dailynews] No chromium directory found in {_browsers_dir()}")
+                    return None
+        except Exception as e:
+            astrbot_logger.debug(f"[dailynews] get_chromium_executable_path glob failed: {e}")
+            return None
 
+    astrbot_logger.debug(f"[dailynews] searching chromium in root: {root}")
     candidates = [
         root / "chrome-win" / "headless_shell.exe",
         root / "chrome-win" / "chrome.exe",

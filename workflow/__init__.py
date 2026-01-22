@@ -8,6 +8,7 @@ from .pipeline.render_pipeline import render_daily_news_pages, split_pages
 from .pipeline.playwright_bootstrap import ensure_playwright_chromium_installed
 from .pipeline.workflow_manager import NewsWorkflowManager
 from .core.llm import LLMRunner
+from .core.utils import _run_sync
 
 __all__ = [
     "DailyNewsScheduler",
@@ -26,5 +27,6 @@ __all__ = [
     "split_pages",
     "ensure_playwright_chromium_installed",
     "NewsWorkflowManager",
-    "LLMRunner"
+    "LLMRunner",
+    "_run_sync"
 ]

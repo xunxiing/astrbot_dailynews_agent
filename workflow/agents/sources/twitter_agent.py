@@ -10,8 +10,6 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 try:
-    from ....analysis.twitteranalysis.latest_tweets import fetch_latest_tweets
-except (ImportError, Exception):  # pragma: no cover
     import sys
     from pathlib import Path
     # workflow/agents/sources/twitter_agent.py -> parents[3] is plugin root
@@ -19,6 +17,8 @@ except (ImportError, Exception):  # pragma: no cover
     if root not in sys.path:
         sys.path.append(root)
     from analysis.twitteranalysis.latest_tweets import fetch_latest_tweets
+except Exception:  # pragma: no cover
+    from analysis.twitteranalysis.latest_tweets import fetch_latest_tweets  # type: ignore
 
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult

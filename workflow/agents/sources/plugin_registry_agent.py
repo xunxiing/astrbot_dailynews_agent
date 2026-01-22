@@ -44,10 +44,18 @@ def _first_line(s: str) -> str:
 
 
 def _default_official_registry_path() -> Path:
-    # plugin path: .../AstrBot/data/plugins/<plugin>/workflow/plugin_registry_agent.py
+    # plugin path: .../AstrBot/data/plugins/<plugin>/workflow/agents/sources/plugin_registry_agent.py
     # official file: .../AstrBot/data/plugins.json
     try:
-        return Path(__file__).resolve().parents[3] / "plugins.json"
+        # workflow/agents/sources/plugin_registry_agent.py (0)
+        # sources (1)
+        # agents (2)
+        # workflow (3)
+        # plugin_root (4)
+        # plugins_dir (5)
+        # AstrBot_data_dir (6)
+        # So AstrBot/data/plugins.json is parents[5] from here
+        return Path(__file__).resolve().parents[5] / "plugins.json"
     except Exception:
         return Path("plugins.json")
 

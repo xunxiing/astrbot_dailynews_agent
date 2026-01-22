@@ -10,16 +10,17 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 try:
-    from ....analysis.miyousheanalysis.analysis import fetch_miyoushe_post
-    from ....analysis.miyousheanalysis.latest_posts import get_user_latest_posts
-except (ImportError, Exception):  # pragma: no cover
     import sys
     from pathlib import Path
+    # workflow/agents/sources/miyoushe_agent.py -> parents[3] is plugin root
     root = str(Path(__file__).resolve().parents[3])
     if root not in sys.path:
         sys.path.append(root)
     from analysis.miyousheanalysis.analysis import fetch_miyoushe_post
     from analysis.miyousheanalysis.latest_posts import get_user_latest_posts
+except Exception:  # pragma: no cover
+    from analysis.miyousheanalysis.analysis import fetch_miyoushe_post  # type: ignore
+    from analysis.miyousheanalysis.latest_posts import get_user_latest_posts  # type: ignore
 
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
