@@ -9,9 +9,9 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .llm import LLMRunner
-from .models import MainAgentDecision, SubAgentResult
-from .utils import _json_from_text
+from ..core.llm import LLMRunner
+from ..core.models import MainAgentDecision, SubAgentResult
+from ..core.utils import _json_from_text
 
 
 class MainNewsAgent:

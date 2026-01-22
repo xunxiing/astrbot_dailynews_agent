@@ -15,7 +15,7 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .models import NewsSourceConfig
+from ...core.models import NewsSourceConfig
 
 
 _REPO_RE = re.compile(

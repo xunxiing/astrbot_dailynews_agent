@@ -16,10 +16,10 @@ except Exception:  # pragma: no cover
 
 from PIL import Image
 
-from .config_models import ImageLabelConfig
-from .image_label_store import ImageLabelEntry, load_labels, save_labels, upsert_label
-from .image_utils import download_image_to_jpeg_file, get_plugin_data_dir
-from .utils import _json_from_text
+from ..core.config_models import ImageLabelConfig
+from ..storage.image_label_store import ImageLabelEntry, load_labels, save_labels, upsert_label
+from ..core.image_utils import download_image_to_jpeg_file, get_plugin_data_dir
+from ..core.utils import _json_from_text
 
 
 def _shorten_zh(s: str, limit: int = 30) -> str:

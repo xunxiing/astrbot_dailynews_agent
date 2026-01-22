@@ -66,7 +66,8 @@ def get_plugin_data_dir(subdir: str) -> Path:
             base = None
 
     if base is None:
-        base = Path(__file__).resolve().parent.parent / "data"
+        # workflow/core/image_utils.py -> parents[2] is root
+        base = Path(__file__).resolve().parents[2] / "data"
 
     s = str(subdir or "").strip().replace("\\", "/").strip("/")
     if not s:

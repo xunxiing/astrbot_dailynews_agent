@@ -10,8 +10,17 @@ from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
 # 直接复用你写好的脚本逻辑
-from ..analysis.wechatanalysis.analysis import wechat_to_markdown
-from ..analysis.wechatanalysis.latest_articles import get_album_articles
+try:
+    from ..analysis.wechatanalysis.analysis import wechat_to_markdown
+    from ..analysis.wechatanalysis.latest_articles import get_album_articles
+except (ImportError, ValueError):
+    import sys
+    from pathlib import Path
+    root = str(Path(__file__).resolve().parents[1])
+    if root not in sys.path:
+        sys.path.append(root)
+    from analysis.wechatanalysis.analysis import wechat_to_markdown
+    from analysis.wechatanalysis.latest_articles import get_album_articles
 
 try:
     from astrbot.api.star import StarTools

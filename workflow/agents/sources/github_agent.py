@@ -11,9 +11,9 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 from .github_source import fetch_github_snapshot_for_source, updates_from_snapshot
-from .llm import LLMRunner
-from .models import NewsSourceConfig, SubAgentResult
-from .utils import _json_from_text
+from ...core.llm import LLMRunner
+from ...core.models import NewsSourceConfig, SubAgentResult
+from ...core.utils import _json_from_text
 
 
 class GitHubSubAgent:

@@ -12,14 +12,15 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .config_models import ImageLabelConfig, ImageLayoutConfig, LayoutPrompts, LayoutRefineConfig
-from .image_utils import get_plugin_data_dir, merge_images_vertical
+from ..core.config_models import ImageLabelConfig, ImageLayoutConfig, LayoutPrompts, LayoutRefineConfig
+from ..core.image_utils import get_plugin_data_dir, merge_images_vertical
 from .image_labeler import ImageLabeler
 from .layout_refiner import LayoutRefiner
 from .tool_based_layout_editor import ToolBasedLayoutEditor
-from .models import SubAgentResult
-from .rendering import load_template
-from .utils import _json_from_text
+from ..core.models import MainAgentDecision, SubAgentResult
+from ..pipeline.rendering import load_template
+from ..core.utils import _json_from_text
+from ..core.llm import LLMRunner
 
 
 class ImageLayoutAgent:
@@ -28,6 +29,64 @@ class ImageLayoutAgent:
     - 使用用户指定的 provider（可选：支持视觉）
     - 输出为 patched_markdown（JSON）
     """
+
+    async def _decide_image_plan(
+        self,
+        *,
+        sub_results: List[Any],
+        user_config: Dict[str, Any],
+        astrbot_context: Any,
+        max_images_total: int,
+        max_images_per_source: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Simplified internal image planning logic, moved from independent ImagePlanAgent.
+        """
+        if not bool(user_config.get("image_plan_enabled", True)):
+            return None
+
+        images_by_source: Dict[str, List[str]] = {}
+        for r in sub_results:
+            if isinstance(r, SubAgentResult) and r.source_name and r.images:
+                urls = [str(u) for u in r.images if isinstance(u, str) and u.strip()]
+                if urls:
+                    images_by_source[r.source_name] = urls
+
+        if not images_by_source:
+            return None
+
+        # Call LLM for planning if provider is available
+        provider_id = str(user_config.get("main_agent_provider_id") or "").strip()
+        if not provider_id:
+            return None
+
+        llm = LLMRunner(astrbot_context, provider_ids=[provider_id])
+        
+        system_prompt = (
+            "You are the chief editor deciding an image count plan for the layout agent.\n"
+            "Return JSON with a total image cap and per-source image counts.\n"
+            "Only output JSON.\n"
+        )
+        payload = {
+            "constraints": {
+                "max_images_total": max_images_total,
+                "max_images_per_source": max_images_per_source,
+            },
+            "candidates": {name: len(urls) for name, urls in images_by_source.items()},
+            "output_schema": {
+                "max_images_total": "int",
+                "by_source": {"source_name": "int"}
+            },
+        }
+
+        try:
+            raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(payload, ensure_ascii=False))
+            data = _json_from_text(raw)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        return None
 
     async def enhance_markdown(
         self,
@@ -105,6 +164,8 @@ class ImageLayoutAgent:
             "评论",
         }
 
+        # Internal token/section helpers are kept for now but can be further simplified.
+        # Future: Move to a shared markdown utility.
         def _tokens(text: str) -> set[str]:
             s = (text or "").strip()
             if not s:
@@ -379,6 +440,16 @@ class ImageLayoutAgent:
                     max_images_total = min(max_images_total, plan_total)
             except Exception:
                 pass
+
+        # If no image_plan provided, try internal simplified planning
+        if image_plan is None:
+            image_plan = await self._decide_image_plan(
+                sub_results=sub_results,
+                user_config=user_config,
+                astrbot_context=astrbot_context,
+                max_images_total=max_images_total,
+                max_images_per_source=max_images_per_source
+            )
 
         if plan_by_source:
             filtered: Dict[str, List[str]] = {}

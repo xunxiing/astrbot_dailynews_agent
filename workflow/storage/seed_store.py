@@ -30,7 +30,7 @@ def _seed_state_path() -> Path:
             return Path(StarTools.get_data_dir()) / "wechat_seed_state.json"
         except Exception:
             pass
-    return Path(__file__).resolve().parent.parent / "data" / "wechat_seed_state.json"
+    return Path(__file__).resolve().parents[2] / "data" / "wechat_seed_state.json"
 
 
 def _load_seed_state_sync(path: Path) -> Dict[str, Any]:

@@ -13,7 +13,7 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .image_utils import get_plugin_data_dir
+from ..core.image_utils import get_plugin_data_dir
 from .sqlite_store import image_label_upsert, image_labels_get_all
 
 

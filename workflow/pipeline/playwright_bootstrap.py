@@ -18,7 +18,7 @@ try:
 except Exception:  # pragma: no cover
     aiohttp = None  # type: ignore
 
-from .image_utils import get_plugin_data_dir
+from ..core.image_utils import get_plugin_data_dir
 
 
 PLAYWRIGHT_CHROMIUM_HEADLESS_URL = (

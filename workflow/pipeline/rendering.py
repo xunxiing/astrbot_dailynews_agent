@@ -8,8 +8,8 @@ _TEMPLATE_CACHE: Dict[str, str] = {}
 
 
 def _plugin_root() -> Path:
-    # workflow/rendering.py -> <plugin_root>/workflow/rendering.py
-    return Path(__file__).resolve().parents[1]
+    # workflow/pipeline/rendering.py -> <plugin_root>
+    return Path(__file__).resolve().parents[2]
 
 
 def load_template(rel_path: str) -> str:

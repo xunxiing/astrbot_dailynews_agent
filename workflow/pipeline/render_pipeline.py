@@ -16,14 +16,14 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .config_models import RenderImageStyleConfig, RenderPipelineConfig
-from .image_utils import adaptive_layout_html_images, get_plugin_data_dir, inline_html_remote_images
+from ..core.config_models import RenderImageStyleConfig, RenderPipelineConfig
+from ..core.image_utils import adaptive_layout_html_images, get_plugin_data_dir, inline_html_remote_images
 from .local_render import render_template_to_image_playwright, wait_for_file_ready
 from .rendering import markdown_to_html, safe_text
 
 
 def _plugin_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 def _asset_b64(filename: str) -> str:
@@ -297,115 +297,147 @@ async def render_daily_news_pages(
     if not pages_list:
         return []
 
-    bg_img = _asset_b64("sunsetbackground.jpg")
-    char_img = _asset_b64("transparent_output.png")
-    base_href = _templates_base_href()
-
-    # chenyu-style assets (inline to avoid renderer not having local file access)
-    chenyu_font = _root_asset_data_uri("font/HYWenHei-75W-2.ttf", "font/ttf")
-    chenyu_bg_top = _root_asset_data_uri("image/上半背景.png", "image/png")
-    chenyu_bg_middle = _root_asset_data_uri("image/过渡图片.png", "image/png")
-    chenyu_bg_bottom = _root_asset_data_uri("image/下半图片.jpg", "image/jpeg")
-    chenyu_tower = _root_asset_data_uri("image/tower_no_bg.png", "image/png")
-
     out: List[RenderedPage] = []
     total = len(pages_list)
     for idx, page in enumerate(pages_list, start=1):
-        is_chenyu = _looks_like_chenyu_template(template_str)
-        page_md = _promote_headings_for_chenyu(page) if is_chenyu else page
-        body_html = await _build_body_html(page_md, style=style)
-        if is_chenyu:
-            body_html = _wrap_h1_sections_for_chenyu(body_html)
-        portrait_max_h = max(360, min(560, int(style.full_max_width * 0.68)))
-        panorama_max_h = max(260, min(420, int(style.medium_max_width * 0.5)))
-        ctx = {
-            "title": safe_text(title),
-            "subtitle": safe_text(subtitle_fmt.format(idx=idx, total=total)),
-            "body_html": body_html,
-            "bg_img": bg_img,
-            "char_img": char_img,
-            "base_href": base_href,
-            "chenyu_font": chenyu_font,
-            "chenyu_bg_top": chenyu_bg_top,
-            "chenyu_bg_middle": chenyu_bg_middle,
-            "chenyu_bg_bottom": chenyu_bg_bottom,
-            "chenyu_tower": chenyu_tower,
-            "img_full_px": int(style.full_max_width),
-            "img_medium_px": int(style.medium_max_width),
-            "img_narrow_px": int(style.narrow_max_width),
-            "img_portrait_max_h": int(portrait_max_h),
-            "img_panorama_max_h": int(panorama_max_h),
-        }
-
-        # Prefer local rendering first when enabled (t2i endpoints can be unstable).
-        img: Optional[Path] = None
-        method = ""
-        if pipeline.playwright_fallback:
-            try:
-                out_path = get_plugin_data_dir("render_fallback") / (
-                    f"playwright_pre_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
-                )
-                img = await render_template_to_image_playwright(
-                    template_str,
-                    ctx,
-                    out_path=out_path,
-                    viewport=(1080, 720),
-                    timeout_ms=pipeline.playwright_timeout_ms,
-                    full_page=True,
-                )
-                img = Path(str(img)).resolve()
-                method = "playwright"
-            except Exception:
-                img = None
-
-        if img is None:
-            img = await _try_with_retries(
-                attempts=pipeline.retries,
-                call=lambda: render_html(ctx),
-                poll_timeout_s=pipeline.poll_timeout_s,
-                poll_interval_ms=pipeline.poll_interval_ms,
-                log_level="warning" if pipeline.playwright_fallback else "error",
-            )
-            method = "html" if img is not None else method
-
-        # Retry local render after remote HTML attempt, as Playwright browser may become available later.
-        if img is None and pipeline.playwright_fallback:
-            try:
-                # Avoid reusing the same filename to make debugging easier.
-                out_path = get_plugin_data_dir("render_fallback") / (
-                    f"playwright_post_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
-                )
-                img = await render_template_to_image_playwright(
-                    template_str,
-                    ctx,
-                    out_path=out_path,
-                    viewport=(1080, 720),
-                    timeout_ms=pipeline.playwright_timeout_ms,
-                    full_page=True,
-                )
-                img = Path(str(img)).resolve()
-                method = "playwright"
-            except Exception:
-                astrbot_logger.error("[dailynews] playwright render failed", exc_info=True)
-                img = None
-
-        if img is None:
-            img = await _try_with_retries(
-                attempts=pipeline.retries,
-                call=lambda: render_t2i(page),
-                poll_timeout_s=pipeline.poll_timeout_s,
-                poll_interval_ms=pipeline.poll_interval_ms,
-            )
-            method = "t2i" if img is not None else ""
+        img_path, method = await render_single_page_to_image(
+            markdown=page,
+            template_str=template_str,
+            render_html=render_html,
+            render_t2i=render_t2i,
+            pipeline=pipeline,
+            style=style,
+            title=title,
+            subtitle=subtitle_fmt.format(idx=idx, total=total),
+            idx=idx,
+        )
 
         out.append(
             RenderedPage(
                 index=idx,
                 total=total,
                 markdown=page,
-                image_path=Path(img).resolve() if img is not None else None,
+                image_path=img_path,
                 method=method,
             )
         )
 
     return out
+
+
+async def render_single_page_to_image(
+    *,
+    markdown: str,
+    template_str: str,
+    render_html: RenderHtmlFunc,
+    render_t2i: RenderT2IFunc,
+    pipeline: RenderPipelineConfig,
+    style: RenderImageStyleConfig,
+    title: str = "每日资讯日报",
+    subtitle: str = "",
+    idx: int = 1,
+) -> Tuple[Optional[Path], str]:
+    """
+    渲染单页 Markdown 为图片。
+    """
+    bg_img = _asset_b64("sunsetbackground.jpg")
+    char_img = _asset_b64("transparent_output.png")
+    base_href = _templates_base_href()
+
+    # chenyu-style assets
+    chenyu_font = _root_asset_data_uri("font/HYWenHei-75W-2.ttf", "font/ttf")
+    chenyu_bg_top = _root_asset_data_uri("image/上半背景.png", "image/png")
+    chenyu_bg_middle = _root_asset_data_uri("image/过渡图片.png", "image/png")
+    chenyu_bg_bottom = _root_asset_data_uri("image/下半图片.jpg", "image/jpeg")
+    chenyu_tower = _root_asset_data_uri("image/tower_no_bg.png", "image/png")
+
+    is_chenyu = _looks_like_chenyu_template(template_str)
+    page_md = _promote_headings_for_chenyu(markdown) if is_chenyu else markdown
+    body_html = await _build_body_html(page_md, style=style)
+    if is_chenyu:
+        body_html = _wrap_h1_sections_for_chenyu(body_html)
+
+    portrait_max_h = max(360, min(560, int(style.full_max_width * 0.68)))
+    panorama_max_h = max(260, min(420, int(style.medium_max_width * 0.5)))
+
+    ctx = {
+        "title": safe_text(title),
+        "subtitle": safe_text(subtitle),
+        "body_html": body_html,
+        "bg_img": bg_img,
+        "char_img": char_img,
+        "base_href": base_href,
+        "chenyu_font": chenyu_font,
+        "chenyu_bg_top": chenyu_bg_top,
+        "chenyu_bg_middle": chenyu_bg_middle,
+        "chenyu_bg_bottom": chenyu_bg_bottom,
+        "chenyu_tower": chenyu_tower,
+        "img_full_px": int(style.full_max_width),
+        "img_medium_px": int(style.medium_max_width),
+        "img_narrow_px": int(style.narrow_max_width),
+        "img_portrait_max_h": int(portrait_max_h),
+        "img_panorama_max_h": int(panorama_max_h),
+    }
+
+    # Prefer local rendering first when enabled (t2i endpoints can be unstable).
+    img: Optional[Path] = None
+    method = ""
+    if pipeline.playwright_fallback:
+        try:
+            out_path = get_plugin_data_dir("render_fallback") / (
+                f"playwright_pre_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
+            )
+            img = await render_template_to_image_playwright(
+                template_str,
+                ctx,
+                out_path=out_path,
+                viewport=(1080, 720),
+                timeout_ms=pipeline.playwright_timeout_ms,
+                full_page=True,
+            )
+            img = Path(str(img)).resolve()
+            method = "playwright"
+        except Exception:
+            img = None
+
+    if img is None:
+        img = await _try_with_retries(
+            attempts=pipeline.retries,
+            call=lambda: render_html(ctx),
+            poll_timeout_s=pipeline.poll_timeout_s,
+            poll_interval_ms=pipeline.poll_interval_ms,
+            log_level="warning" if pipeline.playwright_fallback else "error",
+        )
+        method = "html" if img is not None else method
+
+    # Retry local render after remote HTML attempt, as Playwright browser may become available later.
+    if img is None and pipeline.playwright_fallback:
+        try:
+            # Avoid reusing the same filename to make debugging easier.
+            out_path = get_plugin_data_dir("render_fallback") / (
+                f"playwright_post_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
+            )
+            img = await render_template_to_image_playwright(
+                template_str,
+                ctx,
+                out_path=out_path,
+                viewport=(1080, 720),
+                timeout_ms=pipeline.playwright_timeout_ms,
+                full_page=True,
+            )
+            img = Path(str(img)).resolve()
+            method = "playwright"
+        except Exception:
+            astrbot_logger.error("[dailynews] playwright render failed", exc_info=True)
+            img = None
+
+    if img is None:
+        img = await _try_with_retries(
+            attempts=pipeline.retries,
+            call=lambda: render_t2i(markdown),
+            poll_timeout_s=pipeline.poll_timeout_s,
+            poll_interval_ms=pipeline.poll_interval_ms,
+        )
+        method = "t2i" if img is not None else ""
+
+    return (Path(img).resolve() if img is not None else None, method)

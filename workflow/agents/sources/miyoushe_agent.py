@@ -10,15 +10,20 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 try:
-    from ..analysis.miyousheanalysis.analysis import fetch_miyoushe_post
-    from ..analysis.miyousheanalysis.latest_posts import get_user_latest_posts
-except Exception:  # pragma: no cover
-    from analysis.miyousheanalysis.analysis import fetch_miyoushe_post  # type: ignore
-    from analysis.miyousheanalysis.latest_posts import get_user_latest_posts  # type: ignore
+    from ....analysis.miyousheanalysis.analysis import fetch_miyoushe_post
+    from ....analysis.miyousheanalysis.latest_posts import get_user_latest_posts
+except (ImportError, Exception):  # pragma: no cover
+    import sys
+    from pathlib import Path
+    root = str(Path(__file__).resolve().parents[3])
+    if root not in sys.path:
+        sys.path.append(root)
+    from analysis.miyousheanalysis.analysis import fetch_miyoushe_post
+    from analysis.miyousheanalysis.latest_posts import get_user_latest_posts
 
-from .llm import LLMRunner
-from .models import NewsSourceConfig, SubAgentResult
-from .utils import _json_from_text, _run_sync, ensure_section_links
+from ...core.llm import LLMRunner
+from ...core.models import NewsSourceConfig, SubAgentResult
+from ...core.utils import _json_from_text, _run_sync, ensure_section_links
 
 
 class MiyousheSubAgent:

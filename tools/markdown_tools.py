@@ -12,7 +12,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
-from ..workflow.md_doc_store import create_doc, read_doc, write_doc
+from ..workflow.storage.md_doc_store import create_doc, read_doc, write_doc
 
 
 def _json_dump(obj: Any) -> str:

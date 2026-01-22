@@ -14,7 +14,7 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .image_utils import get_plugin_data_dir
+from ..core.image_utils import get_plugin_data_dir
 
 
 def _now_iso() -> str:

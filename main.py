@@ -21,14 +21,19 @@ from .tools import (
     WechatAlbumLatestArticlesTool,
     WechatArticleMarkdownTool,
 )
-from .workflow.scheduler import DailyNewsScheduler
-from .workflow.rendering import load_template
-from .workflow.image_utils import get_plugin_data_dir, merge_images_vertical
-from .workflow.image_layout_agent import ImageLayoutAgent
-from .workflow.models import SubAgentResult
-from .workflow.config_models import RenderImageStyleConfig, RenderPipelineConfig
-from .workflow.render_pipeline import render_daily_news_pages, split_pages
-from .workflow.playwright_bootstrap import ensure_playwright_chromium_installed
+from .workflow import (
+    DailyNewsScheduler,
+    load_template,
+    get_plugin_data_dir,
+    merge_images_vertical,
+    ImageLayoutAgent,
+    SubAgentResult,
+    RenderImageStyleConfig,
+    RenderPipelineConfig,
+    render_daily_news_pages,
+    split_pages,
+    ensure_playwright_chromium_installed,
+)
 
 try:
     from astrbot.core.message.components import Image as _ImageComponent

@@ -13,55 +13,19 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .config_models import LayoutRefineConfig, RenderImageStyleConfig
-from .image_utils import (
-    adaptive_layout_html_images,
+from ..core.config_models import LayoutRefineConfig, RenderImageStyleConfig, RenderPipelineConfig
+from ..core.image_utils import (
     get_plugin_data_dir,
-    inline_html_remote_images,
     merge_images_vertical,
 )
-from .local_render import render_template_to_image_playwright
-from .rendering import load_template, markdown_to_html, safe_text
-from .utils import _json_from_text
+from ..pipeline.render_pipeline import render_single_page_to_image, split_pages
+from ..pipeline.rendering import load_template
+from ..core.utils import _json_from_text
 
 
 class LayoutRefiner:
     def __init__(self, *, system_prompt: str):
         self._system_prompt = (system_prompt or "").strip()
-
-    @staticmethod
-    def _asset_b64(filename: str) -> str:
-        try:
-            root = Path(__file__).resolve().parents[1]
-            p = root / "image" / filename
-            if p.exists() and p.is_file():
-                return base64.b64encode(p.read_bytes()).decode("utf-8")
-        except Exception:
-            return ""
-        return ""
-
-    @staticmethod
-    def _split_pages(text: str, page_chars: int, max_pages: int) -> List[str]:
-        s = (text or "").strip()
-        if not s:
-            return []
-        if page_chars <= 0:
-            return [s]
-        pages: List[str] = []
-        buf: List[str] = []
-        buf_len = 0
-        for line in s.splitlines():
-            piece = line + "\n"
-            if buf_len + len(piece) > page_chars and buf:
-                pages.append("".join(buf).rstrip())
-                if len(pages) >= max_pages:
-                    return pages
-                buf, buf_len = [], 0
-            buf.append(piece)
-            buf_len += len(piece)
-        if buf and len(pages) < max_pages:
-            pages.append("".join(buf).rstrip())
-        return pages
 
     async def _render_markdown_preview(
         self,
@@ -70,7 +34,7 @@ class LayoutRefiner:
         refine: LayoutRefineConfig,
         style: RenderImageStyleConfig,
     ) -> Optional[Path]:
-        pages = self._split_pages(
+        pages = split_pages(
             markdown,
             page_chars=refine.preview_page_chars,
             max_pages=refine.preview_pages,
@@ -79,46 +43,24 @@ class LayoutRefiner:
             return None
 
         tmpl = load_template("templates/daily_news.html").strip()
-        bg_img = self._asset_b64("sunsetbackground.jpg")
-        char_img = self._asset_b64("transparent_output.png")
+        pipeline_cfg = RenderPipelineConfig() # Default rendering settings for preview
 
         out_paths: List[str] = []
         for idx, page in enumerate(pages, start=1):
-            body_html = await inline_html_remote_images(markdown_to_html(page))
-            body_html = await adaptive_layout_html_images(
-                body_html,
-                full_max_width=style.full_max_width,
-                medium_max_width=style.medium_max_width,
-                narrow_max_width=style.narrow_max_width,
-                float_if_width_le=style.float_threshold,
-                float_enabled=style.float_enabled,
+            # Use unified render pipeline for consistency
+            img_path, _ = await render_single_page_to_image(
+                markdown=page,
+                template_str=tmpl,
+                render_html=lambda ctx: None, # No remote HTML for preview
+                render_t2i=lambda md: None,   # No T2I for preview
+                pipeline=pipeline_cfg,
+                style=style,
+                title="每日资讯日报",
+                subtitle=f"预览 {idx}/{len(pages)}",
+                idx=idx,
             )
-            portrait_max_h = max(360, min(560, int(style.full_max_width * 0.68)))
-            panorama_max_h = max(260, min(420, int(style.medium_max_width * 0.5)))
-            ctx = {
-                "title": safe_text("每日资讯日报"),
-                "subtitle": safe_text(f"预览 {idx}/{len(pages)}"),
-                "body_html": body_html,
-                "bg_img": bg_img,
-                "char_img": char_img,
-                "img_full_px": int(style.full_max_width),
-                "img_medium_px": int(style.medium_max_width),
-                "img_narrow_px": int(style.narrow_max_width),
-                "img_portrait_max_h": int(portrait_max_h),
-                "img_panorama_max_h": int(panorama_max_h),
-            }
-            out_path = get_plugin_data_dir("layout_refine_previews") / (
-                f"layout_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
-            )
-            rendered = await render_template_to_image_playwright(
-                tmpl,
-                ctx,
-                out_path=out_path,
-                viewport=(1080, 720),
-                timeout_ms=refine.preview_timeout_ms,
-                full_page=True,
-            )
-            out_paths.append(str(Path(rendered).resolve()))
+            if img_path:
+                out_paths.append(str(img_path.resolve()))
 
         if not out_paths:
             return None

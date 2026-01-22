@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Optional, Tuple
 
-from .image_utils import get_plugin_data_dir
+from ..core.image_utils import get_plugin_data_dir
 from .sqlite_store import md_doc_get, md_doc_set
 
 _DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")

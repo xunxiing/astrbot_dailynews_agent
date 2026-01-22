@@ -17,8 +17,8 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from ..workflow.image_utils import get_plugin_data_dir, merge_images_vertical, parse_image_urls
-from ..workflow.image_utils import download_image_to_jpeg_file, probe_image_size_from_url
+from ..workflow.core.image_utils import get_plugin_data_dir, merge_images_vertical, parse_image_urls
+from ..workflow.core.image_utils import download_image_to_jpeg_file, probe_image_size_from_url
 
 
 @dataclass

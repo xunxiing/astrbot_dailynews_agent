@@ -11,11 +11,10 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .llm import LLMRunner
-from .main_agent import MainNewsAgent
-from .image_layout_agent import ImageLayoutAgent
-from .image_plan_agent import ImagePlanAgent
-from .models import NewsSourceConfig, SubAgentResult
+from ..core.llm import LLMRunner
+from ..agents.main_agent import MainNewsAgent
+from ..agents.image_layout_agent import ImageLayoutAgent
+from ..core.models import NewsSourceConfig, SubAgentResult
 
 
 class NewsWorkflowManager:
@@ -427,16 +426,9 @@ class NewsWorkflowManager:
                         astrbot_logger.info("[dailynews] sub_results image counts: %s", img_counts)
                     except Exception:
                         pass
-                    try:
-                        image_plan = await ImagePlanAgent().decide_plan(
-                            reports=reports,
-                            decision=decision,
-                            sub_results=sub_results,
-                            user_config=user_config,
-                            llm=llm_image_plan,
-                        )
-                    except Exception as e:
-                        astrbot_logger.warning("[dailynews] image_plan failed: %s", e, exc_info=True)
+                    # Image planning is now handled within ImageLayoutAgent or simplified.
+                    # We skip the independent ImagePlanAgent call to reduce overhead.
+                    image_plan = None
 
                 final_summary = await main_agent.summarize_all_results(
                     sub_results, decision.final_format, llm_main_merge

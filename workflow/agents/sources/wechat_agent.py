@@ -11,18 +11,21 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 try:
-    from ..analysis.wechatanalysis.analysis import fetch_wechat_article
-    from ..analysis.wechatanalysis.latest_articles import get_album_articles_chasing_latest_with_seed
-except Exception:  # pragma: no cover
-    from analysis.wechatanalysis.analysis import fetch_wechat_article  # type: ignore
-    from analysis.wechatanalysis.latest_articles import (  # type: ignore
-        get_album_articles_chasing_latest_with_seed,
-    )
+    from ....analysis.wechatanalysis.analysis import fetch_wechat_article
+    from ....analysis.wechatanalysis.latest_articles import get_album_articles_chasing_latest_with_seed
+except (ImportError, Exception):  # pragma: no cover
+    import sys
+    from pathlib import Path
+    root = str(Path(__file__).resolve().parents[3])
+    if root not in sys.path:
+        sys.path.append(root)
+    from analysis.wechatanalysis.analysis import fetch_wechat_article
+    from analysis.wechatanalysis.latest_articles import get_album_articles_chasing_latest_with_seed
 
-from .llm import LLMRunner
-from .models import NewsSourceConfig, SubAgentResult
-from .seed_store import _get_seed_state, _update_seed_entry
-from .utils import _json_from_text, _run_sync, ensure_section_links
+from ...core.llm import LLMRunner
+from ...core.models import NewsSourceConfig, SubAgentResult
+from ...storage.seed_store import _get_seed_state, _update_seed_entry
+from ...core.utils import _json_from_text, _run_sync, ensure_section_links
 
 
 class WechatSubAgent:

@@ -19,9 +19,9 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 from .github_source import parse_repo
-from .image_utils import get_plugin_data_dir
-from .llm import LLMRunner
-from .models import NewsSourceConfig, SubAgentResult
+from ...core.image_utils import get_plugin_data_dir
+from ...core.llm import LLMRunner
+from ...core.models import NewsSourceConfig, SubAgentResult
 
 
 def _parse_iso_dt(s: str) -> Optional[datetime]:

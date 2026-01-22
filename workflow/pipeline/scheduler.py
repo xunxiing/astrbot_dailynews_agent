@@ -18,13 +18,16 @@ try:
 except Exception:  # pragma: no cover
     MessageChain = None  # type: ignore
 
-from .agents import MiyousheSubAgent, NewsSourceConfig, NewsWorkflowManager, WechatSubAgent
-from .github_agent import GitHubSubAgent
-from .github_source import build_github_sources_from_config
-from .plugin_registry_agent import PluginRegistrySubAgent
-from .twitter_agent import TwitterSubAgent
+from ..agents.sources.miyoushe_agent import MiyousheSubAgent
+from ..agents.sources.wechat_agent import WechatSubAgent
+from ..agents.sources.github_agent import GitHubSubAgent
+from ..agents.sources.twitter_agent import TwitterSubAgent
+from ..agents.sources.plugin_registry_agent import PluginRegistrySubAgent
+from ..agents.sources.github_source import build_github_sources_from_config
+from ..core.models import NewsSourceConfig
+from .workflow_manager import NewsWorkflowManager
 from .rendering import load_template
-from .config_models import (
+from ..core.config_models import (
     ImageLayoutConfig,
     LayoutRefineConfig,
     NewsSourcesConfig,
