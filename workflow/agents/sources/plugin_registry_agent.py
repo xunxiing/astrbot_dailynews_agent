@@ -289,7 +289,9 @@ class PluginRegistrySubAgent:
                     "repo_created_at": rmeta.created_at.isoformat().replace("+00:00", "Z")
                     if (rmeta and rmeta.created_at)
                     else "",
-                    "repo_pushed_at": rmeta.pushed_at.isoformat().replace("+00:00", "Z") if (rmeta and rmeta.pushed_at) else "",
+                    "repo_pushed_at": rmeta.pushed_at.isoformat().replace("+00:00", "Z")
+                    if (rmeta and rmeta.pushed_at)
+                    else "",
                     "repo_updated_at": rmeta.updated_at.isoformat().replace("+00:00", "Z")
                     if (rmeta and rmeta.updated_at)
                     else "",
@@ -312,7 +314,7 @@ class PluginRegistrySubAgent:
 
         # Keep:
         # 1) newly listed vs snapshot
-        # 2) within window AND (repo new/active)
+        # 2) within window AND (repo new)
         kept: List[Dict[str, Any]] = []
         seen_keys: set[str] = set()
 
@@ -327,11 +329,11 @@ class PluginRegistrySubAgent:
             if r.get("is_new_in_registry_snapshot"):
                 _push(r)
         for r in rows:
-            if r.get("is_in_registry_window") and (r.get("is_new_repo") or r.get("is_active_repo")):
+            if r.get("is_in_registry_window") and r.get("is_new_repo"):
                 _push(r)
-        for r in rows:
-            if r.get("is_in_registry_window") and not (r.get("is_new_repo") or r.get("is_active_repo")):
-                _push(r)
+
+        # Explicitly drop "recently active only" plugins from the final report.
+        kept = [r for r in kept if bool(r.get("is_new_in_registry_snapshot") or False) or bool(r.get("is_new_repo") or False)]
 
         kept = kept[:max_plugins]
 
@@ -343,14 +345,14 @@ class PluginRegistrySubAgent:
         meta = source.meta or {}
         since_hours = int(meta.get("since_hours") or 27)
         new_cnt = 0
-        active_cnt = 0
+        listed_cnt = 0
         for a in articles or []:
             if isinstance(a, dict) and a.get("is_new_repo"):
                 new_cnt += 1
-            if isinstance(a, dict) and a.get("is_active_repo"):
-                active_cnt += 1
+            if isinstance(a, dict) and a.get("is_new_in_registry_snapshot"):
+                listed_cnt += 1
 
-        angle = f"近 {since_hours} 小时：{new_cnt} 个新仓库插件 / {active_cnt} 个活跃插件"
+        angle = f"近 {since_hours} 小时：新增上架 {listed_cnt} / 新仓库 {new_cnt}"
         sample: List[Dict[str, Any]] = []
         for a in (articles or [])[:3]:
             if not isinstance(a, dict):
@@ -361,7 +363,6 @@ class PluginRegistrySubAgent:
                     "repo": a.get("repo_html_url") or a.get("repo"),
                     "is_new_in_registry_snapshot": bool(a.get("is_new_in_registry_snapshot") or False),
                     "is_new_repo": bool(a.get("is_new_repo") or False),
-                    "is_active_repo": bool(a.get("is_active_repo") or False),
                 }
             )
         return {
@@ -371,7 +372,7 @@ class PluginRegistrySubAgent:
             "priority": int(source.priority or 1),
             "article_count": len(articles or []),
             "topics": ["plugins", "registry", "github"],
-            "quality_score": int(new_cnt * 8 + active_cnt * 2),
+            "quality_score": int(listed_cnt * 6 + new_cnt * 8),
             "today_angle": angle,
             "sample_articles": sample,
             "error": None,
@@ -398,13 +399,13 @@ class PluginRegistrySubAgent:
                 f"## {source.name}",
                 "",
                 f"- 索引文件：`{registry_path}`",
-                f"- 窗口：近 {since_hours} 小时（GitHub `created_at/pushed_at` 校验）",
+                f"- 窗口：近 {since_hours} 小时（GitHub `created_at` 校验）",
             ]
             if snap.snapshot_path:
                 lines.append(f"- 当前快照：`{snap.snapshot_path}`" + (f"（`{snap_at}`）" if snap_at else ""))
             if snap.prev_snapshot_path and Path(snap.prev_snapshot_path).exists():
                 lines.append(f"- 上一次快照：`{snap.prev_snapshot_path}`")
-            lines.extend(["", f"未抓取到符合条件的插件（近 {since_hours} 小时内新仓库/活跃仓库；或今日无新增上架）。"])
+            lines.extend(["", f"未抓取到符合条件的插件（近 {since_hours} 小时内新增上架/新仓库）。"])
             return SubAgentResult(
                 source_name=source.name,
                 content="\n".join(lines).strip(),
@@ -430,8 +431,6 @@ class PluginRegistrySubAgent:
 
         newly_listed: List[Dict[str, Any]] = []
         window_new_repo: List[Dict[str, Any]] = []
-        window_active_repo: List[Dict[str, Any]] = []
-        window_not_active: List[Dict[str, Any]] = []
         for a in articles:
             if not isinstance(a, dict):
                 continue
@@ -442,10 +441,6 @@ class PluginRegistrySubAgent:
                 continue
             if a.get("is_new_repo"):
                 window_new_repo.append(a)
-            elif a.get("is_active_repo"):
-                window_active_repo.append(a)
-            else:
-                window_not_active.append(a)
 
         def _line(p: Dict[str, Any]) -> str:
             name = str(p.get("display_name") or p.get("key") or "").strip() or "plugin"
@@ -453,7 +448,6 @@ class PluginRegistrySubAgent:
             version = str(p.get("version") or "").strip()
             reg_u = str(p.get("registry_updated_at") or "").strip()
             created = str(p.get("repo_created_at") or "").strip()
-            pushed = str(p.get("repo_pushed_at") or "").strip()
             stars = int(p.get("repo_stars") or 0)
             desc = _first_line(str(p.get("desc") or ""))
 
@@ -470,8 +464,6 @@ class PluginRegistrySubAgent:
                 pieces.append(f"★{stars}")
             if created:
                 pieces.append(f"created `{created}`")
-            if pushed:
-                pieces.append(f"pushed `{pushed}`")
             if reg_u:
                 pieces.append(f"registry `{reg_u}`")
             suffix = " · ".join(pieces[1:]) if len(pieces) > 1 else ""
@@ -482,7 +474,7 @@ class PluginRegistrySubAgent:
         lines.append(f"## {source.name}")
         lines.append("")
         lines.append(f"- 索引文件：`{registry_path}`")
-        lines.append(f"- 窗口：近 {since_hours} 小时（GitHub `created_at/pushed_at` 校验）")
+        lines.append(f"- 窗口：近 {since_hours} 小时（GitHub `created_at` 校验）")
         if baseline_snapshot_path and Path(baseline_snapshot_path).exists():
             lines.append(f"- 对比基线快照：`{baseline_snapshot_path}`（`{snapshot_at or 'unknown'}`）")
         if snapshot_path and snapshot_path != baseline_snapshot_path and Path(snapshot_path).exists():
@@ -500,16 +492,6 @@ class PluginRegistrySubAgent:
         if window_new_repo:
             lines.append("### 新仓库（created_at 在窗口内）")
             for p in window_new_repo:
-                lines.append(_line(p))
-            lines.append("")
-        if window_active_repo:
-            lines.append("### 最近活跃（pushed_at 在窗口内）")
-            for p in window_active_repo:
-                lines.append(_line(p))
-            lines.append("")
-        if window_not_active:
-            lines.append("### 索引更新但仓库无新 push（仅 updated_at 在窗口内）")
-            for p in window_not_active:
                 lines.append(_line(p))
             lines.append("")
 

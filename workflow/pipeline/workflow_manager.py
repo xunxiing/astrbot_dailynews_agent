@@ -461,18 +461,55 @@ class NewsWorkflowManager:
                 # 5) 图片排版 Agent（可选）
                 if bool(user_config.get("image_layout_enabled", False)) and (final_summary or "").strip():
                     try:
+                        # IMPORTANT: avoid sending large passthrough sections (e.g. plugin registry "recently active")
+                        # into any LLM-based layout/refine steps. Those sections are appended back verbatim after layout.
+                        passthrough_blocks: List[str] = []
+                        layout_sub_results: List[Any] = []
+                        for r in sub_results:
+                            if isinstance(r, SubAgentResult) and (not r.error) and bool(getattr(r, "no_llm_merge", False)):
+                                if (r.content or "").strip():
+                                    passthrough_blocks.append(r.content.strip())
+                                continue
+                            layout_sub_results.append(r)
+
+                        def _strip_blocks(text: str, blocks: List[str]) -> str:
+                            s = text or ""
+                            for b in blocks:
+                                bb = (b or "").strip()
+                                if not bb:
+                                    continue
+                                # remove with common surrounding newlines to avoid leaving huge blank areas
+                                for pat in (
+                                    "\n\n" + bb + "\n\n",
+                                    "\n\n" + bb + "\n",
+                                    "\n" + bb + "\n\n",
+                                    "\n" + bb + "\n",
+                                    bb + "\n\n",
+                                    bb + "\n",
+                                    bb,
+                                ):
+                                    if pat in s:
+                                        s = s.replace(pat, "\n\n")
+                            return s.strip()
+
+                        layout_markdown = _strip_blocks(final_summary, passthrough_blocks)
+
                         astrbot_logger.info(
                             "[dailynews] image_layout start enabled=%s provider=%s",
                             bool(user_config.get("image_layout_enabled", False)),
                             str(user_config.get("image_layout_provider_id") or ""),
                         )
                         final_summary = await ImageLayoutAgent().enhance_markdown(
-                            draft_markdown=final_summary,
-                            sub_results=sub_results,
+                            draft_markdown=layout_markdown,
+                            sub_results=layout_sub_results,
                             user_config=user_config,
                             astrbot_context=astrbot_context,
                             image_plan=image_plan,
                         )
+                        if passthrough_blocks:
+                            tail = "\n\n".join([b for b in passthrough_blocks if (b or "").strip()]).strip()
+                            if tail:
+                                final_summary = ((final_summary or "").strip() + "\n\n" + tail).strip()
                         astrbot_logger.info(
                             "[dailynews] image_layout done has_image=%s",
                             bool(re.search(r"!\[[^\]]*\]\(", (final_summary or "")))
