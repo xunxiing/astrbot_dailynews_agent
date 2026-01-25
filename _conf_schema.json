@@ -20,7 +20,7 @@
   "news_group_mode": {
     "type": "string",
     "description": "消息组模式（新）",
-    "default": "source",
+    "default": "group",
     "options": ["source", "group"],
     "hint": "source=按来源输出；group=按动态标签分组（Map→Shuffle→Reduce→Feedback）"
   },
