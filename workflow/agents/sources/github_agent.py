@@ -86,6 +86,19 @@ class GitHubSubAgent:
                 key_points=[],
                 error="GitHub 来源未抓取到任何数据（检查 github_enabled/github_repos/github_token）",
             )
+        updates = articles[0].get("updates") or []
+        if not isinstance(updates, list):
+            updates = []
+        # No recent updates -> omit this section (do not output "no updates" noise).
+        if not updates:
+            return SubAgentResult(
+                source_name=source.name,
+                content="",
+                summary="",
+                key_points=[],
+                images=None,
+                error=None,
+            )
         snap = articles[0].get("snapshot") or {}
         if not isinstance(snap, dict):
             snap = {}
@@ -103,6 +116,15 @@ class GitHubSubAgent:
             "请写出该来源在今日日报中的一段 Markdown 小节（含小标题、要点、链接）。"
             "需要覆盖：当前版本/最新 release（如有）/最新 commit/近窗口内 PR 与 commit 摘要。"
             "只输出 JSON，不要输出其它文本。"
+        )
+        system_prompt += (
+            "\n\nCRITICAL OUTPUT RULES (must follow):\n"
+            "1) Never output raw URLs (no lines starting with http/https). All links must be Markdown links like [View](URL).\n"
+            "2) Ban vague filler like “optimized experience / fixed some bugs”. Every bullet must state concrete changes: feature name, behavior change, bug symptom + fix, and reference (#PR/#issue/commit sha) when available.\n"
+            "3) Structure per item:\n"
+            "   - **Title**: 1-line summary. ( [View](url) )\n"
+            "     - Details: include PR/issue number or short commit hash; include parameters/metrics if present.\n"
+            "4) If the snapshot lacks concrete details, output an empty section_markdown (do NOT make up content).\n"
         )
         prompt = {
             "source_name": source.name,

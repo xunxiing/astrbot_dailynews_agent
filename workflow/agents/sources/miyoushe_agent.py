@@ -101,6 +101,15 @@ class MiyousheSubAgent:
             "请快速判断今日主要看点/主题，并给出可写作的角度建议。"
             "只输出 JSON，不要输出其它文本。"
         )
+        system_prompt += (
+            "\n\nCRITICAL OUTPUT RULES (must follow):\n"
+            "1) Never output raw URLs (no lines starting with http/https). All links must be Markdown links like [阅读原文](URL).\n"
+            "2) Ban vague filler like “优化体验/修复部分bug”. Use concrete details from the provided post excerpts: event name, version/patch, mechanics/changes, numbers.\n"
+            "3) Prefer 3-6 bullets max. Each bullet:\n"
+            "   - **标题**：一句话结论。 ( [阅读原文](url) )\n"
+            "     - 细节：至少 1 条具体细节。\n"
+            "4) If you cannot extract concrete details, output an empty section_markdown (do NOT make up content).\n"
+        )
         prompt = {
             "source_name": source.name,
             "source_type": source.type,
@@ -239,7 +248,12 @@ class MiyousheSubAgent:
             for a in chosen:
                 u = (a.get("url") or "").strip()
                 t = (a.get("title") or "").strip()
-                lines.append(f"- {t} ({u})" if t and u else (u or t))
+                if t and u:
+                    lines.append(f"- {t} ([阅读原文]({u}))")
+                elif u:
+                    lines.append(f"- [阅读原文]({u})")
+                elif t:
+                    lines.append(f"- {t}")
             return SubAgentResult(
                 source_name=source.name,
                 content="\n".join([x for x in lines if x]).strip(),

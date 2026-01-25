@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import re
@@ -28,6 +30,10 @@ async def _run_sync(func, *args, **kwargs):
 
 
 def ensure_section_links(section: str, articles: List[Dict[str, Any]]) -> str:
+    """
+    Ensure each article URL appears in the section at least once.
+    Hard requirement: never output raw http(s) URLs as plain text lines.
+    """
     urls: List[str] = []
     for a in articles:
         if not isinstance(a, dict):
@@ -37,26 +43,25 @@ def ensure_section_links(section: str, articles: List[Dict[str, Any]]) -> str:
             urls.append(u)
 
     if not urls:
-        return section
+        return section or ""
 
     section_text = section or ""
     missing = [u for u in urls if u not in section_text]
     if not missing:
         return section_text
 
-    # 只补全缺失的链接，避免重复
-    lines: List[str] = [section_text.rstrip(), "", "### 来源链接（补全）"]
+    # Only fill missing links (avoid duplication), and never show raw URLs.
+    lines: List[str] = [section_text.rstrip(), "", "### 来源（补全）"]
     for a in articles:
         if not isinstance(a, dict):
             continue
         title = str(a.get("title") or "").strip()
         url = str(a.get("url") or "").strip()
-        if not url:
-            continue
-        if url not in missing:
+        if not url or url not in missing:
             continue
         if title:
-            lines.append(f"- {title} {url}")
+            lines.append(f"- {title} ([阅读原文]({url}))")
         else:
-            lines.append(f"- {url}")
+            lines.append(f"- [阅读原文]({url})")
     return "\n".join([x for x in lines if x is not None]).strip()
+

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "tags": [
+    {"tag": "[国内政策]", "description": "涉及国内法规、政策变动"},
+    {"tag": "[国外政策]", "description": "涉及国际局势、外交动态"},
+    {"tag": "[科技新闻]", "description": "硬件、互联网、航天等综合科技"},
+    {"tag": "[AI日报]", "description": "大模型、机器学习、Paper、AIGC工具"},
+    {"tag": "[AstrBot]", "description": "专门涉及 AstrBot 项目及其插件生态的内容"},
+    {"tag": "[GitHub项目]", "description": "开源库、代码仓库推荐"},
+    {"tag": "[游戏/二次元]", "description": "游戏更新、二次元文化（如原神、崩坏等）"}
+  ]
+}

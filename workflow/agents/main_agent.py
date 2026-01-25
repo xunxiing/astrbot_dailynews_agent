@@ -28,6 +28,13 @@ class MainNewsAgent:
             "请严格只输出 JSON（不要 Markdown、不要解释）。"
         )
 
+        system_prompt += (
+            "\n\nCRITICAL OUTPUT RULES (must follow):\n"
+            "1) Never output raw URLs (no lines starting with http/https). All links must be Markdown links like [Link](URL).\n"
+            "2) Do NOT output debug info, local file paths, validation logs, or error lists.\n"
+            "3) Remove empty sections: if a source has no meaningful content, omit it entirely.\n"
+            "4) Ban vague filler like “优化体验/修复部分bug”. Prefer concrete, technical, reader-useful bullet points.\n"
+        )
         prompt = {
             "now": datetime.now().strftime("%Y-%m-%d"),
             "constraints": {
@@ -176,7 +183,7 @@ class MainNewsAgent:
             if isinstance(r, Exception):
                 failed.append(str(r) or f"{type(r).__name__}")
                 continue
-            if isinstance(r, SubAgentResult) and not r.error:
+            if isinstance(r, SubAgentResult) and not r.error and (r.content or "").strip():
                 if bool(getattr(r, "no_llm_merge", False)):
                     passthrough.append(r)
                 else:
@@ -186,7 +193,7 @@ class MainNewsAgent:
 
         if not ok and not passthrough:
             lines = ["# 每日资讯日报", "", "未收到子Agent的有效内容小节。"]
-            if failed:
+            if False and failed:
                 lines.extend(["", "## 错误信息"])
                 for msg in failed:
                     lines.append(f"- {msg}")
@@ -197,7 +204,7 @@ class MainNewsAgent:
             for s in passthrough:
                 parts.append(s.content.strip())
                 parts.append("")
-            if failed:
+            if False and failed:
                 parts.append("## 错误信息")
                 for msg in failed:
                     parts.append(f"- {msg}")
@@ -215,7 +222,7 @@ class MainNewsAgent:
         prompt = {
             "now": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "sections": [{"source": r.source_name, "markdown": r.content} for r in ok],
-            "failed": failed,
+            "failed": [],
             "output_format": format_type,
         }
         try:
@@ -234,7 +241,7 @@ class MainNewsAgent:
                 for s in passthrough:
                     parts.append(s.content.strip())
                     parts.append("")
-            if failed:
+            if False and failed:
                 parts.append("## 错误信息")
                 for msg in failed:
                     parts.append(f"- {msg}")

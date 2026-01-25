@@ -164,6 +164,15 @@ class WechatSubAgent:
             "请快速判断今日主要看点/主题，并给出可写作的角度建议。"
             "只输出 JSON，不要输出其它文本。"
         )
+        system_prompt += (
+            "\n\nCRITICAL OUTPUT RULES (must follow):\n"
+            "1) Never output raw URLs (no lines starting with http/https). All links must be Markdown links like [阅读原文](URL).\n"
+            "2) Ban vague filler like “优化体验/修复部分bug”. Use concrete details from the provided article excerpts: feature name, affected module, behavior change, numbers (limits, performance, versions).\n"
+            "3) Prefer 3-6 bullets max. Each bullet:\n"
+            "   - **标题**：一句话结论。 ( [阅读原文](url) )\n"
+            "     - 细节：至少 1 条具体细节；如果有版本号/参数/功能点请写出来。\n"
+            "4) If you cannot extract concrete details, output an empty section_markdown (do NOT make up content).\n"
+        )
         prompt = {
             "source_name": source.name,
             "source_type": source.type,
@@ -312,9 +321,9 @@ class WechatSubAgent:
                 t = (a.get("title") or "").strip()
                 u = (a.get("url") or "").strip()
                 if t and u:
-                    lines.append(f"- {t} ({u})")
+                    lines.append(f"- {t} ([阅读原文]({u}))")
                 elif u:
-                    lines.append(f"- {u}")
+                    lines.append(f"- [阅读原文]({u})")
             return SubAgentResult(
                 source_name=source.name,
                 content="\n".join(lines).strip(),

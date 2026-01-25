@@ -14,6 +14,8 @@ except Exception:  # pragma: no cover
 from ..core.llm import LLMRunner
 from ..agents.main_agent import MainNewsAgent
 from ..agents.image_layout_agent import ImageLayoutAgent
+from ..agents.message_groups.group_manager import MessageGroupManager
+from ..core.markdown_sanitizer import sanitize_markdown_for_publish
 from ..core.models import NewsSourceConfig, SubAgentResult
 
 
@@ -110,6 +112,18 @@ class NewsWorkflowManager:
                 max_retries=llm_max_retries,
                 provider_ids=main_provider_chain or None,
             )
+            llm_group_router = None
+            try:
+                group_provider = str(user_config.get("news_group_router_provider_id") or "").strip()
+                group_provider_ids = [group_provider] if group_provider else (main_provider_chain or None)
+                llm_group_router = LLMRunner(
+                    astrbot_context,
+                    timeout_s=max(30, min(120, int(user_config.get("llm_timeout_s", 180)) // 2)),
+                    max_retries=max(0, min(2, int(user_config.get("llm_max_retries", 1)))),
+                    provider_ids=group_provider_ids,
+                )
+            except Exception:
+                llm_group_router = None
 
             async def _wait_with_heartbeat(
                 tasks: List[asyncio.Task], *, label: str, interval_s: float = 30.0
@@ -430,9 +444,28 @@ class NewsWorkflowManager:
                     # We skip the independent ImagePlanAgent call to reduce overhead.
                     image_plan = None
 
-                final_summary = await main_agent.summarize_all_results(
-                    sub_results, decision.final_format, llm_main_merge
-                )
+                group_mode = str(user_config.get("news_group_mode", "source") or "source").strip().lower()
+                if group_mode == "group":
+                    promote = bool(user_config.get("news_group_writeback_tags", True))
+                    min_cnt = int(user_config.get("news_group_promote_min_count", 2) or 2)
+                    # Group mode only uses LLM-mergeable sources. no_llm_merge results are passthrough-only and
+                    # should not appear unless explicitly included in the markdown.
+                    group_sub_results = []
+                    for r in sub_results:
+                        if isinstance(r, SubAgentResult) and bool(getattr(r, "no_llm_merge", False)):
+                            continue
+                        group_sub_results.append(r)
+                    final_summary = await MessageGroupManager().build_report(
+                        sub_results=group_sub_results,
+                        llm_classify=llm_group_router,
+                        llm_write=llm_write,
+                        promote_new_tags=promote,
+                        promote_min_count=max(2, min(10, min_cnt)),
+                    )
+                else:
+                    final_summary = await main_agent.summarize_all_results(
+                        sub_results, decision.final_format, llm_main_merge
+                    )
 
                 if not (final_summary or "").strip():
                     astrbot_logger.warning("[dailynews] final_summary is empty; fallback to concat sections")
@@ -452,11 +485,14 @@ class NewsWorkflowManager:
                                 parts.append("")
                             elif r.error:
                                 failed_msgs.append(f"{r.source_name}: {r.error}")
-                    if failed_msgs:
+                    if False and failed_msgs:
                         parts.append("## 错误信息")
                         for msg in failed_msgs:
                             parts.append(f"- {msg}")
                     final_summary = "\n".join(parts).strip()
+
+                # Production hard-sanitize: no raw URLs / local paths / debug leaks.
+                final_summary = sanitize_markdown_for_publish(final_summary)
 
                 # 5) 图片排版 Agent（可选）
                 if bool(user_config.get("image_layout_enabled", False)) and (final_summary or "").strip():
@@ -467,8 +503,11 @@ class NewsWorkflowManager:
                         layout_sub_results: List[Any] = []
                         for r in sub_results:
                             if isinstance(r, SubAgentResult) and (not r.error) and bool(getattr(r, "no_llm_merge", False)):
-                                if (r.content or "").strip():
-                                    passthrough_blocks.append(r.content.strip())
+                                # Only treat as passthrough when it is already part of final_summary.
+                                # This prevents no_llm_merge sources from being force-appended in group-mode.
+                                c = (r.content or "").strip()
+                                if c and c in (final_summary or ""):
+                                    passthrough_blocks.append(c)
                                 continue
                             layout_sub_results.append(r)
 
@@ -493,6 +532,7 @@ class NewsWorkflowManager:
                             return s.strip()
 
                         layout_markdown = _strip_blocks(final_summary, passthrough_blocks)
+                        layout_markdown = sanitize_markdown_for_publish(layout_markdown)
 
                         astrbot_logger.info(
                             "[dailynews] image_layout start enabled=%s provider=%s",
@@ -506,10 +546,12 @@ class NewsWorkflowManager:
                             astrbot_context=astrbot_context,
                             image_plan=image_plan,
                         )
+                        final_summary = sanitize_markdown_for_publish(final_summary)
                         if passthrough_blocks:
                             tail = "\n\n".join([b for b in passthrough_blocks if (b or "").strip()]).strip()
                             if tail:
                                 final_summary = ((final_summary or "").strip() + "\n\n" + tail).strip()
+                        final_summary = sanitize_markdown_for_publish(final_summary)
                         astrbot_logger.info(
                             "[dailynews] image_layout done has_image=%s",
                             bool(re.search(r"!\[[^\]]*\]\(", (final_summary or "")))

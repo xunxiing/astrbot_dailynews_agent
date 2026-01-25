@@ -391,6 +391,16 @@ class PluginRegistrySubAgent:
         registry_path = self._resolve_registry_path(source)
 
         if not articles:
+            # No content -> omit entire section (no empty-state / debug output).
+            return SubAgentResult(
+                source_name=source.name,
+                content="",
+                summary="",
+                key_points=[],
+                error=None,
+                no_llm_merge=True,
+            )
+
             # Still show snapshot info (it may have been initialized/refreshed in fetch_latest_articles).
             cache_dir = get_plugin_data_dir("plugin_registry_cache")
             snap = _load_snapshot(cache_dir, registry_path)
@@ -442,6 +452,18 @@ class PluginRegistrySubAgent:
             if a.get("is_new_repo"):
                 window_new_repo.append(a)
 
+        # Nothing worth showing -> omit this source section entirely.
+        if not newly_listed and not window_new_repo:
+            return SubAgentResult(
+                source_name=source.name,
+                content="",
+                summary="",
+                key_points=[],
+                images=[],
+                error=None,
+                no_llm_merge=True,
+            )
+
         def _line(p: Dict[str, Any]) -> str:
             name = str(p.get("display_name") or p.get("key") or "").strip() or "plugin"
             repo_url = str(p.get("repo_html_url") or p.get("repo") or "").strip()
@@ -484,6 +506,9 @@ class PluginRegistrySubAgent:
         if rotated:
             lines.append("- 本次运行已刷新 24h 快照（用于明日对比）")
         lines.append("")
+
+        # Keep report clean: only include actual plugin updates (no file paths / snapshot/debug info).
+        lines = [f"## {source.name}", ""]
         if newly_listed:
             lines.append("### 新增上架（相对 24h 快照新增的插件）")
             for p in newly_listed:

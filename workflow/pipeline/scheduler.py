@@ -231,6 +231,10 @@ class DailyNewsScheduler:
         cfg.setdefault("delivery_mode", "html_image")
         cfg.setdefault("render_template_name", "daily_news")
         cfg.setdefault("max_sources_per_day", 3)
+        cfg.setdefault("news_group_mode", "source")
+        cfg.setdefault("news_group_router_provider_id", "")
+        cfg.setdefault("news_group_writeback_tags", True)
+        cfg.setdefault("news_group_promote_min_count", 2)
 
         pipeline = RenderPipelineConfig.from_mapping(cfg)
         style = RenderImageStyleConfig.from_mapping(cfg)
@@ -331,6 +335,16 @@ class DailyNewsScheduler:
             cfg["twitter_targets"] = []
         if not isinstance(cfg.get("main_agent_fallback_provider_ids"), list):
             cfg["main_agent_fallback_provider_ids"] = []
+        if str(cfg.get("news_group_mode") or "").strip().lower() not in {"source", "group"}:
+            cfg["news_group_mode"] = "source"
+        if not isinstance(cfg.get("news_group_router_provider_id"), str):
+            cfg["news_group_router_provider_id"] = ""
+        if not isinstance(cfg.get("news_group_writeback_tags"), bool):
+            cfg["news_group_writeback_tags"] = bool(cfg.get("news_group_writeback_tags", True))
+        try:
+            cfg["news_group_promote_min_count"] = int(cfg.get("news_group_promote_min_count") or 2)
+        except Exception:
+            cfg["news_group_promote_min_count"] = 2
 
         return cfg
 

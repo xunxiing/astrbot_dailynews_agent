@@ -17,6 +17,30 @@
     "default": "markdown",
     "options": ["markdown"]
   },
+  "news_group_mode": {
+    "type": "string",
+    "description": "消息组模式（新）",
+    "default": "source",
+    "options": ["source", "group"],
+    "hint": "source=按来源输出；group=按动态标签分组（Map→Shuffle→Reduce→Feedback）"
+  },
+  "news_group_router_provider_id": {
+    "type": "string",
+    "description": "消息组分类器 Provider（可选）",
+    "_special": "select_provider",
+    "default": "",
+    "hint": "用于标签分类（建议用便宜模型）；留空则复用主 Agent provider 链"
+  },
+  "news_group_writeback_tags": {
+    "type": "bool",
+    "description": "自动写回新标签到标签库",
+    "default": true
+  },
+  "news_group_promote_min_count": {
+    "type": "int",
+    "description": "新标签写回最小命中次数",
+    "default": 2
+  },
   "delivery_mode": {
     "type": "string",
     "description": "发送方式",
