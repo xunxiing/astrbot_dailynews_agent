@@ -51,7 +51,7 @@
   "render_template_name": {
     "type": "string",
     "description": "渲染模板",
-    "default": "daily_news",
+    "default": "chenyu_style",
     "options": ["daily_news", "chenyu_style"],
     "hint": "daily_news=默认模板；chenyu_style=沉玉谷风格（chenyu-style.html）"
   },
