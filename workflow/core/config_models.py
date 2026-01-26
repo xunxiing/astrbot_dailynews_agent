@@ -337,6 +337,24 @@ class NewsSourcesConfig:
                         "max_plugins": max_plugins,
                     },
                 )
+            elif tkey == "xiuxiu_ai":
+                name = _to_str(item.get("name"), "").strip()
+                priority = _to_int(item.get("priority"), 1)
+                max_items = _to_int(item.get("max_items"), 20)
+                date = _to_str(item.get("date"), "").strip()
+                days_ago = _to_int(item.get("days_ago"), 0)
+                src = NewsSourceConfig(
+                    name=name or "虎嗅AI产品日报",
+                    url="https://xiuxiu.huxiu.com/",
+                    type="xiuxiu_ai",
+                    priority=max(1, priority),
+                    max_articles=max(5, max_items),
+                    album_keyword=None,
+                    meta={
+                        "date": date,
+                        "days_ago": max(0, days_ago),
+                    },
+                )
             else:
                 continue
 

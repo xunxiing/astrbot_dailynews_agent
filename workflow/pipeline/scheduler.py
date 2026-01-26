@@ -23,6 +23,7 @@ from ..agents.sources.wechat_agent import WechatSubAgent
 from ..agents.sources.github_agent import GitHubSubAgent
 from ..agents.sources.twitter_agent import TwitterSubAgent
 from ..agents.sources.plugin_registry_agent import PluginRegistrySubAgent
+from ..agents.sources.xiuxiu_ai_agent import XiuxiuAISubAgent
 from ..agents.sources.github_source import build_github_sources_from_config
 from ..core.models import NewsSourceConfig
 from .workflow_manager import NewsWorkflowManager
@@ -181,6 +182,7 @@ class DailyNewsScheduler:
         self.workflow_manager.register_sub_agent("github", GitHubSubAgent)
         self.workflow_manager.register_sub_agent("twitter", TwitterSubAgent)
         self.workflow_manager.register_sub_agent("plugin_registry", PluginRegistrySubAgent)
+        self.workflow_manager.register_sub_agent("xiuxiu_ai", XiuxiuAISubAgent)
 
     def _save_config(self):
         if hasattr(self.config, "save_config"):

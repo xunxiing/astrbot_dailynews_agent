@@ -329,6 +329,37 @@
             "default": 20
           }
         }
+      },
+      "xiuxiu_ai": {
+        "name": "虎嗅AI产品日报",
+        "hint": "抓取 xiuxiu.huxiu.com 的「AI 产品日报」结构化条目（含 AI 点评）。默认抓取当天；可选 days_ago 回看历史。",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "显示名称（可选）",
+            "default": ""
+          },
+          "priority": {
+            "type": "int",
+            "description": "优先级（数值越大越先处理）",
+            "default": 1
+          },
+          "max_items": {
+            "type": "int",
+            "description": "最多抓取多少条",
+            "default": 20
+          },
+          "date": {
+            "type": "string",
+            "description": "指定日期（YYYY-MM-DD，可选）",
+            "default": ""
+          },
+          "days_ago": {
+            "type": "int",
+            "description": "回看 N 天前（date 为空时生效）",
+            "default": 0
+          }
+        }
       }
     }
   },
