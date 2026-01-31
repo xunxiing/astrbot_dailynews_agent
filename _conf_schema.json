@@ -140,6 +140,12 @@
     "description": "本地 Playwright 截图超时（毫秒）",
     "default": 20000
   },
+  "custom_browser_path": {
+    "type": "string",
+    "description": "（不建议修改）自定义 Chromium/Chrome 可执行文件路径；为空则自动使用 Playwright 默认浏览器路径（例如 Linux: ~/.cache/ms-playwright）",
+    "default": "",
+    "hint": "Linux 推荐留空并运行：playwright install --with-deps chromium。示例：/usr/bin/google-chrome"
+  },
   "render_img_float_enabled": {
     "type": "bool",
     "description": "是否将窄图优先与文字并排（浮动排版）",

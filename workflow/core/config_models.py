@@ -84,6 +84,7 @@ class RenderPipelineConfig:
     poll_interval_ms: int = 200
     playwright_fallback: bool = True
     playwright_timeout_ms: int = 20000
+    custom_browser_path: str = ""
 
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> "RenderPipelineConfig":
@@ -95,6 +96,7 @@ class RenderPipelineConfig:
             poll_interval_ms=max(50, _to_int(cfg.get("render_poll_interval_ms"), 200)),
             playwright_fallback=_to_bool(cfg.get("render_playwright_fallback"), True),
             playwright_timeout_ms=max(1000, _to_int(cfg.get("render_playwright_timeout_ms"), 20000)),
+            custom_browser_path=_to_str(cfg.get("custom_browser_path"), ""),
         )
 
 

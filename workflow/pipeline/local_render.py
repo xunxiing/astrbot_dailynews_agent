@@ -39,21 +39,32 @@ async def screenshot_html_playwright(
     viewport: Tuple[int, int] = (1080, 720),
     timeout_ms: int = 20000,
     full_page: bool = True,
+    browser_executable_path: str | None = None,
 ) -> Path:
     if async_playwright is None:
         raise RuntimeError("playwright not available")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     async with async_playwright() as p:
-        executable_path = None
-        try:
-            from .playwright_bootstrap import get_chromium_executable_path
+        executable_path: Path | None = None
+        if browser_executable_path and str(browser_executable_path).strip():
+            cand = Path(str(browser_executable_path)).expanduser()
+            if cand.exists():
+                executable_path = cand
+            else:
+                astrbot_logger.warning(
+                    "[dailynews] custom_browser_path not found: %s (ignored; falling back to Playwright default)",
+                    browser_executable_path,
+                )
+        else:
+            try:
+                from .playwright_bootstrap import get_chromium_executable_path
 
-            executable_path = get_chromium_executable_path()
-        except Exception:
-            executable_path = None
+                executable_path = get_chromium_executable_path()
+            except Exception:
+                executable_path = None
 
-        if executable_path:
+        if executable_path is not None:
             browser = await p.chromium.launch(headless=True, executable_path=str(executable_path))
         else:
             browser = await p.chromium.launch(headless=True)
@@ -82,6 +93,7 @@ async def render_template_to_image_playwright(
     viewport: Tuple[int, int] = (1080, 720),
     timeout_ms: int = 20000,
     full_page: bool = True,
+    browser_executable_path: str | None = None,
 ) -> Path:
     html = render_jinja_template(template_str, context)
     return await screenshot_html_playwright(
@@ -90,6 +102,7 @@ async def render_template_to_image_playwright(
         viewport=viewport,
         timeout_ms=timeout_ms,
         full_page=full_page,
+        browser_executable_path=browser_executable_path,
     )
 
 

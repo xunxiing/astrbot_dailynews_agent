@@ -56,7 +56,7 @@
 3. **微信公众号解析失败**
 
    - 确认公众号链接格式正确
-   - 检查Playwright依赖安装，使用playwright install解决可能存在的playwright安装问题，如果有问题，建议先等待10-20分钟后重启astrbot，因为插件会静默下载playwright。
+   - 检查 Playwright 依赖安装：Linux/macOS 需要执行 `playwright install --with-deps chromium`（本插件不会自动下载浏览器）
    - 验证网络访问权限
 
 ### 日志查看
@@ -70,7 +70,7 @@
 ### 开发环境
 
 1. 安装依赖: `pip install -r requirements.txt`
-2. 安装Playwright: `playwright install`
+2. 安装 Playwright Chromium: `playwright install --with-deps chromium`
 3. 配置开发环境
 
 ### 提交规范

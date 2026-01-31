@@ -394,6 +394,7 @@ async def render_single_page_to_image(
                 viewport=(1080, 720),
                 timeout_ms=pipeline.playwright_timeout_ms,
                 full_page=True,
+                browser_executable_path=pipeline.custom_browser_path,
             )
             img = Path(str(img)).resolve()
             method = "playwright"
@@ -424,6 +425,7 @@ async def render_single_page_to_image(
                 viewport=(1080, 720),
                 timeout_ms=pipeline.playwright_timeout_ms,
                 full_page=True,
+                browser_executable_path=pipeline.custom_browser_path,
             )
             img = Path(str(img)).resolve()
             method = "playwright"

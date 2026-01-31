@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import sys
 import zipfile
 from pathlib import Path
 from typing import Optional
@@ -29,6 +29,10 @@ PLAYWRIGHT_CHROMIUM_HEADLESS_URL = (
 _BOOTSTRAP_LOCK = asyncio.Lock()
 
 
+def _is_windows() -> bool:
+    return sys.platform.startswith("win")
+
+
 def _browsers_dir() -> Path:
     # Look for playwright_browsers under the same directory as plugins/ or plugin_data/
     # Usually it's in the same parent as plugin_data
@@ -41,6 +45,11 @@ def _chromium_root_dir() -> Path:
 
 
 def get_chromium_executable_path() -> Optional[Path]:
+    # Our bootstrap download is Windows-only. Never try to use it on Linux/macOS,
+    # even if the plugin data directory was copied over from a Windows machine.
+    if not _is_windows():
+        return None
+
     root = _chromium_root_dir()
     if not root.exists():
         # Auto-detect any folder starting with "chromium-"
@@ -95,6 +104,33 @@ def get_chromium_executable_path_or_hint() -> str:
     )
 
 
+def detect_windows_bootstrap_download_root() -> Optional[Path]:
+    """
+    Returns the bootstrap root directory if we detect Windows-only artifacts in plugin data.
+    This is useful for warning users who migrated their AstrBot data from Windows to Linux.
+    """
+    try:
+        if not _browsers_dir().exists():
+            return None
+        for root in sorted(_browsers_dir().glob("chromium-*"), reverse=True):
+            if not root.is_dir():
+                continue
+            # Marker or typical layout signals it was installed by our bootstrap flow.
+            if (root / ".installed").exists() or (root / "download.zip").exists():
+                return root
+            if (root / "chrome-win").exists():
+                return root
+            # Any .exe under the folder is a strong signal of Windows binaries.
+            try:
+                if next(root.rglob("*.exe"), None) is not None:  # type: ignore[arg-type]
+                    return root
+            except Exception:
+                pass
+    except Exception:
+        return None
+    return None
+
+
 async def _download_file(url: str, out_path: Path, *, timeout_s: int = 1200) -> None:
     if aiohttp is None:
         raise RuntimeError("aiohttp not available; cannot download playwright browser")
@@ -129,6 +165,10 @@ async def ensure_playwright_chromium_installed(
     We intentionally do NOT call `playwright install` (slow + requires more deps).
     Instead we download a prebuilt `chromium-headless-shell` zip and point Playwright to it.
     """
+    if not _is_windows():
+        # Linux/macOS: rely on official `playwright install --with-deps chromium`.
+        return None
+
     async with _BOOTSTRAP_LOCK:
         exe = get_chromium_executable_path()
         if exe is not None and not force:
@@ -177,12 +217,6 @@ async def ensure_playwright_chromium_installed(
         if exe is None:
             astrbot_logger.error("[dailynews] playwright chromium installed but executable not found under %s", root)
             return None
-
-        # Hint Playwright to prefer our local binaries (useful for some environments).
-        try:
-            os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(_browsers_dir().resolve()))
-        except Exception:
-            pass
 
         astrbot_logger.info("[dailynews] playwright chromium ready: %s", exe)
         return exe

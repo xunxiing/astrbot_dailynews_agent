@@ -1,6 +1,8 @@
 import asyncio
 import base64
 import json
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
 import textwrap
@@ -34,6 +36,7 @@ from .workflow import (
     split_pages,
     ensure_playwright_chromium_installed,
 )
+from .workflow.pipeline.playwright_bootstrap import detect_windows_bootstrap_download_root
 
 try:
     from astrbot.core.message.components import Image as _ImageComponent
@@ -82,6 +85,7 @@ class DailyNewsPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self._sent_playwright_setup_hint = False
 
         tools = [
             WechatArticleMarkdownTool(),
@@ -113,20 +117,60 @@ class DailyNewsPlugin(Star):
             except Exception:
                 astrbot_logger.error("[dailynews] failed to start scheduler", exc_info=True)
 
-        # Warm up Playwright browser install in background (best-effort, non-blocking).
+        # Warn users if they still have the Windows-only bootstrap browser in plugin data.
+        # This commonly happens when migrating AstrBot data from Windows -> Linux.
         try:
-            self._playwright_bootstrap_task = self.context.loop.create_task(
-                ensure_playwright_chromium_installed()
-            )
+            bootstrap_root = detect_windows_bootstrap_download_root()
+            if bootstrap_root is not None:
+                if sys.platform.startswith("win"):
+                    astrbot_logger.warning(
+                        "[dailynews] Detected plugin bootstrap Chromium: %s (Windows-only). "
+                        "If you run AstrBot on Linux/macOS, delete this folder and use: playwright install --with-deps chromium",
+                        bootstrap_root,
+                    )
+                else:
+                    astrbot_logger.warning(
+                        "[dailynews] Detected Windows-only bootstrap Chromium under non-Windows system: %s. "
+                        "Please delete it and use: playwright install --with-deps chromium",
+                        bootstrap_root,
+                    )
         except Exception:
-            try:
-                import asyncio
+            pass
 
-                self._playwright_bootstrap_task = asyncio.create_task(
+        # Non-Windows: do NOT auto-download browsers. Guide users to official Playwright install.
+        try:
+            pipeline_cfg = RenderPipelineConfig.from_mapping(self.config)
+            if (not sys.platform.startswith("win")) and pipeline_cfg.playwright_fallback:
+                pw_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+                if pw_path and "playwright_browsers" in pw_path.replace("\\", "/"):
+                    astrbot_logger.warning(
+                        "[dailynews] PLAYWRIGHT_BROWSERS_PATH=%s seems to point to plugin directory; "
+                        "this may break Linux rendering. Consider unsetting it and restart AstrBot.",
+                        pw_path,
+                    )
+                astrbot_logger.warning(
+                    "[dailynews] Linux/macOS detected: this plugin will NOT auto-install Playwright browsers. "
+                    "Run: playwright install --with-deps chromium",
+                )
+        except Exception:
+            pass
+
+        # Warm up Playwright browser install in background (best-effort, non-blocking).
+        # Windows only: we bootstrap a local headless-shell zip for better out-of-box behavior.
+        if sys.platform.startswith("win"):
+            try:
+                self._playwright_bootstrap_task = self.context.loop.create_task(
                     ensure_playwright_chromium_installed()
                 )
             except Exception:
-                self._playwright_bootstrap_task = None
+                try:
+                    import asyncio
+
+                    self._playwright_bootstrap_task = asyncio.create_task(
+                        ensure_playwright_chromium_installed()
+                    )
+                except Exception:
+                    self._playwright_bootstrap_task = None
 
     async def terminate(self):
         # Best-effort: cancel any in-flight workflow & background tasks to avoid leaking across reloads.
@@ -150,11 +194,74 @@ class DailyNewsPlugin(Star):
             except Exception:
                 pass
 
+    async def _maybe_send_playwright_setup_hint(
+        self, event: AstrMessageEvent, pipeline_cfg: RenderPipelineConfig
+    ):
+        """
+        Linux/macOS: explicitly tell users to run official Playwright install when Chromium is missing.
+
+        We intentionally rely on Playwright's default browser cache path (e.g. ~/.cache/ms-playwright),
+        instead of downloading Windows-only zips into plugin directories.
+        """
+        if self._sent_playwright_setup_hint:
+            return
+        if sys.platform.startswith("win"):
+            return
+        if not pipeline_cfg.playwright_fallback:
+            return
+
+        custom_path = (pipeline_cfg.custom_browser_path or "").strip()
+        if custom_path:
+            if Path(custom_path).expanduser().exists():
+                # Still warn once: not recommended to modify unless you know what you're doing.
+                self._sent_playwright_setup_hint = True
+                yield event.plain_result(
+                    f"提示：检测到已配置 custom_browser_path={custom_path}（不建议修改；一般留空即可）。"
+                )
+                return
+            self._sent_playwright_setup_hint = True
+            yield event.plain_result(
+                "Playwright 配置问题：custom_browser_path 指向的文件不存在。\n"
+                f"当前：{custom_path}\n"
+                "建议留空，并在 AstrBot 安装依赖后执行：playwright install --with-deps chromium"
+            )
+            return
+
+        # Auto-detect: rely on official Playwright browser cache (e.g. ~/.cache/ms-playwright).
+        try:
+            from playwright.async_api import async_playwright  # type: ignore
+        except Exception:
+            self._sent_playwright_setup_hint = True
+            yield event.plain_result(
+                "Playwright 未安装或不可用。请先安装依赖后再执行：playwright install --with-deps chromium"
+            )
+            return
+
+        ready = False
+        try:
+            async with async_playwright() as p:
+                exe = Path(str(p.chromium.executable_path)).expanduser()
+                ready = exe.exists()
+        except Exception:
+            ready = False
+
+        if not ready:
+            self._sent_playwright_setup_hint = True
+            yield event.plain_result(
+                "Linux/macOS 需要先安装 Playwright Chromium 浏览器（本插件不再下载 zip）：\n"
+                "playwright install --with-deps chromium\n"
+                "（如命令不可用，可用：python -m playwright install --with-deps chromium）\n"
+                "安装完成后重启 AstrBot/插件。"
+            )
+
     # ====== commands ======
 
     async def _send_as_html_images(self, event: AstrMessageEvent, content: str):
         pipeline_cfg = RenderPipelineConfig.from_mapping(self.config)
         style_cfg = RenderImageStyleConfig.from_mapping(self.config)
+
+        async for rr in self._maybe_send_playwright_setup_hint(event, pipeline_cfg):
+            yield rr
 
         pages = split_pages(
             content,
