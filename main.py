@@ -37,6 +37,7 @@ from .workflow import (
     ensure_playwright_chromium_installed,
 )
 from .workflow.pipeline.playwright_bootstrap import detect_windows_bootstrap_download_root
+from .workflow.pipeline.playwright_bootstrap import check_playwright_chromium_ready, config_needs_playwright
 
 try:
     from astrbot.core.message.components import Image as _ImageComponent
@@ -86,6 +87,7 @@ class DailyNewsPlugin(Star):
         super().__init__(context)
         self.config = config
         self._sent_playwright_setup_hint = False
+        self._sent_playwright_preflight_hint = False
 
         tools = [
             WechatArticleMarkdownTool(),
@@ -254,6 +256,21 @@ class DailyNewsPlugin(Star):
                 "安装完成后重启 AstrBot/插件。"
             )
 
+    async def _playwright_preflight_error(self, cfg: dict) -> str | None:
+        if sys.platform.startswith("win"):
+            return None
+        if not config_needs_playwright(cfg):
+            return None
+        pipeline_cfg = RenderPipelineConfig.from_mapping(cfg)
+        ok, msg = await check_playwright_chromium_ready(custom_browser_path=pipeline_cfg.custom_browser_path)
+        if ok:
+            return None
+        # Don't spam the same session repeatedly, but always stop execution.
+        if self._sent_playwright_preflight_hint:
+            return "Playwright Chromium 未安装/不可用，已停止执行；请运行：playwright install --with-deps chromium"
+        self._sent_playwright_preflight_hint = True
+        return msg
+
     # ====== commands ======
 
     async def _send_as_html_images(self, event: AstrMessageEvent, content: str):
@@ -339,6 +356,10 @@ class DailyNewsPlugin(Star):
     @filter.command("daily_news")
     async def daily_news(self, event: AstrMessageEvent):
         """手动生成一次日报（并回发到当前会话）"""
+        err = await self._playwright_preflight_error(dict(self.config or {}))
+        if err:
+            yield event.plain_result(err)
+            return
         yield event.plain_result("正在生成日报，请稍候...")
         content = await self.scheduler.generate_once()
         if not (content or "").strip():
@@ -489,6 +510,10 @@ class DailyNewsPlugin(Star):
                 break
 
         cfg = self.scheduler.get_config_snapshot()
+        err = await self._playwright_preflight_error(cfg)
+        if err:
+            yield event.plain_result(err)
+            return
         await self.scheduler.update_workflow_sources_from_config(cfg)
         sources = list(self.scheduler.workflow_manager.news_sources)
         if not sources:
@@ -612,6 +637,10 @@ class DailyNewsPlugin(Star):
         if force_preview:
             cfg["image_layout_preview_enabled"] = True
 
+        err = await self._playwright_preflight_error(cfg)
+        if err:
+            yield event.plain_result(err)
+            return
         await self.scheduler.update_workflow_sources_from_config(cfg)
         sources = list(self.scheduler.workflow_manager.news_sources)
         if not sources:

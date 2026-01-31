@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -38,6 +39,7 @@ from ..core.config_models import (
     SingleAgentConfig,
 )
 from .render_pipeline import render_daily_news_pages, split_pages
+from .playwright_bootstrap import check_playwright_chromium_ready, config_needs_playwright
 
 try:
     from astrbot.core.message.components import Image as _ImageComponent
@@ -802,6 +804,19 @@ class DailyNewsScheduler:
 
     async def generate_once(self, cfg: Optional[Dict[str, Any]] = None, source: str = "manual") -> str:
         config = cfg or self._normalized_config()
+
+        # Linux/macOS: fail fast when Playwright browsers are missing, to avoid noisy retries and wasted LLM calls.
+        try:
+            if (not sys.platform.startswith("win")) and config_needs_playwright(config):
+                pipeline_cfg = RenderPipelineConfig.from_mapping(config)
+                ok, msg = await check_playwright_chromium_ready(
+                    custom_browser_path=pipeline_cfg.custom_browser_path
+                )
+                if not ok:
+                    return msg
+        except Exception:
+            pass
+
         await self.update_workflow_sources_from_config(config)
         self._workflow_task = asyncio.create_task(
             self.workflow_manager.run_workflow(config, astrbot_context=self.context, source=source)

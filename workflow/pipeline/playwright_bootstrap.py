@@ -4,7 +4,7 @@ import asyncio
 import sys
 import zipfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Mapping, Optional, Tuple
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -25,6 +25,8 @@ PLAYWRIGHT_CHROMIUM_HEADLESS_URL = (
     "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1200/"
     "chromium-headless-shell-win64.zip"
 )
+
+PLAYWRIGHT_INSTALL_WITH_DEPS_CMD = "playwright install --with-deps chromium"
 
 _BOOTSTRAP_LOCK = asyncio.Lock()
 
@@ -129,6 +131,93 @@ def detect_windows_bootstrap_download_root() -> Optional[Path]:
     except Exception:
         return None
     return None
+
+
+def config_needs_playwright(cfg: Mapping[str, Any]) -> bool:
+    """
+    Best-effort check: whether this plugin config likely needs Playwright to work.
+    """
+    try:
+        # Preferred (v4.10.4+): template_list-based sources.
+        news_sources = cfg.get("news_sources", []) or []
+        if isinstance(news_sources, list):
+            for s in news_sources:
+                if not isinstance(s, dict):
+                    continue
+                t = str(s.get("type") or "").strip().lower()
+                if t in {"wechat", "miyoushe", "twitter"}:
+                    return True
+
+        # Legacy: separate lists.
+        if (cfg.get("wechat_sources") or []) and len(cfg.get("wechat_sources") or []) > 0:  # type: ignore[arg-type]
+            return True
+        if (cfg.get("miyoushe_sources") or []) and len(cfg.get("miyoushe_sources") or []) > 0:  # type: ignore[arg-type]
+            return True
+
+        # Twitter/X.
+        if bool(cfg.get("twitter_enabled", False)) and bool(cfg.get("twitter_targets", []) or []):
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def build_playwright_chromium_missing_message(*, detected_exe: str = "", custom_browser_path: str = "") -> str:
+    detected_exe = (detected_exe or "").strip()
+    custom_browser_path = (custom_browser_path or "").strip()
+
+    lines = [
+        "Playwright Chromium 未安装/不可用，已停止本次执行。",
+        f"请在 AstrBot 的运行环境内执行：{PLAYWRIGHT_INSTALL_WITH_DEPS_CMD}",
+        f"（如命令不可用，可用：python -m {PLAYWRIGHT_INSTALL_WITH_DEPS_CMD}）",
+        "安装完成后重启 AstrBot/插件。",
+    ]
+    if detected_exe:
+        lines.append(f"当前 Playwright 期望的可执行文件路径：{detected_exe}")
+    if custom_browser_path:
+        lines.append(f"当前已配置 custom_browser_path：{custom_browser_path}（不建议修改；一般留空即可）")
+    return "\n".join(lines).strip()
+
+
+async def check_playwright_chromium_ready(*, custom_browser_path: str = "") -> Tuple[bool, str]:
+    """
+    Linux/macOS: rely on official Playwright browsers (e.g. ~/.cache/ms-playwright).
+    Returns (ok, message_if_not_ok).
+    """
+    custom_browser_path = (custom_browser_path or "").strip()
+    if custom_browser_path:
+        try:
+            if Path(custom_browser_path).expanduser().exists():
+                return (True, "")
+        except Exception:
+            pass
+        return (
+            False,
+            build_playwright_chromium_missing_message(custom_browser_path=custom_browser_path),
+        )
+
+    try:
+        from playwright.async_api import async_playwright  # type: ignore
+    except Exception:
+        return (
+            False,
+            build_playwright_chromium_missing_message(),
+        )
+
+    detected = ""
+    try:
+        async with async_playwright() as p:
+            detected = str(p.chromium.executable_path or "")
+    except Exception:
+        detected = ""
+
+    try:
+        if detected and Path(detected).expanduser().exists():
+            return (True, "")
+    except Exception:
+        pass
+
+    return (False, build_playwright_chromium_missing_message(detected_exe=detected))
 
 
 async def _download_file(url: str, out_path: Path, *, timeout_s: int = 1200) -> None:

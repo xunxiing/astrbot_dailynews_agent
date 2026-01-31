@@ -33,7 +33,7 @@ def fetch_wechat_article(url: str):
     with sync_playwright() as p:
         executable_path = None
         try:
-            from ...workflow.playwright_bootstrap import get_chromium_executable_path
+            from workflow.pipeline.playwright_bootstrap import get_chromium_executable_path
 
             exe = get_chromium_executable_path()
             executable_path = str(exe) if exe else None
