@@ -4,7 +4,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -31,9 +31,11 @@ from .rendering import load_template
 from ..core.config_models import (
     ImageLayoutConfig,
     LayoutRefineConfig,
+    NewsWorkflowModeConfig,
     NewsSourcesConfig,
     RenderImageStyleConfig,
     RenderPipelineConfig,
+    SingleAgentConfig,
 )
 from .render_pipeline import render_daily_news_pages, split_pages
 
@@ -41,6 +43,15 @@ try:
     from astrbot.core.message.components import Image as _ImageComponent
 except Exception:  # pragma: no cover
     _ImageComponent = None  # type: ignore
+
+try:
+    from astrbot.core.message.components import Node as _NodeComponent
+    from astrbot.core.message.components import Nodes as _NodesComponent
+    from astrbot.core.message.components import Plain as _PlainComponent
+except Exception:  # pragma: no cover
+    _NodeComponent = None  # type: ignore
+    _NodesComponent = None  # type: ignore
+    _PlainComponent = None  # type: ignore
 
 try:
     from astrbot.core import html_renderer as _astrbot_html_renderer
@@ -61,6 +72,103 @@ MIYOUSHE_HEADLESS = True
 MIYOUSHE_SLEEP_BETWEEN_S = 0.6
 
 LAYOUT_REFINE_PREVIEW_TIMEOUT_MS = 20000
+
+
+_MD_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\((https?://[^)]+)\)")
+_H2_SECTION_RE = re.compile(r"^##\s*(.+?)\s*$")
+
+
+def _strip_md_inline(s: str) -> str:
+    t = str(s or "")
+    t = re.sub(r"`([^`]+)`", r"\1", t)
+    t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)
+    t = re.sub(r"\*([^*]+)\*", r"\1", t)
+    t = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _extract_report_links(md: str, *, max_links: int = 80) -> Dict[str, List[Tuple[str, str]]]:
+    """
+    Extract markdown links from the report and group them by H2 section.
+    Returns: {section_title: [(label, url), ...]}
+    """
+    out: Dict[str, List[Tuple[str, str]]] = {}
+    seen: set[str] = set()
+
+    current_section = "来源链接"
+    for raw in (md or "").splitlines():
+        line = (raw or "").strip()
+        if not line:
+            continue
+        m_sec = _H2_SECTION_RE.match(line)
+        if m_sec:
+            current_section = m_sec.group(1).strip() or current_section
+            continue
+
+        matches = list(_MD_LINK_RE.finditer(line))
+        if not matches:
+            continue
+
+        label = _strip_md_inline(line)
+        label = re.sub(r"\(\s*查看来源\s*\)$", "", label).strip()
+        if len(label) > 80:
+            label = label[:77] + "..."
+
+        for m in matches:
+            url = str(m.group(2) or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            out.setdefault(current_section, []).append((label, url))
+            if len(seen) >= max(1, int(max_links)):
+                return out
+
+    return out
+
+
+def _build_forward_nodes_from_links(
+    links_by_section: Dict[str, List[Tuple[str, str]]],
+    *,
+    title: str = "日报来源链接",
+    max_node_chars: int = 650,
+    max_nodes: int = 12,
+) -> List[str]:
+    """
+    Build text chunks for merged-forward nodes.
+    Each chunk is a plain text message. URLs are kept as-is for clickability.
+    """
+    lines: List[str] = [title, ""]
+    for sec, rows in links_by_section.items():
+        if not rows:
+            continue
+        lines.append(f"【{sec}】")
+        for label, url in rows:
+            if label and label != url:
+                lines.append(f"- {label}")
+                lines.append(f"  {url}")
+            else:
+                lines.append(f"- {url}")
+        lines.append("")
+
+    all_text = "\n".join(lines).strip()
+    if not all_text:
+        return []
+
+    chunks: List[str] = []
+    buf = ""
+    for line in all_text.splitlines():
+        cand = (buf + "\n" + line).strip("\n") if buf else line
+        if len(cand) > max_node_chars and buf:
+            chunks.append(buf.strip())
+            buf = line
+            if len(chunks) >= max_nodes:
+                break
+        else:
+            buf = cand
+    if buf and len(chunks) < max_nodes:
+        chunks.append(buf.strip())
+    return [c for c in chunks if c.strip()]
 
 
 def _normalize_umo(
@@ -232,6 +340,14 @@ class DailyNewsScheduler:
         cfg.setdefault("output_format", "markdown")
         cfg.setdefault("delivery_mode", "html_image")
         cfg.setdefault("render_template_name", "daily_news")
+
+        mode_cfg = NewsWorkflowModeConfig.from_mapping(cfg)
+        cfg.setdefault("news_workflow_mode", mode_cfg.mode)
+        single_cfg = SingleAgentConfig.from_mapping(cfg)
+        cfg.setdefault("single_agent_provider_id", single_cfg.provider_id)
+        cfg.setdefault("single_agent_max_steps", single_cfg.max_steps)
+        cfg.setdefault("single_agent_min_chars", single_cfg.min_chars)
+        cfg.setdefault("single_agent_max_chars", single_cfg.max_chars)
         cfg.setdefault("max_sources_per_day", 3)
         cfg.setdefault("news_group_mode", "source")
         cfg.setdefault("news_group_router_provider_id", "")
@@ -806,7 +922,24 @@ class DailyNewsScheduler:
             astrbot_logger.warning("[dailynews] MessageChain unavailable; skip sending")
             return 0
 
-        delivery_mode = str(config.get("delivery_mode", "html_image") or "html_image")
+        delivery_mode = str(config.get("delivery_mode", "html_image") or "html_image").strip().lower()
+        send_links_forward = False
+        if delivery_mode == "html_image_with_links":
+            send_links_forward = True
+            delivery_mode = "html_image"
+
+        link_node_chunks: List[str] = []
+        if send_links_forward:
+            try:
+                links_by_section = _extract_report_links(content, max_links=120)
+                link_node_chunks = _build_forward_nodes_from_links(
+                    links_by_section,
+                    title="日报来源链接（可点击）",
+                    max_node_chars=650,
+                    max_nodes=14,
+                )
+            except Exception:
+                link_node_chunks = []
         img_paths: List[str] = []
         if delivery_mode == "html_image":
             img_paths = await self._render_content_images(content, config=config)
@@ -829,6 +962,34 @@ class DailyNewsScheduler:
                             chain = MessageChain().file_image(p)
                         await self.context.send_message(umo, chain)
                         sent_this = True
+                    if sent_this and send_links_forward and link_node_chunks:
+                        try:
+                            if (
+                                _NodesComponent is not None
+                                and _NodeComponent is not None
+                                and _PlainComponent is not None
+                            ):
+                                nodes = [
+                                    _NodeComponent(
+                                        uin="0",
+                                        name="每日资讯日报",
+                                        content=[_PlainComponent(chunk)],
+                                    )
+                                    for chunk in link_node_chunks
+                                ]
+                                chain = MessageChain()
+                                chain.chain.append(_NodesComponent(nodes))
+                                await self.context.send_message(umo, chain)
+                            else:
+                                chain = MessageChain().message("\n\n".join(link_node_chunks))
+                                await self.context.send_message(umo, chain)
+                        except Exception:
+                            # Fallback to plain text if merged-forward fails on this platform.
+                            try:
+                                chain = MessageChain().message("\n\n".join(link_node_chunks))
+                                await self.context.send_message(umo, chain)
+                            except Exception:
+                                pass
                 else:
                     chain = MessageChain().message(content)
                     await self.context.send_message(umo, chain)

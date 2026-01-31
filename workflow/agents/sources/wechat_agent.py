@@ -170,7 +170,7 @@ class WechatSubAgent:
             "2) Ban vague filler like “优化体验/修复部分bug”. Use concrete details from the provided article excerpts: feature name, affected module, behavior change, numbers (limits, performance, versions).\n"
             "3) Prefer 3-6 bullets max. Each bullet:\n"
             "   - **标题**：一句话结论。 ( [阅读原文](url) )\n"
-            "     - 细节：至少 1 条具体细节；如果有版本号/参数/功能点请写出来。\n"
+            "     - 细节：至少 1 条具体细节；如果有版本号/参数/功能点请写出来。建议写10-15条，如果没有这么多酌情考虑，没有价值的内容就不写\n"
             "4) If you cannot extract concrete details, output an empty section_markdown (do NOT make up content).\n"
         )
         prompt = {

@@ -2,7 +2,7 @@
 
 严格输出 JSON（不要输出任何解释/思考/代码块），字段为：
 - summary: string（<= 80 字）
-- key_points: string[]（<= 8 条，每条 <= 60 字）
+- key_points: string[]（12条左右，每条 <= 60 字）
 - section_markdown: Markdown string（供日报渲染）
 
 硬性规则：

@@ -365,3 +365,40 @@ class NewsSourcesConfig:
             out.append(src)
 
         return cls(sources=out)
+
+
+@dataclass(frozen=True)
+class NewsWorkflowModeConfig:
+    """
+    Workflow mode switch.
+    - multi: existing multi-agent pipeline (default)
+    - single: single-agent mode (no image insertion)
+    """
+
+    mode: str = "multi"
+
+    @classmethod
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> "NewsWorkflowModeConfig":
+        raw = _to_str(cfg.get("news_workflow_mode"), "multi").strip().lower()
+        if raw in {"single", "single_agent", "single-agent"}:
+            return cls(mode="single")
+        return cls(mode="multi")
+
+
+@dataclass(frozen=True)
+class SingleAgentConfig:
+    provider_id: str = ""
+    max_steps: int = 18
+    min_chars: int = 700
+    max_chars: int = 1500
+
+    @classmethod
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> "SingleAgentConfig":
+        min_chars = max(100, _to_int(cfg.get("single_agent_min_chars"), 700))
+        max_chars = max(min_chars, _to_int(cfg.get("single_agent_max_chars"), 1500))
+        return cls(
+            provider_id=_to_str(cfg.get("single_agent_provider_id"), "").strip(),
+            max_steps=max(5, _to_int(cfg.get("single_agent_max_steps"), 18)),
+            min_chars=min_chars,
+            max_chars=max_chars,
+        )

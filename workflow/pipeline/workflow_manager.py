@@ -15,6 +15,7 @@ from ..core.llm import LLMRunner
 from ..agents.main_agent import MainNewsAgent
 from ..agents.image_layout_agent import ImageLayoutAgent
 from ..agents.message_groups.group_manager import MessageGroupManager
+from ..agents.single_agent.single_agent_writer import SingleAgentNewsWriter
 from ..core.markdown_sanitizer import sanitize_markdown_for_publish
 from ..core.models import NewsSourceConfig, SubAgentResult
 
@@ -190,7 +191,7 @@ class NewsWorkflowManager:
                     }
 
                 # 1) 每个来源抓一次「最新文章列表」
-                fetched: Dict[str, List[Dict[str, str]]] = {}
+                fetched: Dict[str, List[Dict[str, Any]]] = {}
                 fetch_task_sources: List[NewsSourceConfig] = []
                 fetch_concurrency = max(
                     1, min(6, int(user_config.get("max_sources_per_day", 3)) * 2)
@@ -247,6 +248,41 @@ class NewsWorkflowManager:
                         continue
                     name, articles = r
                     fetched[name] = articles
+
+                workflow_mode = str(user_config.get("news_workflow_mode", "multi") or "multi").strip().lower()
+                if workflow_mode in {"single", "single_agent", "single-agent"}:
+                    astrbot_logger.info("[dailynews] [workflow] single-agent mode enabled")
+
+                    t = asyncio.create_task(
+                        SingleAgentNewsWriter().write_report(
+                            sources=sources,
+                            fetched=fetched,
+                            user_config=user_config,
+                            astrbot_context=astrbot_context,
+                        )
+                    )
+                    try:
+                        t.set_name("single_agent:write_report")
+                    except Exception:
+                        pass
+                    write_tasks.append(t)
+
+                    res = await _wait_with_heartbeat([t], label="single_agent/write", interval_s=20.0)
+                    final_md = res[0] if res else ""
+                    if isinstance(final_md, Exception):
+                        raise final_md
+
+                    final_md = sanitize_markdown_for_publish(str(final_md or ""))
+                    astrbot_logger.info("[dailynews] [workflow] single-agent workflow completed")
+                    return {
+                        "status": "success",
+                        "decision": None,
+                        "sub_reports": [],
+                        "sub_results": [],
+                        "image_plan": None,
+                        "final_summary": final_md,
+                        "timestamp": datetime.now().isoformat(),
+                    }
 
                 # 2) 子 Agent 汇报：快速判断“今日看点”
                 reports: List[Dict[str, Any]] = []
