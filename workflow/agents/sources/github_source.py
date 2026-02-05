@@ -347,6 +347,14 @@ async def fetch_github_snapshot_for_source(
     source: NewsSourceConfig,
     user_config: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
+    def _to_int(v: Any, default: int) -> int:
+        try:
+            if v is None or isinstance(v, bool):
+                return int(default)
+            return int(v)
+        except Exception:
+            return int(default)
+
     cfg = GitHubConfig.from_user_config(user_config)
     if not cfg.enabled:
         raw = user_config.get("news_sources") or []
@@ -365,13 +373,21 @@ async def fetch_github_snapshot_for_source(
         astrbot_logger.warning("[dailynews] github invalid repo url: %s", source.url)
         return None
     owner, name = repo
-    since = datetime.now(tz=timezone.utc) - timedelta(hours=int(cfg.since_hours))
-    client = GitHubClient(token=cfg.token)
+
+    meta = source.meta if isinstance(source.meta, dict) else {}
+    token = str(meta.get("token") or cfg.token or "").strip()
+    since_hours = max(1, _to_int(meta.get("since_hours"), int(cfg.since_hours)))
+    max_commits = max(0, _to_int(meta.get("max_commits"), int(cfg.max_commits)))
+    max_prs = max(0, _to_int(meta.get("max_prs"), int(cfg.max_prs)))
+    max_releases = max(0, _to_int(meta.get("max_releases"), int(cfg.max_releases)))
+
+    since = datetime.now(tz=timezone.utc) - timedelta(hours=int(since_hours))
+    client = GitHubClient(token=token)
     return await client.fetch_repo_snapshot(
         owner=owner,
         repo=name,
         since=since,
-        max_commits=int(cfg.max_commits),
-        max_prs=int(cfg.max_prs),
-        max_releases=int(cfg.max_releases),
+        max_commits=int(max_commits),
+        max_prs=int(max_prs),
+        max_releases=int(max_releases),
     )

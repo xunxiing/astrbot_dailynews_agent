@@ -39,6 +39,7 @@
     "type": "int",
     "description": "single agent tool-loop 最大 steps",
     "default": 18,
+    "invisible": true,
     "hint": "数值过小可能写不完；过大易出现循环"
   },
   "single_agent_min_chars": {
@@ -65,17 +66,20 @@
     "type": "string",
     "description": "消息组分类器 Provider（可选）",
     "_special": "select_provider",
+    "invisible": true,
     "default": "",
     "hint": "用于标签分类（建议用便宜模型）；留空则复用主 Agent provider 链"
   },
   "news_group_writeback_tags": {
     "type": "bool",
     "description": "自动写回新标签到标签库",
+    "invisible": true,
     "default": true
   },
   "news_group_promote_min_count": {
     "type": "int",
     "description": "新标签写回最小命中次数",
+    "invisible": true,
     "default": 2
   },
   "delivery_mode": {
@@ -107,6 +111,7 @@
   "render_page_chars": {
     "type": "int",
     "description": "网页渲染每页最大字符数（过长会自动分页）",
+    "invisible": true,
     "default": 2600
   },
   "render_max_pages": {
@@ -117,12 +122,14 @@
   "render_retries": {
     "type": "int",
     "description": "渲染失败重试次数（html_render / t2i）",
+    "invisible": true,
     "default": 2
   },
   "render_poll_timeout_s": {
     "type": "float",
     "description": "渲染产物轮询等待超时（秒）",
-    "default": 6.0,
+    "default": 3.0,
+    "invisible": true,
     "hint": "某些渲染服务会先写很小的占位文件；轮询可等待图片真正落盘"
   },
   "render_poll_interval_ms": {
@@ -133,11 +140,13 @@
   "render_playwright_fallback": {
     "type": "bool",
     "description": "渲染服务掉线时，使用本地 Playwright 截图兜底",
+    "invisible": true,
     "default": true
   },
   "render_playwright_timeout_ms": {
     "type": "int",
     "description": "本地 Playwright 截图超时（毫秒）",
+    "invisible": true,
     "default": 20000
   },
   "custom_browser_path": {
@@ -149,6 +158,7 @@
   "render_img_float_enabled": {
     "type": "bool",
     "description": "是否将窄图优先与文字并排（浮动排版）",
+    "invisible": true,
     "default": true
   },
   "preferred_source_types": {
@@ -170,7 +180,9 @@
     "type": "bool",
     "description": "启用 GitHub 信息源（读取近 N 小时 release/commit/pr）",
     "default": false,
-    "obvious_hint": true
+    "obvious_hint": true,
+    "invisible": true,
+    "hint": "兼容字段（已弃用）：请使用 news_sources 模板列表里的 GitHub"
   },
   "github_repos": {
     "type": "list",
@@ -183,32 +195,43 @@
     "type": "string",
     "description": "GitHub Token（推荐填写，避免限额/用于私有仓库）",
     "default": "",
-    "hint": "建议使用 Fine-grained token：至少拥有 repo 读取权限"
+    "hint": "兼容字段（已弃用）：请在 news_sources -> GitHub 模板里填写 token（或继续在配置文件中设置 github_token）",
+    "invisible": true
   },
   "github_since_hours": {
     "type": "int",
     "description": "抓取近多少小时内的更新（release/commit/pr）",
-    "default": 30
+    "default": 30,
+    "invisible": true,
+    "hint": "兼容字段（已弃用）：请使用 news_sources -> GitHub 模板"
   },
   "github_max_releases": {
     "type": "int",
     "description": "每个仓库最多展示多少条 Release 更新（近 N 小时）",
-    "default": 3
+    "default": 3,
+    "invisible": true,
+    "hint": "兼容字段（已弃用）：请使用 news_sources -> GitHub 模板"
   },
   "github_max_commits": {
     "type": "int",
     "description": "每个仓库最多展示多少条 Commit 更新（近 N 小时）",
-    "default": 6
+    "default": 6,
+    "invisible": true,
+    "hint": "兼容字段（已弃用）：请使用 news_sources -> GitHub 模板"
   },
   "github_max_prs": {
     "type": "int",
     "description": "每个仓库最多展示多少条 PR 更新（近 N 小时）",
-    "default": 6
+    "default": 6,
+    "invisible": true,
+    "hint": "兼容字段（已弃用）：请使用 news_sources -> GitHub 模板"
   },
   "twitter_enabled": {
     "type": "bool",
     "description": "是否启用 X/Twitter 信息源（需要 Playwright + 代理）",
-    "default": false
+    "default": false,
+    "invisible": true,
+    "hint": "兼容字段（已弃用）：请使用 news_sources 模板列表里的 X/Twitter"
   },
   "twitter_targets": {
     "type": "list",
@@ -219,17 +242,23 @@
   "twitter_proxy": {
     "type": "string",
     "description": "X/Twitter 代理地址（支持 http/socks5，例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:7890）",
-    "default": ""
+    "default": "",
+    "invisible": true,
+    "hint": "兼容字段（已弃用）：请在 news_sources -> X/Twitter 模板里填写 proxy"
   },
   "twitter_max_tweets": {
     "type": "int",
     "description": "每个主页最多抓取推文数（忽略置顶）",
-    "default": 3
+    "default": 3,
+    "invisible": true,
+    "hint": "兼容字段（已弃用）：请使用 news_sources -> X/Twitter 模板（max_articles）"
   },
   "twitter_priority": {
     "type": "int",
     "description": "X/Twitter 信息源优先级（数值越大越先处理）",
-    "default": 1
+    "default": 1,
+    "invisible": true,
+    "hint": "兼容字段（已弃用）：请使用 news_sources -> X/Twitter 模板（priority）"
   },
   "news_sources": {
     "type": "template_list",
@@ -296,7 +325,7 @@
       },
       "github": {
         "name": "GitHub",
-        "hint": "填 owner/repo 或 https://github.com/owner/repo；需要 token 时请在 github_token 配置。",
+        "hint": "填 owner/repo 或 https://github.com/owner/repo；可在此处填写 token（推荐）。兼容旧字段：github_token（已隐藏）。",
         "items": {
           "name": {
             "type": "string",
@@ -312,12 +341,38 @@
             "type": "int",
             "description": "优先级（数值越大越先处理）",
             "default": 1
+          },
+          "token": {
+            "type": "string",
+            "description": "GitHub Token（推荐填写，避免限额/用于私有仓库）",
+            "default": "",
+            "hint": "可选：填写 Fine-grained token（至少 repo 读取权限）。"
+          },
+          "since_hours": {
+            "type": "int",
+            "description": "抓取近多少小时内的更新（release/commit/pr）",
+            "default": 30
+          },
+          "max_releases": {
+            "type": "int",
+            "description": "每个仓库最多展示多少条 Release 更新（近 N 小时）",
+            "default": 3
+          },
+          "max_commits": {
+            "type": "int",
+            "description": "每个仓库最多展示多少条 Commit 更新（近 N 小时）",
+            "default": 6
+          },
+          "max_prs": {
+            "type": "int",
+            "description": "每个仓库最多展示多少条 PR 更新（近 N 小时）",
+            "default": 6
           }
         }
       },
       "twitter": {
         "name": "X/Twitter",
-        "hint": "填主页链接 https://x.com/<user> 或 https://twitter.com/<user>（抓取需要 Playwright，可配 twitter_proxy）。",
+        "hint": "填主页链接 https://x.com/<user> 或 https://twitter.com/<user>（抓取需要 Playwright；可在此处填写 proxy）。",
         "items": {
           "name": {
             "type": "string",
@@ -338,6 +393,12 @@
             "type": "int",
             "description": "每次最多抓取推文数（忽略置顶）",
             "default": 3
+          },
+          "proxy": {
+            "type": "string",
+            "description": "代理地址（支持 http/socks5，例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:7890）",
+            "default": "",
+            "hint": "可选：用于访问 X/Twitter。兼容旧字段：twitter_proxy（已隐藏）。"
           }
         }
       },
@@ -498,31 +559,37 @@
   "image_label_batch_size": {
     "type": "int",
     "description": "每次 VLM 调用同时打标的图片数量（建议 2）",
-    "default": 2
+    "invisible": true,
+    "default": 1
   },
   "image_label_concurrency": {
     "type": "int",
     "description": "图片打标并发数（下载+VLM 调用）",
+    "invisible": true,
     "default": 4
   },
   "image_label_force_refresh": {
     "type": "bool",
     "description": "强制重新打标（忽略缓存）",
+    "invisible": true,
     "default": false
   },
   "image_label_llm_max_retries": {
     "type": "int",
     "description": "图片打标调用 LLM 的重试次数（并发下更容易触发限额）",
+    "invisible": true,
     "default": 2
   },
   "image_label_llm_retry_base_s": {
     "type": "float",
     "description": "图片打标 LLM 重试基础退避秒数（指数退避）",
+    "invisible": true,
     "default": 1.0
   },
   "image_label_llm_retry_max_s": {
     "type": "float",
     "description": "图片打标 LLM 单次退避最大秒数",
+    "invisible": true,
     "default": 12.0
   },
   "image_layout_enabled": {
@@ -567,21 +634,25 @@
   "image_layout_preview_enabled": {
     "type": "bool",
     "description": "为图片排版 Agent 生成一张纵向拼接预览图",
+    "invisible": true,
     "default": false
   },
   "image_layout_preview_max_images": {
     "type": "int",
     "description": "参与拼接预览的最大图片数",
+    "invisible": true,
     "default": 6
   },
   "image_layout_preview_max_width": {
     "type": "int",
     "description": "预览图最大宽度（像素）",
+    "invisible": true,
     "default": 1080
   },
   "image_layout_preview_gap": {
     "type": "int",
     "description": "预览图中图片之间的间距（像素）",
+    "invisible": true,
     "default": 8
   },
   "image_layout_request_max_requests": {

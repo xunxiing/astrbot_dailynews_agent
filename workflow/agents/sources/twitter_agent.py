@@ -33,7 +33,8 @@ class TwitterSubAgent:
         self, source: NewsSourceConfig, user_config: Dict[str, Any]
     ) -> Tuple[str, List[Dict[str, str]]]:
         limit = int(user_config.get("twitter_max_tweets", source.max_articles or 3) or 3)
-        proxy = str(user_config.get("twitter_proxy", "") or "").strip()
+        meta = source.meta if isinstance(source.meta, dict) else {}
+        proxy = str(meta.get("proxy") or user_config.get("twitter_proxy", "") or "").strip()
         exe = get_chromium_executable_path()
 
         tweets = await fetch_latest_tweets(
@@ -93,7 +94,8 @@ class TwitterSubAgent:
         user_config: Dict[str, Any] | None = None,
     ) -> SubAgentResult:
         limit = max(1, int(source.max_articles or 3))
-        proxy = str((user_config or {}).get("twitter_proxy", "") or "").strip()
+        meta = source.meta if isinstance(source.meta, dict) else {}
+        proxy = str(meta.get("proxy") or (user_config or {}).get("twitter_proxy", "") or "").strip()
 
         exe = get_chromium_executable_path()
 

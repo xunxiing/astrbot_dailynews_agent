@@ -275,6 +275,18 @@ class NewsSourcesConfig:
                     continue
                 name = _to_str(item.get("name"), "").strip()
                 priority = _to_int(item.get("priority"), 1)
+                meta: dict[str, Any] = {}
+                token = _to_str(item.get("token"), "").strip()
+                if token:
+                    meta["token"] = token
+                if "since_hours" in item and item.get("since_hours") is not None:
+                    meta["since_hours"] = max(1, _to_int(item.get("since_hours"), 30))
+                if "max_releases" in item and item.get("max_releases") is not None:
+                    meta["max_releases"] = max(0, _to_int(item.get("max_releases"), 3))
+                if "max_commits" in item and item.get("max_commits") is not None:
+                    meta["max_commits"] = max(0, _to_int(item.get("max_commits"), 6))
+                if "max_prs" in item and item.get("max_prs") is not None:
+                    meta["max_prs"] = max(0, _to_int(item.get("max_prs"), 6))
                 src = NewsSourceConfig(
                     name=name or f"GitHub {repo}",
                     url=repo,
@@ -282,6 +294,7 @@ class NewsSourcesConfig:
                     priority=max(1, priority),
                     max_articles=1,
                     album_keyword=None,
+                    meta=meta or None,
                 )
             elif tkey == "twitter":
                 url = _to_str(item.get("url"), "").strip()
@@ -290,6 +303,10 @@ class NewsSourcesConfig:
                 name = _to_str(item.get("name"), "").strip()
                 priority = _to_int(item.get("priority"), 1)
                 max_articles = _to_int(item.get("max_articles"), 3)
+                meta: dict[str, Any] = {}
+                proxy = _to_str(item.get("proxy"), "").strip()
+                if proxy:
+                    meta["proxy"] = proxy
                 src = NewsSourceConfig(
                     name=name or f"X/{len(out) + 1}",
                     url=url,
@@ -297,7 +314,7 @@ class NewsSourcesConfig:
                     priority=max(1, priority),
                     max_articles=max(1, max_articles),
                     album_keyword=None,
-                    meta=None,
+                    meta=meta or None,
                 )
             elif tkey == "plugin_registry_official":
                 since_hours = max(1, _to_int(item.get("since_hours"), 27))

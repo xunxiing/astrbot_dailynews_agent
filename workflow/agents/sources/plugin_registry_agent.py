@@ -64,6 +64,21 @@ def _registry_cache_id(registry_path: str) -> str:
     return hashlib.sha1(s.encode("utf-8", "ignore")).hexdigest()[:16]
 
 
+def _find_any_github_token_from_templates(user_config: Dict[str, Any]) -> str:
+    raw = (user_config or {}).get("news_sources") or []
+    if not isinstance(raw, list):
+        return ""
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        if str(it.get("__template_key") or "").strip().lower() != "github":
+            continue
+        token = str(it.get("token") or "").strip()
+        if token:
+            return token
+    return ""
+
+
 @dataclass(frozen=True)
 class RegistrySnapshot:
     snapshot_at: Optional[datetime]
@@ -258,7 +273,7 @@ class PluginRegistrySubAgent:
         )
         candidates = candidates[: max_plugins * 3]  # allow some to be filtered out after GitHub check
 
-        token = str(user_config.get("github_token") or "").strip()
+        token = str(user_config.get("github_token") or "").strip() or _find_any_github_token_from_templates(user_config)
         repo_metas = await self._fetch_repo_metas(candidates, token=token)
 
         rows: List[Dict[str, Any]] = []
