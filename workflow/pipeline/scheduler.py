@@ -22,8 +22,10 @@ from ..agents.sources.github_source import build_github_sources_from_config
 from ..agents.sources.miyoushe_agent import MiyousheSubAgent
 from ..agents.sources.plugin_registry_agent import PluginRegistrySubAgent
 from ..agents.sources.twitter_agent import TwitterSubAgent
+from ..agents.sources.astrbook_agent import AstrBookSubAgent
 from ..agents.sources.wechat_agent import WechatSubAgent
 from ..agents.sources.xiuxiu_ai_agent import XiuxiuAISubAgent
+from ..core.astrbook_client import ASTRBOOK_API_BASE, AstrBookClient
 from ..core.config_models import (
     ImageLayoutConfig,
     LayoutRefineConfig,
@@ -81,6 +83,8 @@ LAYOUT_REFINE_PREVIEW_TIMEOUT_MS = 20000
 
 _MD_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\((https?://[^)]+)\)")
 _H2_SECTION_RE = re.compile(r"^##\s*(.+?)\s*$")
+_MD_IMAGE_RE = re.compile(r"!\[[^\]]*]\((https?://[^)\s]+)\)", flags=re.I)
+_HTML_IMG_RE = re.compile(r"<img[^>]+src=[\"'](https?://[^\"'>\s]+)", flags=re.I)
 
 
 def _strip_md_inline(s: str) -> str:
@@ -296,6 +300,7 @@ class DailyNewsScheduler:
         self.workflow_manager.register_sub_agent("miyoushe", MiyousheSubAgent)
         self.workflow_manager.register_sub_agent("github", GitHubSubAgent)
         self.workflow_manager.register_sub_agent("twitter", TwitterSubAgent)
+        self.workflow_manager.register_sub_agent("astrbook", AstrBookSubAgent)
         self.workflow_manager.register_sub_agent(
             "plugin_registry", PluginRegistrySubAgent
         )
@@ -406,6 +411,13 @@ class DailyNewsScheduler:
         cfg.setdefault("twitter_max_tweets", 3)
 
         cfg.setdefault("news_sources", [])
+
+        cfg.setdefault("astrbook_publish_enabled", False)
+        cfg.setdefault("astrbook_token", "")
+        cfg.setdefault("astrbook_publish_category", "tech")
+        cfg.setdefault("astrbook_publish_title_prefix", "每日资讯日报")
+        cfg.setdefault("astrbook_publish_append_image_links", True)
+        cfg.setdefault("astrbook_publish_max_image_links", 40)
 
         layout = ImageLayoutConfig.from_mapping(cfg)
         cfg.setdefault("image_layout_enabled", layout.enabled)
@@ -662,6 +674,14 @@ class DailyNewsScheduler:
                 should_run = (not already_ran) and (now.time() >= schedule_time)
 
                 if should_run:
+                    publish_enabled = bool(cfg.get("astrbook_publish_enabled", False))
+                    astrbook_token = str(cfg.get("astrbook_token") or "").strip()
+                    if publish_enabled and not astrbook_token:
+                        publish_enabled = False
+                        astrbot_logger.warning(
+                            "[dailynews] astrbook_publish_enabled=true but astrbook_token is empty; skip publishing"
+                        )
+
                     raw_targets = list(cfg.get("target_sessions", []) or [])
                     targets, invalid = _normalize_umo_list(
                         raw_targets,
@@ -669,7 +689,7 @@ class DailyNewsScheduler:
                         default_message_type=UMO_DEFAULT_MESSAGE_TYPE,
                     )
 
-                    if raw_targets and not targets:
+                    if raw_targets and not targets and not publish_enabled:
                         astrbot_logger.warning(
                             "[dailynews] scheduled run skipped: all target_sessions invalid (example=%s). Expected `napcat:GroupMessage:1030223077` or shorthand `1030223077`.",
                             invalid[:3],
@@ -677,7 +697,7 @@ class DailyNewsScheduler:
                         await asyncio.sleep(120)
                         continue
 
-                    if not raw_targets:
+                    if not raw_targets and not publish_enabled:
                         astrbot_logger.info(
                             "[dailynews] scheduled run skipped: no target_sessions configured"
                         )
@@ -685,15 +705,34 @@ class DailyNewsScheduler:
                         continue
 
                     content = await self.generate_once(cfg, source="scheduled")
-                    sent = await self._send_to_targets(content, targets, config=cfg)
+                    sent = 0
+                    if targets:
+                        sent = await self._send_to_targets(content, targets, config=cfg)
 
-                    if sent > 0:
+                    published = False
+                    if publish_enabled and astrbook_token:
+                        try:
+                            res = await self.publish_report_to_astrbook(
+                                content, config=cfg
+                            )
+                            published = bool(res.get("ok", False))
+                        except Exception as e:
+                            astrbot_logger.error(
+                                "[dailynews] astrbook publish failed: %s",
+                                e,
+                                exc_info=True,
+                            )
+                            published = False
+
+                    if sent > 0 or published:
                         self.config["last_run_date"] = today
                         self.config["last_run_schedule_time"] = schedule_time_str
                         self._save_config()
                     else:
                         astrbot_logger.warning(
-                            "[dailynews] scheduled run generated content but sent=0; will retry later (check platform_id/message_type/targets)"
+                            "[dailynews] scheduled run generated content but delivered=0 (sent=%s published=%s); will retry later",
+                            sent,
+                            published,
                         )
                         await asyncio.sleep(180)
                         continue
@@ -1087,6 +1126,97 @@ class DailyNewsScheduler:
                 sent_sessions += 1
 
         return sent_sessions
+
+    def _extract_image_urls_from_markdown(
+        self, md: str, *, max_items: int = 60
+    ) -> list[str]:
+        s = str(md or "")
+        out: list[str] = []
+        seen: set[str] = set()
+        for m in _MD_IMAGE_RE.finditer(s):
+            u = str(m.group(1) or "").strip()
+            if u and u not in seen:
+                seen.add(u)
+                out.append(u)
+                if len(out) >= max_items:
+                    return out
+        for m in _HTML_IMG_RE.finditer(s):
+            u = str(m.group(1) or "").strip()
+            if u and u not in seen:
+                seen.add(u)
+                out.append(u)
+                if len(out) >= max_items:
+                    return out
+        return out
+
+    async def publish_report_to_astrbook(
+        self, content: str, *, config: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        cfg = config or self._normalized_config()
+        if not bool(cfg.get("astrbook_publish_enabled", False)):
+            astrbot_logger.info("[dailynews] astrbook publish skipped: disabled")
+            return {"ok": False, "skipped": True, "reason": "disabled"}
+
+        s = (content or "").strip()
+        if not s:
+            astrbot_logger.warning("[dailynews] astrbook publish skipped: empty content")
+            return {"ok": False, "error": "empty_content"}
+        if s.startswith("生成失败"):
+            astrbot_logger.warning(
+                "[dailynews] astrbook publish skipped: generate_failed"
+            )
+            return {"ok": False, "error": "generate_failed"}
+
+        token = str(cfg.get("astrbook_token") or "").strip()
+        if not token:
+            astrbot_logger.warning("[dailynews] astrbook publish skipped: token missing")
+            return {"ok": False, "error": "token_missing"}
+
+        category = str(cfg.get("astrbook_publish_category") or "tech").strip().lower()
+        if category not in {"chat", "deals", "misc", "tech", "help", "intro", "acg"}:
+            category = "tech"
+
+        title_prefix = str(cfg.get("astrbook_publish_title_prefix") or "每日资讯日报").strip()
+        today = datetime.now().strftime("%Y-%m-%d")
+        title = f"{title_prefix} {today}".strip()
+
+        post_md = s
+        if bool(cfg.get("astrbook_publish_append_image_links", True)):
+            max_links = int(cfg.get("astrbook_publish_max_image_links") or 40)
+            urls = self._extract_image_urls_from_markdown(
+                post_md, max_items=max(1, max_links)
+            )
+            if urls:
+                lines = ["", "", "---", "", "## 图片直链", ""]
+                lines.extend([f"- {u}" for u in urls[:max_links]])
+                post_md = (post_md.rstrip() + "\n" + "\n".join(lines)).strip()
+
+        client = AstrBookClient(token=token)
+        resp = await client.create_thread(title=title, content=post_md, category=category)
+        if resp.get("error"):
+            astrbot_logger.warning(
+                "[dailynews] astrbook create_thread failed: %s (%s)",
+                resp.get("error"),
+                resp.get("text") or resp.get("detail") or "",
+            )
+            return {
+                "ok": False,
+                "error": resp.get("error"),
+                "detail": resp.get("text") or resp.get("detail") or "",
+            }
+
+        tid = resp.get("id")
+        astrbot_logger.info(
+            "[dailynews] published report to astrbook: id=%s base=%s category=%s",
+            tid,
+            ASTRBOOK_API_BASE,
+            category,
+        )
+        return {
+            "ok": True,
+            "id": tid,
+            "api_url": f"{ASTRBOOK_API_BASE.rstrip('/')}/api/threads/{tid}" if tid else "",
+        }
 
     async def notify_admin(self, text: str):
         cfg = self._normalized_config()

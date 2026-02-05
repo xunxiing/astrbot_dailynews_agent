@@ -402,6 +402,39 @@
           }
         }
       },
+      "astrbook": {
+        "name": "AstrBook 论坛",
+        "hint": "从 AstrBook 论坛 API 抓取最新帖子（需要 token）。默认 URL 为 https://book.astrbot.app",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "显示名称（可选）",
+            "default": ""
+          },
+          "token": {
+            "type": "string",
+            "description": "AstrBook token（必填）",
+            "default": "",
+            "hint": "在 AstrBook 平台/论坛生成 token 后填入"
+          },
+          "category": {
+            "type": "string",
+            "description": "分类过滤（可选）",
+            "default": "",
+            "hint": "可选：chat/deals/misc/tech/help/intro/acg；留空=全部"
+          },
+          "priority": {
+            "type": "int",
+            "description": "优先级（数值越大越先处理）",
+            "default": 1
+          },
+          "max_articles": {
+            "type": "int",
+            "description": "每次最多抓取帖子数",
+            "default": 10
+          }
+        }
+      },
       "plugin_registry_official": {
         "name": "插件源（官方）",
         "hint": "读取 AstrBot 的官方插件索引（data/plugins.json），抓取最近 27 小时新增/活跃的插件并用 GitHub API 校验仓库 created_at/pushed_at。",
@@ -722,6 +755,40 @@
     "type": "int",
     "description": "迭代预览渲染页数（建议 1）",
     "default": 1
+  },
+  "astrbook_publish_enabled": {
+    "type": "bool",
+    "description": "日报生成后同步发布到 AstrBook（发帖）",
+    "default": false,
+    "hint": "需要填写 astrbook_token；发帖不会影响正常推送到 target_sessions"
+  },
+  "astrbook_token": {
+    "type": "string",
+    "description": "AstrBook token（用于发帖）",
+    "default": "",
+    "hint": "在 AstrBook 平台/论坛生成 token 后填入"
+  },
+  "astrbook_publish_category": {
+    "type": "string",
+    "description": "AstrBook 发帖分类",
+    "default": "tech",
+    "hint": "可选：chat/deals/misc/tech/help/intro/acg"
+  },
+  "astrbook_publish_title_prefix": {
+    "type": "string",
+    "description": "AstrBook 发帖标题前缀",
+    "default": "每日资讯日报",
+    "hint": "最终标题会自动追加日期，例如：每日资讯日报 2026-02-05"
+  },
+  "astrbook_publish_append_image_links": {
+    "type": "bool",
+    "description": "在帖子末尾追加“图片直链”列表",
+    "default": true
+  },
+  "astrbook_publish_max_image_links": {
+    "type": "int",
+    "description": "追加的图片直链最多数量",
+    "default": 40
   },
   "target_sessions": {
     "type": "list",

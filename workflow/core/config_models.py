@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .astrbook_client import ASTRBOOK_API_BASE
 from .models import NewsSourceConfig
 
 
@@ -361,6 +362,26 @@ class NewsSourcesConfig:
                     max_articles=max(1, max_articles),
                     album_keyword=None,
                     meta=meta or None,
+                )
+            elif tkey == "astrbook":
+                token = _to_str(item.get("token"), "").strip()
+                if not token:
+                    continue
+                name = _to_str(item.get("name"), "").strip()
+                priority = _to_int(item.get("priority"), 1)
+                max_articles = _to_int(item.get("max_articles"), 10)
+                category = _to_str(item.get("category"), "").strip().lower()
+                meta: dict[str, Any] = {"token": token}
+                if category:
+                    meta["category"] = category
+                src = NewsSourceConfig(
+                    name=name or "AstrBook 论坛",
+                    url=ASTRBOOK_API_BASE,
+                    type="astrbook",
+                    priority=max(1, priority),
+                    max_articles=max(1, min(max_articles, 50)),
+                    album_keyword=None,
+                    meta=meta,
                 )
             elif tkey == "plugin_registry_official":
                 since_hours = max(1, _to_int(item.get("since_hours"), 27))

@@ -378,6 +378,20 @@ class DailyNewsPlugin(Star):
                 "[dailynews] /daily_news got empty content; sending fallback text"
             )
             content = "生成失败：日报内容为空（可能是抓取/LLM 超时或被其它插件过滤），请查看 AstrBot 日志。"
+        # Manual trigger should also publish to AstrBook when enabled.
+        try:
+            res = await self.scheduler.publish_report_to_astrbook(content)
+            if not bool(res.get("ok", False)) and not bool(res.get("skipped", False)):
+                astrbot_logger.warning(
+                    "[dailynews] manual publish to astrbook failed: %s %s",
+                    res.get("error"),
+                    (res.get("detail") or ""),
+                )
+        except Exception:
+            astrbot_logger.error(
+                "[dailynews] manual publish to astrbook failed", exc_info=True
+            )
+
         delivery_mode = str(
             self.config.get("delivery_mode", "html_image") or "html_image"
         )
