@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -10,36 +10,42 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .github_source import fetch_github_snapshot_for_source, updates_from_snapshot
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
 from ...core.utils import _json_from_text
+from .github_source import fetch_github_snapshot_for_source, updates_from_snapshot
 
 
 class GitHubSubAgent:
     """GitHub 子 Agent：通过 github_source 抓取更新快照，然后写入日报小节。"""
 
     async def fetch_latest_articles(
-        self, source: NewsSourceConfig, user_config: Dict[str, Any]
-    ) -> Tuple[str, List[Dict[str, Any]]]:
-        snap = await fetch_github_snapshot_for_source(source=source, user_config=user_config)
+        self, source: NewsSourceConfig, user_config: dict[str, Any]
+    ) -> tuple[str, list[dict[str, Any]]]:
+        snap = await fetch_github_snapshot_for_source(
+            source=source, user_config=user_config
+        )
         if not isinstance(snap, dict):
             return source.name, []
         updates = updates_from_snapshot(snap)
         return source.name, [{"snapshot": snap, "updates": updates}]
 
     async def analyze_source(
-        self, source: NewsSourceConfig, articles: List[Dict[str, Any]], llm: LLMRunner
-    ) -> Dict[str, Any]:
-        snap: Dict[str, Any] = {}
-        updates: List[Dict[str, Any]] = []
+        self, source: NewsSourceConfig, articles: list[dict[str, Any]], llm: LLMRunner
+    ) -> dict[str, Any]:
+        snap: dict[str, Any] = {}
+        updates: list[dict[str, Any]] = []
         if articles and isinstance(articles[0], dict):
             snap = articles[0].get("snapshot") or {}
             updates = articles[0].get("updates") or []
 
-        commits = len((snap.get("commits_recent") or []) if isinstance(snap, dict) else [])
+        commits = len(
+            (snap.get("commits_recent") or []) if isinstance(snap, dict) else []
+        )
         prs = len((snap.get("prs_recent") or []) if isinstance(snap, dict) else [])
-        rels = len((snap.get("releases_recent") or []) if isinstance(snap, dict) else [])
+        rels = len(
+            (snap.get("releases_recent") or []) if isinstance(snap, dict) else []
+        )
         hours = 30
         try:
             window = snap.get("window") if isinstance(snap.get("window"), dict) else {}
@@ -74,9 +80,9 @@ class GitHubSubAgent:
         self,
         source: NewsSourceConfig,
         instruction: str,
-        articles: List[Dict[str, Any]],
+        articles: list[dict[str, Any]],
         llm: LLMRunner,
-        user_config: Dict[str, Any] | None = None,
+        user_config: dict[str, Any] | None = None,
     ) -> SubAgentResult:
         if not articles or not isinstance(articles[0], dict):
             return SubAgentResult(
@@ -138,9 +144,16 @@ class GitHubSubAgent:
         }
 
         try:
-            raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+            raw = await llm.ask(
+                system_prompt=system_prompt,
+                prompt=json.dumps(prompt, ensure_ascii=False),
+            )
         except Exception as e:
-            astrbot_logger.warning("[dailynews] github subagent write failed, fallback: %s", e, exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] github subagent write failed, fallback: %s",
+                e,
+                exc_info=True,
+            )
             repo = snap.get("repo") if isinstance(snap.get("repo"), dict) else {}
             lines = [f"## {source.name}", ""]
             if isinstance(repo, dict):
@@ -151,7 +164,11 @@ class GitHubSubAgent:
                     lines.append(f"- 仓库：[{full}]({url})")
                 if ver:
                     lines.append(f"- 当前版本：`{ver}`")
-            for k, key in [("Release", "releases_recent"), ("Commit", "commits_recent"), ("PR", "prs_recent")]:
+            for k, key in [
+                ("Release", "releases_recent"),
+                ("Commit", "commits_recent"),
+                ("PR", "prs_recent"),
+            ]:
                 items = snap.get(key) if isinstance(snap.get(key), list) else []
                 if items:
                     lines.append(f"- 最近更新（{k}）：{len(items)} 条")

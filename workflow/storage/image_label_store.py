@@ -4,7 +4,6 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -33,7 +32,7 @@ def _store_path() -> Path:
     return get_plugin_data_dir("image_labels") / "labels.json"
 
 
-def load_labels() -> Dict[str, ImageLabelEntry]:
+def load_labels() -> dict[str, ImageLabelEntry]:
     # Prefer sqlite; fallback to legacy JSON and migrate into sqlite.
     rows = image_labels_get_all()
     if rows:
@@ -58,7 +57,7 @@ def load_labels() -> Dict[str, ImageLabelEntry]:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             return {}
-        out: Dict[str, ImageLabelEntry] = {}
+        out: dict[str, ImageLabelEntry] = {}
         for url, v in raw.items():
             if not isinstance(url, str) or not isinstance(v, dict):
                 continue
@@ -89,7 +88,7 @@ def load_labels() -> Dict[str, ImageLabelEntry]:
         return {}
 
 
-def save_labels(labels: Dict[str, ImageLabelEntry]) -> None:
+def save_labels(labels: dict[str, ImageLabelEntry]) -> None:
     # sqlite is the source of truth; keep legacy JSON only for backward compatibility (do not write by default).
     for url, entry in (labels or {}).items():
         if not isinstance(url, str) or not isinstance(entry, ImageLabelEntry):
@@ -107,7 +106,7 @@ def save_labels(labels: Dict[str, ImageLabelEntry]) -> None:
 
 
 def upsert_label(
-    labels: Dict[str, ImageLabelEntry],
+    labels: dict[str, ImageLabelEntry],
     *,
     url: str,
     label: str,
@@ -116,7 +115,7 @@ def upsert_label(
     width: int = 0,
     height: int = 0,
     skip: bool = False,
-    updated_at: Optional[str] = None,
+    updated_at: str | None = None,
 ) -> ImageLabelEntry:
     ts = updated_at or datetime.now().isoformat(timespec="seconds")
     entry = ImageLabelEntry(

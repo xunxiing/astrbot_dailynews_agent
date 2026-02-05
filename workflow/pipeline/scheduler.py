@@ -1,11 +1,9 @@
 import asyncio
-import base64
-import json
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -19,27 +17,30 @@ try:
 except Exception:  # pragma: no cover
     MessageChain = None  # type: ignore
 
-from ..agents.sources.miyoushe_agent import MiyousheSubAgent
-from ..agents.sources.wechat_agent import WechatSubAgent
 from ..agents.sources.github_agent import GitHubSubAgent
-from ..agents.sources.twitter_agent import TwitterSubAgent
-from ..agents.sources.plugin_registry_agent import PluginRegistrySubAgent
-from ..agents.sources.xiuxiu_ai_agent import XiuxiuAISubAgent
 from ..agents.sources.github_source import build_github_sources_from_config
-from ..core.models import NewsSourceConfig
-from .workflow_manager import NewsWorkflowManager
-from .rendering import load_template
+from ..agents.sources.miyoushe_agent import MiyousheSubAgent
+from ..agents.sources.plugin_registry_agent import PluginRegistrySubAgent
+from ..agents.sources.twitter_agent import TwitterSubAgent
+from ..agents.sources.wechat_agent import WechatSubAgent
+from ..agents.sources.xiuxiu_ai_agent import XiuxiuAISubAgent
 from ..core.config_models import (
     ImageLayoutConfig,
     LayoutRefineConfig,
-    NewsWorkflowModeConfig,
     NewsSourcesConfig,
+    NewsWorkflowModeConfig,
     RenderImageStyleConfig,
     RenderPipelineConfig,
     SingleAgentConfig,
 )
+from ..core.models import NewsSourceConfig
+from .playwright_bootstrap import (
+    check_playwright_chromium_ready,
+    config_needs_playwright,
+)
 from .render_pipeline import render_daily_news_pages, split_pages
-from .playwright_bootstrap import check_playwright_chromium_ready, config_needs_playwright
+from .rendering import load_template
+from .workflow_manager import NewsWorkflowManager
 
 try:
     from astrbot.core.message.components import Image as _ImageComponent
@@ -61,7 +62,9 @@ except Exception:  # pragma: no cover
     _astrbot_html_renderer = None  # type: ignore
 
 
-_UMO_PATTERN = re.compile(r"(?P<umo>[A-Za-z0-9_-]+:[A-Za-z]+Message:[^\s\"'“”‘’「」<>]+)")
+_UMO_PATTERN = re.compile(
+    r"(?P<umo>[A-Za-z0-9_-]+:[A-Za-z]+Message:[^\s\"'“”‘’「」<>]+)"
+)
 
 
 UMO_DEFAULT_PLATFORM_ID = "napcat"
@@ -90,12 +93,14 @@ def _strip_md_inline(s: str) -> str:
     return t
 
 
-def _extract_report_links(md: str, *, max_links: int = 80) -> Dict[str, List[Tuple[str, str]]]:
+def _extract_report_links(
+    md: str, *, max_links: int = 80
+) -> dict[str, list[tuple[str, str]]]:
     """
     Extract markdown links from the report and group them by H2 section.
     Returns: {section_title: [(label, url), ...]}
     """
-    out: Dict[str, List[Tuple[str, str]]] = {}
+    out: dict[str, list[tuple[str, str]]] = {}
     seen: set[str] = set()
 
     current_section = "来源链接"
@@ -130,17 +135,17 @@ def _extract_report_links(md: str, *, max_links: int = 80) -> Dict[str, List[Tup
 
 
 def _build_forward_nodes_from_links(
-    links_by_section: Dict[str, List[Tuple[str, str]]],
+    links_by_section: dict[str, list[tuple[str, str]]],
     *,
     title: str = "日报来源链接",
     max_node_chars: int = 650,
     max_nodes: int = 12,
-) -> List[str]:
+) -> list[str]:
     """
     Build text chunks for merged-forward nodes.
     Each chunk is a plain text message. URLs are kept as-is for clickability.
     """
-    lines: List[str] = [title, ""]
+    lines: list[str] = [title, ""]
     for sec, rows in links_by_section.items():
         if not rows:
             continue
@@ -157,7 +162,7 @@ def _build_forward_nodes_from_links(
     if not all_text:
         return []
 
-    chunks: List[str] = []
+    chunks: list[str] = []
     buf = ""
     for line in all_text.splitlines():
         cand = (buf + "\n" + line).strip("\n") if buf else line
@@ -178,7 +183,7 @@ def _normalize_umo(
     *,
     default_platform_id: str = UMO_DEFAULT_PLATFORM_ID,
     default_message_type: str = UMO_DEFAULT_MESSAGE_TYPE,
-) -> Optional[str]:
+) -> str | None:
     """
     Normalize an AstrBot session string to `platform:MessageType:session_id`.
 
@@ -254,7 +259,7 @@ def _is_valid_image_file(path: Path) -> bool:
         if path.stat().st_size < 128:
             return False
         head = path.read_bytes()[:16]
-        if head.startswith(b"\xFF\xD8\xFF"):  # JPEG
+        if head.startswith(b"\xff\xd8\xff"):  # JPEG
             return True
         if head.startswith(b"\x89PNG\r\n\x1a\n"):  # PNG
             return True
@@ -265,7 +270,7 @@ def _is_valid_image_file(path: Path) -> bool:
         return False
 
 
-def _select_render_template(cfg: Dict[str, Any]) -> str:
+def _select_render_template(cfg: dict[str, Any]) -> str:
     name = str(cfg.get("render_template_name") or "daily_news").strip().lower()
     if name in {"chenyu", "chenyu_style", "chenyu-style"}:
         return load_template("templates/chenyu-style.html").strip()
@@ -280,8 +285,8 @@ class DailyNewsScheduler:
         self.config = config
         self.workflow_manager = NewsWorkflowManager()
         self.running = False
-        self.task: Optional[asyncio.Task] = None
-        self._workflow_task: Optional[asyncio.Task] = None
+        self.task: asyncio.Task | None = None
+        self._workflow_task: asyncio.Task | None = None
         self._did_migrate_news_sources = False
 
         self._init_workflow_manager()
@@ -291,7 +296,9 @@ class DailyNewsScheduler:
         self.workflow_manager.register_sub_agent("miyoushe", MiyousheSubAgent)
         self.workflow_manager.register_sub_agent("github", GitHubSubAgent)
         self.workflow_manager.register_sub_agent("twitter", TwitterSubAgent)
-        self.workflow_manager.register_sub_agent("plugin_registry", PluginRegistrySubAgent)
+        self.workflow_manager.register_sub_agent(
+            "plugin_registry", PluginRegistrySubAgent
+        )
         self.workflow_manager.register_sub_agent("xiuxiu_ai", XiuxiuAISubAgent)
 
     def _save_config(self):
@@ -299,14 +306,16 @@ class DailyNewsScheduler:
             try:
                 self.config.save_config()
             except Exception:
-                astrbot_logger.error("[dailynews] config.save_config failed", exc_info=True)
+                astrbot_logger.error(
+                    "[dailynews] config.save_config failed", exc_info=True
+                )
 
-    def _split_sources(self, raw: Any) -> List[str]:
+    def _split_sources(self, raw: Any) -> list[str]:
         """
         Config UI uses list items, but users often paste multiple URLs into one item.
         Split by whitespace/newlines and return a de-duplicated list.
         """
-        urls: List[str] = []
+        urls: list[str] = []
         seen = set()
 
         if isinstance(raw, str):
@@ -331,12 +340,12 @@ class DailyNewsScheduler:
                 urls.append(u)
         return urls
 
-    def get_config_snapshot(self) -> Dict[str, Any]:
+    def get_config_snapshot(self) -> dict[str, Any]:
         return self._normalized_config()
 
-    def _normalized_config(self) -> Dict[str, Any]:
+    def _normalized_config(self) -> dict[str, Any]:
         self._maybe_migrate_legacy_news_sources()
-        cfg: Dict[str, Any] = dict(self.config)
+        cfg: dict[str, Any] = dict(self.config)
         cfg.setdefault("enabled", False)
         cfg.setdefault("schedule_time", "09:00")
         cfg.setdefault("output_format", "markdown")
@@ -402,7 +411,9 @@ class DailyNewsScheduler:
         cfg.setdefault("image_layout_enabled", layout.enabled)
         cfg.setdefault("image_layout_provider_id", layout.provider_id)
         cfg.setdefault("image_layout_max_images_total", layout.max_images_total)
-        cfg.setdefault("image_layout_max_images_per_source", layout.max_images_per_source)
+        cfg.setdefault(
+            "image_layout_max_images_per_source", layout.max_images_per_source
+        )
         cfg.setdefault("image_layout_sources", [])
         cfg.setdefault("image_layout_pass_images_to_model", layout.pass_images_to_model)
         cfg.setdefault("image_layout_max_images_to_model", layout.max_images_to_model)
@@ -417,8 +428,12 @@ class DailyNewsScheduler:
         cfg.setdefault("image_layout_refine_enabled", refine.enabled)
         cfg.setdefault("image_layout_refine_rounds", refine.rounds)
         cfg.setdefault("image_layout_refine_max_requests", refine.max_requests)
-        cfg.setdefault("image_layout_refine_request_max_images", refine.request_max_images)
-        cfg.setdefault("image_layout_refine_preview_page_chars", refine.preview_page_chars)
+        cfg.setdefault(
+            "image_layout_refine_request_max_images", refine.request_max_images
+        )
+        cfg.setdefault(
+            "image_layout_refine_preview_page_chars", refine.preview_page_chars
+        )
         cfg.setdefault("image_layout_refine_preview_pages", refine.preview_pages)
         # Hardcode these to keep UI/config simple.
         cfg["image_layout_refine_preview_timeout_ms"] = LAYOUT_REFINE_PREVIEW_TIMEOUT_MS
@@ -455,14 +470,21 @@ class DailyNewsScheduler:
             cfg["twitter_targets"] = []
         if not isinstance(cfg.get("main_agent_fallback_provider_ids"), list):
             cfg["main_agent_fallback_provider_ids"] = []
-        if str(cfg.get("news_group_mode") or "").strip().lower() not in {"source", "group"}:
+        if str(cfg.get("news_group_mode") or "").strip().lower() not in {
+            "source",
+            "group",
+        }:
             cfg["news_group_mode"] = "source"
         if not isinstance(cfg.get("news_group_router_provider_id"), str):
             cfg["news_group_router_provider_id"] = ""
         if not isinstance(cfg.get("news_group_writeback_tags"), bool):
-            cfg["news_group_writeback_tags"] = bool(cfg.get("news_group_writeback_tags", True))
+            cfg["news_group_writeback_tags"] = bool(
+                cfg.get("news_group_writeback_tags", True)
+            )
         try:
-            cfg["news_group_promote_min_count"] = int(cfg.get("news_group_promote_min_count") or 2)
+            cfg["news_group_promote_min_count"] = int(
+                cfg.get("news_group_promote_min_count") or 2
+            )
         except Exception:
             cfg["news_group_promote_min_count"] = 2
 
@@ -486,7 +508,9 @@ class DailyNewsScheduler:
 
         try:
             wechat = self._split_sources(self.config.get("wechat_sources", []) or [])
-            miyoushe = self._split_sources(self.config.get("miyoushe_sources", []) or [])
+            miyoushe = self._split_sources(
+                self.config.get("miyoushe_sources", []) or []
+            )
             github_repos = self.config.get("github_repos", []) or []
             twitter_targets = self.config.get("twitter_targets", []) or []
         except Exception:
@@ -557,7 +581,10 @@ class DailyNewsScheduler:
             try:
                 self.config["news_sources"] = migrated
                 self._save_config()
-                astrbot_logger.info("[dailynews] migrated legacy sources -> news_sources (count=%s)", len(migrated))
+                astrbot_logger.info(
+                    "[dailynews] migrated legacy sources -> news_sources (count=%s)",
+                    len(migrated),
+                )
             except Exception:
                 pass
 
@@ -623,10 +650,15 @@ class DailyNewsScheduler:
 
                 today = now.strftime("%Y-%m-%d")
                 last_run_date = str(self.config.get("last_run_date", "") or "")
-                last_run_schedule_time = str(self.config.get("last_run_schedule_time", "") or "")
+                last_run_schedule_time = str(
+                    self.config.get("last_run_schedule_time", "") or ""
+                )
 
                 # Run once per day per configured schedule_time.
-                already_ran = last_run_date == today and last_run_schedule_time == schedule_time_str
+                already_ran = (
+                    last_run_date == today
+                    and last_run_schedule_time == schedule_time_str
+                )
                 should_run = (not already_ran) and (now.time() >= schedule_time)
 
                 if should_run:
@@ -646,7 +678,9 @@ class DailyNewsScheduler:
                         continue
 
                     if not raw_targets:
-                        astrbot_logger.info("[dailynews] scheduled run skipped: no target_sessions configured")
+                        astrbot_logger.info(
+                            "[dailynews] scheduled run skipped: no target_sessions configured"
+                        )
                         await asyncio.sleep(120)
                         continue
 
@@ -669,10 +703,12 @@ class DailyNewsScheduler:
 
                 await asyncio.sleep(5)
             except Exception as e:
-                astrbot_logger.error("[dailynews] scheduler loop error: %s", e, exc_info=True)
+                astrbot_logger.error(
+                    "[dailynews] scheduler loop error: %s", e, exc_info=True
+                )
                 await asyncio.sleep(30)
 
-    async def update_workflow_sources_from_config(self, cfg: Dict[str, Any]):
+    async def update_workflow_sources_from_config(self, cfg: dict[str, Any]):
         self.workflow_manager.news_sources.clear()
 
         # Preferred (v4.10.4+): template_list-based sources.
@@ -717,7 +753,9 @@ class DailyNewsScheduler:
             return
 
         # WeChat sources
-        for idx, url in enumerate(self._split_sources(cfg.get("wechat_sources", [])), start=1):
+        for idx, url in enumerate(
+            self._split_sources(cfg.get("wechat_sources", [])), start=1
+        ):
             if "mp.weixin.qq.com" not in url.lower():
                 astrbot_logger.warning(
                     "[dailynews] wechat_sources[%s] doesn't look like a wechat article url; skipping: %s",
@@ -737,7 +775,9 @@ class DailyNewsScheduler:
             )
 
         # MiYoShe sources
-        for idx, url in enumerate(self._split_sources(cfg.get("miyoushe_sources", [])), start=1):
+        for idx, url in enumerate(
+            self._split_sources(cfg.get("miyoushe_sources", [])), start=1
+        ):
             if "miyoushe.com" not in url.lower():
                 astrbot_logger.warning(
                     "[dailynews] miyoushe_sources[%s] doesn't look like a miyoushe post list url; skipping: %s",
@@ -802,7 +842,9 @@ class DailyNewsScheduler:
             [s.name for s in self.workflow_manager.news_sources],
         )
 
-    async def generate_once(self, cfg: Optional[Dict[str, Any]] = None, source: str = "manual") -> str:
+    async def generate_once(
+        self, cfg: dict[str, Any] | None = None, source: str = "manual"
+    ) -> str:
         config = cfg or self._normalized_config()
 
         # Linux/macOS: fail fast when Playwright browsers are missing, to avoid noisy retries and wasted LLM calls.
@@ -819,7 +861,9 @@ class DailyNewsScheduler:
 
         await self.update_workflow_sources_from_config(config)
         self._workflow_task = asyncio.create_task(
-            self.workflow_manager.run_workflow(config, astrbot_context=self.context, source=source)
+            self.workflow_manager.run_workflow(
+                config, astrbot_context=self.context, source=source
+            )
         )
         try:
             result = await self._workflow_task
@@ -829,13 +873,17 @@ class DailyNewsScheduler:
             return str(result.get("final_summary") or "")
         return f"生成失败：{result.get('error') or '未知错误'}"
 
-    async def generate_and_send(self, cfg: Optional[Dict[str, Any]] = None) -> str:
+    async def generate_and_send(self, cfg: dict[str, Any] | None = None) -> str:
         config = cfg or self._normalized_config()
         content = await self.generate_once(config)
-        await self._send_to_targets(content, list(config.get("target_sessions", []) or []), config=config)
+        await self._send_to_targets(
+            content, list(config.get("target_sessions", []) or []), config=config
+        )
         return content
 
-    async def _render_content_images(self, content: str, config: Dict[str, Any]) -> List[str]:
+    async def _render_content_images(
+        self, content: str, config: dict[str, Any]
+    ) -> list[str]:
         """
         用 AstrBot 的 html_render（底层 t2i 渲染服务）把日报渲染为本地图片文件路径列表。
         返回空列表表示渲染失败或内容为空。
@@ -847,7 +895,9 @@ class DailyNewsScheduler:
         try:
             from astrbot.core import html_renderer
         except Exception:
-            astrbot_logger.error("[dailynews] astrbot.core.html_renderer unavailable", exc_info=True)
+            astrbot_logger.error(
+                "[dailynews] astrbot.core.html_renderer unavailable", exc_info=True
+            )
             return []
 
         pipeline_cfg = RenderPipelineConfig.from_mapping(config)
@@ -861,10 +911,9 @@ class DailyNewsScheduler:
         if not pages:
             return []
 
-        template_name = (
-            config.get("t2i_active_template")
-            or getattr(self.context, "_config", {}).get("t2i_active_template")
-        )
+        template_name = config.get("t2i_active_template") or getattr(
+            self.context, "_config", {}
+        ).get("t2i_active_template")
 
         async def _render_html(ctx: dict) -> Path | None:
             try:
@@ -875,7 +924,9 @@ class DailyNewsScheduler:
                 )
                 return Path(str(p)).resolve()
             except Exception:
-                astrbot_logger.error("[dailynews] render_custom_template failed", exc_info=True)
+                astrbot_logger.error(
+                    "[dailynews] render_custom_template failed", exc_info=True
+                )
                 return None
 
         async def _render_t2i(text: str) -> Path | None:
@@ -909,14 +960,18 @@ class DailyNewsScheduler:
             subtitle_fmt="第 {idx}/{total} 页",
         )
 
-        out: List[str] = []
+        out: list[str] = []
         for r in rendered:
-            if r.image_path is None or not _is_valid_image_file(Path(r.image_path).resolve()):
+            if r.image_path is None or not _is_valid_image_file(
+                Path(r.image_path).resolve()
+            ):
                 return []
             out.append(Path(r.image_path).resolve().as_posix())
         return out
 
-    async def _send_to_targets(self, content: str, target_sessions: List[str], config: Dict[str, Any]) -> int:
+    async def _send_to_targets(
+        self, content: str, target_sessions: list[str], config: dict[str, Any]
+    ) -> int:
         normalized_targets, invalid_targets = _normalize_umo_list(
             target_sessions,
             default_platform_id=UMO_DEFAULT_PLATFORM_ID,
@@ -930,20 +985,26 @@ class DailyNewsScheduler:
         target_sessions = normalized_targets
 
         if not target_sessions:
-            astrbot_logger.info("[dailynews] no target_sessions configured; skip sending")
+            astrbot_logger.info(
+                "[dailynews] no target_sessions configured; skip sending"
+            )
             return 0
 
         if MessageChain is None:
             astrbot_logger.warning("[dailynews] MessageChain unavailable; skip sending")
             return 0
 
-        delivery_mode = str(config.get("delivery_mode", "html_image") or "html_image").strip().lower()
+        delivery_mode = (
+            str(config.get("delivery_mode", "html_image") or "html_image")
+            .strip()
+            .lower()
+        )
         send_links_forward = False
         if delivery_mode == "html_image_with_links":
             send_links_forward = True
             delivery_mode = "html_image"
 
-        link_node_chunks: List[str] = []
+        link_node_chunks: list[str] = []
         if send_links_forward:
             try:
                 links_by_section = _extract_report_links(content, max_links=120)
@@ -955,11 +1016,13 @@ class DailyNewsScheduler:
                 )
             except Exception:
                 link_node_chunks = []
-        img_paths: List[str] = []
+        img_paths: list[str] = []
         if delivery_mode == "html_image":
             img_paths = await self._render_content_images(content, config=config)
             if not img_paths:
-                astrbot_logger.warning("[dailynews] html_image enabled but render returned empty; fallback to text")
+                astrbot_logger.warning(
+                    "[dailynews] html_image enabled but render returned empty; fallback to text"
+                )
                 delivery_mode = "plain"
 
         sent_sessions = 0
@@ -972,7 +1035,9 @@ class DailyNewsScheduler:
                         p = Path(str(img_path)).resolve().as_posix()
                         if _ImageComponent is not None:
                             chain = MessageChain()
-                            chain.chain.append(_ImageComponent(file=f"file:///{p}", path=p))
+                            chain.chain.append(
+                                _ImageComponent(file=f"file:///{p}", path=p)
+                            )
                         else:
                             chain = MessageChain().file_image(p)
                         await self.context.send_message(umo, chain)
@@ -996,12 +1061,16 @@ class DailyNewsScheduler:
                                 chain.chain.append(_NodesComponent(nodes))
                                 await self.context.send_message(umo, chain)
                             else:
-                                chain = MessageChain().message("\n\n".join(link_node_chunks))
+                                chain = MessageChain().message(
+                                    "\n\n".join(link_node_chunks)
+                                )
                                 await self.context.send_message(umo, chain)
                         except Exception:
                             # Fallback to plain text if merged-forward fails on this platform.
                             try:
-                                chain = MessageChain().message("\n\n".join(link_node_chunks))
+                                chain = MessageChain().message(
+                                    "\n\n".join(link_node_chunks)
+                                )
                                 await self.context.send_message(umo, chain)
                             except Exception:
                                 pass
@@ -1010,7 +1079,9 @@ class DailyNewsScheduler:
                     await self.context.send_message(umo, chain)
                     sent_this = True
             except Exception as e:
-                astrbot_logger.error("[dailynews] send_message failed: %s", e, exc_info=True)
+                astrbot_logger.error(
+                    "[dailynews] send_message failed: %s", e, exc_info=True
+                )
 
             if sent_this:
                 sent_sessions += 1

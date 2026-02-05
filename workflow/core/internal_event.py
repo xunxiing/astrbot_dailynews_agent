@@ -39,4 +39,3 @@ def make_internal_event(*, session_id: str = "internal") -> Any:
         platform_meta=platform,
         session_id=session_id,
     )
-

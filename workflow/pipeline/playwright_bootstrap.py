@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import sys
 import zipfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -19,7 +20,6 @@ except Exception:  # pragma: no cover
     aiohttp = None  # type: ignore
 
 from ..core.image_utils import get_plugin_data_dir
-
 
 PLAYWRIGHT_CHROMIUM_HEADLESS_URL = (
     "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1200/"
@@ -46,7 +46,7 @@ def _chromium_root_dir() -> Path:
     return _browsers_dir() / "chromium-1169"
 
 
-def get_chromium_executable_path() -> Optional[Path]:
+def get_chromium_executable_path() -> Path | None:
     # Our bootstrap download is Windows-only. Never try to use it on Linux/macOS,
     # even if the plugin data directory was copied over from a Windows machine.
     if not _is_windows():
@@ -56,7 +56,7 @@ def get_chromium_executable_path() -> Optional[Path]:
     if not root.exists():
         # Auto-detect any folder starting with "chromium-"
         try:
-            candidates = sorted(list(_browsers_dir().glob("chromium-*")), reverse=True)
+            candidates = sorted(_browsers_dir().glob("chromium-*"), reverse=True)
             if candidates:
                 root = candidates[0]
             else:
@@ -65,10 +65,14 @@ def get_chromium_executable_path() -> Optional[Path]:
                 if alt_root.exists():
                     root = alt_root
                 else:
-                    astrbot_logger.debug(f"[dailynews] No chromium directory found in {_browsers_dir()}")
+                    astrbot_logger.debug(
+                        f"[dailynews] No chromium directory found in {_browsers_dir()}"
+                    )
                     return None
         except Exception as e:
-            astrbot_logger.debug(f"[dailynews] get_chromium_executable_path glob failed: {e}")
+            astrbot_logger.debug(
+                f"[dailynews] get_chromium_executable_path glob failed: {e}"
+            )
             return None
 
     astrbot_logger.debug(f"[dailynews] searching chromium in root: {root}")
@@ -106,7 +110,7 @@ def get_chromium_executable_path_or_hint() -> str:
     )
 
 
-def detect_windows_bootstrap_download_root() -> Optional[Path]:
+def detect_windows_bootstrap_download_root() -> Path | None:
     """
     Returns the bootstrap root directory if we detect Windows-only artifacts in plugin data.
     This is useful for warning users who migrated their AstrBot data from Windows to Linux.
@@ -149,20 +153,28 @@ def config_needs_playwright(cfg: Mapping[str, Any]) -> bool:
                     return True
 
         # Legacy: separate lists.
-        if (cfg.get("wechat_sources") or []) and len(cfg.get("wechat_sources") or []) > 0:  # type: ignore[arg-type]
+        if (cfg.get("wechat_sources") or []) and len(
+            cfg.get("wechat_sources") or []
+        ) > 0:  # type: ignore[arg-type]
             return True
-        if (cfg.get("miyoushe_sources") or []) and len(cfg.get("miyoushe_sources") or []) > 0:  # type: ignore[arg-type]
+        if (cfg.get("miyoushe_sources") or []) and len(
+            cfg.get("miyoushe_sources") or []
+        ) > 0:  # type: ignore[arg-type]
             return True
 
         # Twitter/X.
-        if bool(cfg.get("twitter_enabled", False)) and bool(cfg.get("twitter_targets", []) or []):
+        if bool(cfg.get("twitter_enabled", False)) and bool(
+            cfg.get("twitter_targets", []) or []
+        ):
             return True
     except Exception:
         return False
     return False
 
 
-def build_playwright_chromium_missing_message(*, detected_exe: str = "", custom_browser_path: str = "") -> str:
+def build_playwright_chromium_missing_message(
+    *, detected_exe: str = "", custom_browser_path: str = ""
+) -> str:
     detected_exe = (detected_exe or "").strip()
     custom_browser_path = (custom_browser_path or "").strip()
 
@@ -175,11 +187,15 @@ def build_playwright_chromium_missing_message(*, detected_exe: str = "", custom_
     if detected_exe:
         lines.append(f"当前 Playwright 期望的可执行文件路径：{detected_exe}")
     if custom_browser_path:
-        lines.append(f"当前已配置 custom_browser_path：{custom_browser_path}（不建议修改；一般留空即可）")
+        lines.append(
+            f"当前已配置 custom_browser_path：{custom_browser_path}（不建议修改；一般留空即可）"
+        )
     return "\n".join(lines).strip()
 
 
-async def check_playwright_chromium_ready(*, custom_browser_path: str = "") -> Tuple[bool, str]:
+async def check_playwright_chromium_ready(
+    *, custom_browser_path: str = ""
+) -> tuple[bool, str]:
     """
     Linux/macOS: rely on official Playwright browsers (e.g. ~/.cache/ms-playwright).
     Returns (ok, message_if_not_ok).
@@ -193,7 +209,9 @@ async def check_playwright_chromium_ready(*, custom_browser_path: str = "") -> T
             pass
         return (
             False,
-            build_playwright_chromium_missing_message(custom_browser_path=custom_browser_path),
+            build_playwright_chromium_missing_message(
+                custom_browser_path=custom_browser_path
+            ),
         )
 
     try:
@@ -247,7 +265,7 @@ async def ensure_playwright_chromium_installed(
     *,
     download_url: str = PLAYWRIGHT_CHROMIUM_HEADLESS_URL,
     force: bool = False,
-) -> Optional[Path]:
+) -> Path | None:
     """
     Ensure we have a Chromium executable available for Playwright fallback rendering.
 
@@ -286,7 +304,9 @@ async def ensure_playwright_chromium_installed(
             # Previous attempt finished, but we failed to locate exe; keep as-is.
             return None
 
-        astrbot_logger.info("[dailynews] downloading playwright chromium (headless-shell) in background...")
+        astrbot_logger.info(
+            "[dailynews] downloading playwright chromium (headless-shell) in background..."
+        )
         try:
             await _download_file(download_url, zip_path, timeout_s=3600)
             _extract_zip(zip_path, root)
@@ -299,12 +319,17 @@ async def ensure_playwright_chromium_installed(
                     pass
             marker.write_text("ok", encoding="utf-8")
         except Exception:
-            astrbot_logger.error("[dailynews] playwright chromium download/extract failed", exc_info=True)
+            astrbot_logger.error(
+                "[dailynews] playwright chromium download/extract failed", exc_info=True
+            )
             return None
 
         exe = get_chromium_executable_path()
         if exe is None:
-            astrbot_logger.error("[dailynews] playwright chromium installed but executable not found under %s", root)
+            astrbot_logger.error(
+                "[dailynews] playwright chromium installed but executable not found under %s",
+                root,
+            )
             return None
 
         astrbot_logger.info("[dailynews] playwright chromium ready: %s", exe)

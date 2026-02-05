@@ -1,10 +1,8 @@
-import re
 import html as _html
+import re
 from pathlib import Path
-from typing import Dict, Optional
 
-
-_TEMPLATE_CACHE: Dict[str, str] = {}
+_TEMPLATE_CACHE: dict[str, str] = {}
 
 
 def _plugin_root() -> Path:
@@ -106,7 +104,7 @@ def markdown_to_html(md: str) -> str:
     # 仅转义可能形成原生 HTML 的字符（<、&），保留 '>' 以支持 Markdown 引用语法。
     safe_md = raw.replace("&", "&amp;").replace("<", "&lt;")
 
-    html: Optional[str] = None
+    html: str | None = None
     try:
         import markdown as _md  # type: ignore
 
@@ -148,7 +146,9 @@ _DIVIDER_HTML = (
 _HR_RE = re.compile(r"<hr\s*/?>", re.I)
 _H2_RE = re.compile(r"<h2>(.*?)</h2>", re.I | re.S)
 _H3_RE = re.compile(r"<h3>(.*?)</h3>", re.I | re.S)
-_CODE_LANG_RE = re.compile(r'<pre><code class="language-([^" ]+)">(.*?)</code></pre>', re.I | re.S)
+_CODE_LANG_RE = re.compile(
+    r'<pre><code class="language-([^" ]+)">(.*?)</code></pre>', re.I | re.S
+)
 _CODE_NO_LANG_RE = re.compile(r"<pre><code>(.*?)</code></pre>", re.I | re.S)
 
 

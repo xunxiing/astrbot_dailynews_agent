@@ -1,9 +1,9 @@
 import json
-from datetime import datetime
-from pathlib import Path
 import random
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -12,15 +12,20 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from ..core.config_models import ImageLabelConfig, ImageLayoutConfig, LayoutPrompts, LayoutRefineConfig
+from ..core.config_models import (
+    ImageLabelConfig,
+    ImageLayoutConfig,
+    LayoutPrompts,
+    LayoutRefineConfig,
+)
 from ..core.image_utils import get_plugin_data_dir, merge_images_vertical
+from ..core.llm import LLMRunner
+from ..core.models import SubAgentResult
+from ..core.utils import _json_from_text
+from ..pipeline.rendering import load_template
 from .image_labeler import ImageLabeler
 from .layout_refiner import LayoutRefiner
 from .tool_based_layout_editor import ToolBasedLayoutEditor
-from ..core.models import MainAgentDecision, SubAgentResult
-from ..pipeline.rendering import load_template
-from ..core.utils import _json_from_text
-from ..core.llm import LLMRunner
 
 
 class ImageLayoutAgent:
@@ -33,19 +38,19 @@ class ImageLayoutAgent:
     async def _decide_image_plan(
         self,
         *,
-        sub_results: List[Any],
-        user_config: Dict[str, Any],
+        sub_results: list[Any],
+        user_config: dict[str, Any],
         astrbot_context: Any,
         max_images_total: int,
         max_images_per_source: int,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Simplified internal image planning logic, moved from independent ImagePlanAgent.
         """
         if not bool(user_config.get("image_plan_enabled", True)):
             return None
 
-        images_by_source: Dict[str, List[str]] = {}
+        images_by_source: dict[str, list[str]] = {}
         for r in sub_results:
             if isinstance(r, SubAgentResult) and r.source_name and r.images:
                 urls = [str(u) for u in r.images if isinstance(u, str) and u.strip()]
@@ -61,7 +66,7 @@ class ImageLayoutAgent:
             return None
 
         llm = LLMRunner(astrbot_context, provider_ids=[provider_id])
-        
+
         system_prompt = (
             "You are the chief editor deciding an image count plan for the layout agent.\n"
             "Return JSON with a total image cap and per-source image counts.\n"
@@ -75,12 +80,15 @@ class ImageLayoutAgent:
             "candidates": {name: len(urls) for name, urls in images_by_source.items()},
             "output_schema": {
                 "max_images_total": "int",
-                "by_source": {"source_name": "int"}
+                "by_source": {"source_name": "int"},
             },
         }
 
         try:
-            raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(payload, ensure_ascii=False))
+            raw = await llm.ask(
+                system_prompt=system_prompt,
+                prompt=json.dumps(payload, ensure_ascii=False),
+            )
             data = _json_from_text(raw)
             if isinstance(data, dict):
                 return data
@@ -92,10 +100,10 @@ class ImageLayoutAgent:
         self,
         *,
         draft_markdown: str,
-        sub_results: List[Any],
-        user_config: Dict[str, Any],
+        sub_results: list[Any],
+        user_config: dict[str, Any],
         astrbot_context: Any,
-        image_plan: Optional[Dict[str, Any]] = None,
+        image_plan: dict[str, Any] | None = None,
     ) -> str:
         layout_cfg = ImageLayoutConfig.from_mapping(user_config)
         if not layout_cfg.enabled:
@@ -121,11 +129,13 @@ class ImageLayoutAgent:
         refine_cfg = LayoutRefineConfig.from_mapping(user_config)
 
         _IMG_MD_RE = re.compile(r"!\[[^\]]*\]\((?P<url>[^)]+)\)")
-        _IMG_HTML_RE = re.compile(r"""<img[^>]+src=(?P<q>["'])(?P<url>[^"']+)(?P=q)""", re.I)
+        _IMG_HTML_RE = re.compile(
+            r"""<img[^>]+src=(?P<q>["'])(?P<url>[^"']+)(?P=q)""", re.I
+        )
         _HEADING_RE = re.compile(r"^(?P<h>#{1,6})\s+(?P<t>.+?)\s*$")
 
-        def _extract_existing_image_urls(md: str) -> List[str]:
-            found: List[str] = []
+        def _extract_existing_image_urls(md: str) -> list[str]:
+            found: list[str] = []
             seen = set()
             s = md or ""
             for m in _IMG_MD_RE.finditer(s):
@@ -182,9 +192,9 @@ class ImageLayoutAgent:
                     out.add(t)
             return out
 
-        def _split_sections(md: str) -> List[Dict[str, Any]]:
+        def _split_sections(md: str) -> list[dict[str, Any]]:
             lines = (md or "").splitlines()
-            heads: List[Tuple[int, int, str]] = []
+            heads: list[tuple[int, int, str]] = []
             for idx, line in enumerate(lines):
                 m = _HEADING_RE.match(line)
                 if not m:
@@ -198,7 +208,7 @@ class ImageLayoutAgent:
             if not heads:
                 return []
 
-            sections: List[Dict[str, Any]] = []
+            sections: list[dict[str, Any]] = []
             for i, (start, level, title) in enumerate(heads):
                 end = len(lines)
                 for j in range(i + 1, len(heads)):
@@ -223,8 +233,8 @@ class ImageLayoutAgent:
             *,
             source_name: str,
             source_text: str,
-            sections: List[Dict[str, Any]],
-        ) -> Optional[int]:
+            sections: list[dict[str, Any]],
+        ) -> int | None:
             if not sections:
                 return None
 
@@ -261,8 +271,8 @@ class ImageLayoutAgent:
         def _insert_images_near_sections(
             md: str,
             *,
-            picked_by_source: Dict[str, List[str]],
-            source_text_by_source: Dict[str, str],
+            picked_by_source: dict[str, list[str]],
+            source_text_by_source: dict[str, str],
         ) -> str:
             lines = (md or "").splitlines()
             if not lines or not picked_by_source:
@@ -320,15 +330,15 @@ class ImageLayoutAgent:
                 return (md or "").strip()
             return "\n".join(lines).strip()
 
-        source_text_by_source: Dict[str, str] = {}
+        source_text_by_source: dict[str, str] = {}
 
         # 收集图片候选（来自写作子 Agent 抓正文时解析出的 image_urls）
-        images_by_source: Dict[str, List[str]] = {}
+        images_by_source: dict[str, list[str]] = {}
         for r in sub_results:
             if isinstance(r, SubAgentResult) and r.source_name and r.images:
                 if r.content and r.content.strip():
                     source_text_by_source[r.source_name] = r.content.strip()
-                urls: List[str] = []
+                urls: list[str] = []
                 seen = set()
                 for u in r.images:
                     if isinstance(u, str) and u.strip() and u not in seen:
@@ -339,22 +349,24 @@ class ImageLayoutAgent:
 
         if shuffle_candidates and images_by_source:
             seed = (
-                str(shuffle_seed).strip() if str(shuffle_seed).strip() else datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                str(shuffle_seed).strip()
+                if str(shuffle_seed).strip()
+                else datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             )
             rnd = random.Random(seed)
             items = list(images_by_source.items())
             rnd.shuffle(items)
-            shuffled: Dict[str, List[str]] = {}
+            shuffled: dict[str, list[str]] = {}
             for src, urls in items:
                 urls2 = list(urls)
                 rnd.shuffle(urls2)
                 shuffled[src] = urls2
             images_by_source = shuffled
 
-        plan_by_source: Dict[str, int] = {}
+        plan_by_source: dict[str, int] = {}
 
         def _fallback_insert(md: str) -> str:
-            picked: List[Tuple[str, str]] = []
+            picked: list[tuple[str, str]] = []
             total = 0
             for src, urls in images_by_source.items():
                 wanted = plan_by_source.get(src)
@@ -371,7 +383,7 @@ class ImageLayoutAgent:
             if not picked:
                 return md
 
-            picked_by_source: Dict[str, List[str]] = {}
+            picked_by_source: dict[str, list[str]] = {}
             for src, url in picked:
                 picked_by_source.setdefault(src, []).append(url)
 
@@ -382,7 +394,7 @@ class ImageLayoutAgent:
                     source_text_by_source=source_text_by_source,
                 )
             except Exception:
-                lines_out: List[str] = [(md or "").rstrip(), "", "## 配图", ""]
+                lines_out: list[str] = [(md or "").rstrip(), "", "## 配图", ""]
                 for src, urls in picked_by_source.items():
                     for u in urls:
                         lines_out.extend([f"**{src}**", f"![]({u})", ""])
@@ -410,12 +422,14 @@ class ImageLayoutAgent:
         if isinstance(only_sources, list) and only_sources:
             only_set = {str(x).strip() for x in only_sources if str(x).strip()}
             if only_set:
-                images_by_source = {k: v for k, v in images_by_source.items() if k in only_set}
+                images_by_source = {
+                    k: v for k, v in images_by_source.items() if k in only_set
+                }
 
         if not images_by_source:
             return draft_markdown
 
-        plan_by_source: Dict[str, int] = {}
+        plan_by_source: dict[str, int] = {}
         if isinstance(image_plan, dict):
             if isinstance(image_plan.get("by_source"), dict):
                 for k, v in image_plan.get("by_source", {}).items():
@@ -448,11 +462,11 @@ class ImageLayoutAgent:
                 user_config=user_config,
                 astrbot_context=astrbot_context,
                 max_images_total=max_images_total,
-                max_images_per_source=max_images_per_source
+                max_images_per_source=max_images_per_source,
             )
 
         if plan_by_source:
-            filtered: Dict[str, List[str]] = {}
+            filtered: dict[str, list[str]] = {}
             for name, urls in images_by_source.items():
                 want = plan_by_source.get(name)
                 if want is None or want <= 0:
@@ -468,7 +482,7 @@ class ImageLayoutAgent:
 
         prompts = LayoutPrompts.from_files(load_template=load_template)
 
-        image_catalog: List[Dict[str, Any]] = []
+        image_catalog: list[dict[str, Any]] = []
         label_cfg = ImageLabelConfig.from_mapping(user_config)
         if label_cfg.enabled and label_cfg.provider_id:
             # When we have per-image labels, avoid feeding the layout model a huge image list (and skip vision previews).
@@ -481,18 +495,20 @@ class ImageLayoutAgent:
                     cfg=label_cfg,
                 )
                 if image_catalog:
-                    astrbot_logger.info("[dailynews] image_label catalog ready: %s", len(image_catalog))
+                    astrbot_logger.info(
+                        "[dailynews] image_label catalog ready: %s", len(image_catalog)
+                    )
             except Exception as e:
-                astrbot_logger.warning("[dailynews] image_label failed: %s", e, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] image_label failed: %s", e, exc_info=True
+                )
 
         # Tool-based layout editing: let the model call tools to insert images / fix text,
         # then we render a preview each round and feed it back until it says "done".
         if tool_enabled and hasattr(astrbot_context, "tool_loop_agent"):
             try:
                 tool_system = (prompts.image_layout_tool_system + "\n").strip() + "\n"
-                tool_system += (
-                    f"- 总图片数不超过 {max_images_total} 张；单个来源不超过 {max_images_per_source} 张。\n"
-                )
+                tool_system += f"- 总图片数不超过 {max_images_total} 张；单个来源不超过 {max_images_per_source} 张。\n"
                 if image_plan:
                     tool_system += "- image_plan 表示主 Agent 对各来源图片数量的约束，请优先满足。\n"
 
@@ -510,17 +526,21 @@ class ImageLayoutAgent:
                     send_images_to_model=bool(pass_images_to_model),
                 )
                 if (patched or "").strip():
-                    has_img = bool(re.search(r"!\[[^\]]*\]\(", patched)) or ("<img" in patched)
+                    has_img = bool(re.search(r"!\[[^\]]*\]\(", patched)) or (
+                        "<img" in patched
+                    )
                     if has_img:
                         return patched
                     astrbot_logger.info(
                         "[dailynews] tool-based image_layout produced no images; fallback to legacy layout"
                     )
             except Exception as e:
-                astrbot_logger.warning("[dailynews] tool-based image_layout failed: %s", e, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] tool-based image_layout failed: %s", e, exc_info=True
+                )
 
         # 给模型看的图片（vision）：从每个来源取前 N 张，总量封顶
-        image_urls_for_model: List[str] = []
+        image_urls_for_model: list[str] = []
         if pass_images_to_model:
             for src, urls in images_by_source.items():
                 for u in urls[: max(1, max_images_per_source)]:
@@ -547,18 +567,24 @@ class ImageLayoutAgent:
                 image_urls_for_model = [f"file:///{local_path}"]
                 preview_hint = "你将收到一张“拼接预览图”，从上到下依次对应候选图片。"
             except Exception as e:
-                astrbot_logger.warning("[dailynews] image_layout preview merge failed: %s", e, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] image_layout preview merge failed: %s",
+                    e,
+                    exc_info=True,
+                )
 
         system_prompt = (prompts.image_layout_system + "\n").strip() + "\n"
         system_prompt += f"- 总图片数不超过 {max_images_total} 张；单个来源不超过 {max_images_per_source} 张。\n"
 
         if image_plan:
-            system_prompt += "- image_plan 表示主 Agent 对各来源图片数量的约束，请优先满足。\n"
+            system_prompt += (
+                "- image_plan 表示主 Agent 对各来源图片数量的约束，请优先满足。\n"
+            )
         if preview_hint:
             system_prompt += f"- {preview_hint}\n"
 
         # Provide the model with structural/context hints to reduce “错位插图”。
-        sections_hint: List[Dict[str, Any]] = []
+        sections_hint: list[dict[str, Any]] = []
         try:
             for s in _split_sections(draft_markdown):
                 sections_hint.append(
@@ -571,14 +597,14 @@ class ImageLayoutAgent:
         except Exception:
             sections_hint = []
 
-        source_sections_hint: List[Dict[str, Any]] = []
+        source_sections_hint: list[dict[str, Any]] = []
         try:
             for src, txt in source_text_by_source.items():
                 source_sections_hint.append(
                     {
                         "source": src,
                         "section_snippet": (txt or "")[:520],
-                        "keywords": sorted(list(_tokens(txt)))[:24],
+                        "keywords": sorted(_tokens(txt))[:24],
                     }
                 )
         except Exception:
@@ -586,7 +612,7 @@ class ImageLayoutAgent:
 
         baseline_patched = ""
         try:
-            picked_by_source_hint: Dict[str, List[str]] = {}
+            picked_by_source_hint: dict[str, list[str]] = {}
             total = 0
             for src, urls in images_by_source.items():
                 wanted = plan_by_source.get(src)
@@ -627,7 +653,11 @@ class ImageLayoutAgent:
                 "patched_markdown": "string",
                 "request_image_urls": ["string(optional)"],
                 "chosen": [
-                    {"source": "source_name", "url": "image_url", "where": "hint(optional)"}
+                    {
+                        "source": "source_name",
+                        "url": "image_url",
+                        "where": "hint(optional)",
+                    }
                 ],
             },
         }
@@ -641,7 +671,9 @@ class ImageLayoutAgent:
             )
             raw = getattr(resp, "completion_text", "") or ""
         except Exception as e:
-            astrbot_logger.warning("[dailynews] image_layout llm_generate failed: %s", e, exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] image_layout llm_generate failed: %s", e, exc_info=True
+            )
             return _fallback_insert(draft_markdown)
 
         data = _json_from_text(raw)
@@ -662,7 +694,7 @@ class ImageLayoutAgent:
             except Exception:
                 allowed_urls = set()
 
-            async def _make_request_preview(urls: List[str]) -> Optional[str]:
+            async def _make_request_preview(urls: list[str]) -> str | None:
                 if not urls:
                     return None
                 out = get_plugin_data_dir("image_layout_requests") / (
@@ -693,12 +725,18 @@ class ImageLayoutAgent:
                 try:
                     req_preview = await _make_request_preview(urls)
                 except Exception as e:
-                    astrbot_logger.warning("[dailynews] image_layout request preview failed: %s", e, exc_info=True)
+                    astrbot_logger.warning(
+                        "[dailynews] image_layout request preview failed: %s",
+                        e,
+                        exc_info=True,
+                    )
                     req_preview = None
 
                 payload2 = dict(payload)
                 payload2["requested_image_urls"] = urls
-                payload2["requested_images_preview"] = "已合成为候选图预览（见图片输入）"
+                payload2["requested_images_preview"] = (
+                    "已合成为候选图预览（见图片输入）"
+                )
 
                 try:
                     resp2 = await astrbot_context.llm_generate(
@@ -724,16 +762,24 @@ class ImageLayoutAgent:
                     else:
                         break
                 except Exception as e:
-                    astrbot_logger.warning("[dailynews] image_layout request loop llm failed: %s", e, exc_info=True)
+                    astrbot_logger.warning(
+                        "[dailynews] image_layout request loop llm failed: %s",
+                        e,
+                        exc_info=True,
+                    )
                     break
 
         patched = str(data.get("patched_markdown") or "").strip()
         if not patched:
-            astrbot_logger.warning("[dailynews] image_layout patched_markdown empty; skip")
+            astrbot_logger.warning(
+                "[dailynews] image_layout patched_markdown empty; skip"
+            )
             return _fallback_insert(draft_markdown)
 
         if not re.search(r"!\[[^\]]*\]\(", patched) and "<img" not in patched:
-            astrbot_logger.warning("[dailynews] image_layout produced no images; fallback insert")
+            astrbot_logger.warning(
+                "[dailynews] image_layout produced no images; fallback insert"
+            )
             return _fallback_insert(patched)
 
         if refine_cfg.enabled and bool(pass_images_to_model):
@@ -750,6 +796,8 @@ class ImageLayoutAgent:
                 if (refined or "").strip():
                     patched = refined
             except Exception as e:
-                astrbot_logger.warning("[dailynews] image_layout refine failed: %s", e, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] image_layout refine failed: %s", e, exc_info=True
+                )
 
         return patched

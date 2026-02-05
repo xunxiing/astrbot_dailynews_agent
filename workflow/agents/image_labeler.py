@@ -4,8 +4,9 @@ import asyncio
 import hashlib
 import json
 import random
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -17,9 +18,14 @@ except Exception:  # pragma: no cover
 from PIL import Image
 
 from ..core.config_models import ImageLabelConfig
-from ..storage.image_label_store import ImageLabelEntry, load_labels, save_labels, upsert_label
 from ..core.image_utils import download_image_to_jpeg_file, get_plugin_data_dir
 from ..core.utils import _json_from_text
+from ..storage.image_label_store import (
+    ImageLabelEntry,
+    load_labels,
+    save_labels,
+    upsert_label,
+)
 
 
 def _shorten_zh(s: str, limit: int = 30) -> str:
@@ -71,7 +77,7 @@ class ImageLabeler:
         h = hashlib.sha1((url or "").encode("utf-8", errors="ignore")).hexdigest()[:20]
         return get_plugin_data_dir("image_label_cache") / f"{h}.jpg"
 
-    async def _ensure_local(self, url: str) -> Tuple[str, int, int]:
+    async def _ensure_local(self, url: str) -> tuple[str, int, int]:
         out_path = self._cache_path_for(url)
         if out_path.exists() and out_path.is_file() and out_path.stat().st_size > 512:
             try:
@@ -79,7 +85,9 @@ class ImageLabeler:
                 return str(out_path.resolve()), int(img.width), int(img.height)
             except Exception:
                 return str(out_path.resolve()), 0, 0
-        saved = await download_image_to_jpeg_file(url, out_path=out_path, max_width=1200, quality=88)
+        saved = await download_image_to_jpeg_file(
+            url, out_path=out_path, max_width=1200, quality=88
+        )
         if not saved:
             return "", 0, 0
         path, (w, h) = saved
@@ -90,11 +98,11 @@ class ImageLabeler:
         *,
         astrbot_context: Any,
         provider_id: str,
-        items: Sequence[Dict[str, Any]],
+        items: Sequence[dict[str, Any]],
         cfg: ImageLabelConfig,
-    ) -> Dict[str, Dict[str, Any]]:
-        imgs: List[str] = []
-        meta: List[Dict[str, Any]] = []
+    ) -> dict[str, dict[str, Any]]:
+        imgs: list[str] = []
+        meta: list[dict[str, Any]] = []
         for it in items:
             url = str(it.get("url") or "").strip()
             if not url:
@@ -123,7 +131,7 @@ class ImageLabeler:
                     "口吻偏新闻：突出事件/公告/活动/版本等时效信息（图片可见时）",
                     "不要编造看不见的信息；不确定就用“疑似/可能/看不清”",
                     "若图片是纯装饰/纯标题封面/长截图文字太多/表格堆叠/说明书式长图/界面表单，请 skip=true",
-                    "输出严格 JSON：[{\"url\":\"...\",\"label\":\"...\",\"skip\":false}, ...] 与输入顺序对应",
+                    '输出严格 JSON：[{"url":"...","label":"...","skip":false}, ...] 与输入顺序对应',
                 ],
                 "items": meta,
             },
@@ -131,7 +139,7 @@ class ImageLabeler:
         )
 
         raw = ""
-        last_err: Optional[Exception] = None
+        last_err: Exception | None = None
         for attempt in range(max(0, int(cfg.llm_max_retries)) + 1):
             try:
                 resp = await astrbot_context.llm_generate(
@@ -156,11 +164,15 @@ class ImageLabeler:
 
         if not (raw or "").strip():
             if last_err is not None:
-                astrbot_logger.warning("[dailynews] image_label llm_generate failed: %s", last_err, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] image_label llm_generate failed: %s",
+                    last_err,
+                    exc_info=True,
+                )
             return {}
 
         data = _json_from_text(raw)
-        out: Dict[str, Dict[str, Any]] = {}
+        out: dict[str, dict[str, Any]] = {}
         if isinstance(data, list):
             for it in data:
                 if not isinstance(it, dict):
@@ -187,11 +199,11 @@ class ImageLabeler:
         images_by_source: Mapping[str, Sequence[str]],
         astrbot_context: Any,
         cfg: ImageLabelConfig,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, ImageLabelEntry]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, ImageLabelEntry]]:
         if not cfg.enabled or not cfg.provider_id:
             return [], {}
 
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         for source, urls in (images_by_source or {}).items():
             src = str(source or "").strip()
             for u in urls or []:
@@ -210,19 +222,23 @@ class ImageLabeler:
         cache = load_labels()
 
         # Determine which images need labeling.
-        need: List[Dict[str, Any]] = []
+        need: list[dict[str, Any]] = []
         for it in items:
             url = str(it.get("url") or "").strip()
             if not url:
                 continue
-            if not cfg.force_refresh and url in cache and ((cache[url].label or "").strip() or bool(cache[url].skip)):
+            if (
+                not cfg.force_refresh
+                and url in cache
+                and ((cache[url].label or "").strip() or bool(cache[url].skip))
+            ):
                 continue
             need.append(it)
 
         # Download missing ones first (parallel).
         download_sem = asyncio.Semaphore(int(cfg.concurrency))
 
-        async def prepare_one(it: Dict[str, Any]) -> Dict[str, Any]:
+        async def prepare_one(it: dict[str, Any]) -> dict[str, Any]:
             url = str(it.get("url") or "").strip()
             if not url:
                 return it
@@ -235,14 +251,16 @@ class ImageLabeler:
                 it2["height"] = int(h)
             return it2
 
-        prepared: List[Dict[str, Any]] = []
+        prepared: list[dict[str, Any]] = []
         if need:
-            prepared = list(await asyncio.gather(*(prepare_one(dict(it)) for it in need)))
+            prepared = list(
+                await asyncio.gather(*(prepare_one(dict(it)) for it in need))
+            )
 
         # Label in batches (each call <=2 images) with limited concurrency.
-        batches: List[List[Dict[str, Any]]] = []
+        batches: list[list[dict[str, Any]]] = []
         bs = max(1, min(2, int(cfg.batch_size)))
-        buf: List[Dict[str, Any]] = []
+        buf: list[dict[str, Any]] = []
         for it in prepared:
             if not str(it.get("local_path") or "").strip():
                 continue
@@ -253,7 +271,7 @@ class ImageLabeler:
         if buf:
             batches.append(buf)
 
-        labeled: Dict[str, Dict[str, Any]] = {}
+        labeled: dict[str, dict[str, Any]] = {}
         if batches:
             astrbot_logger.info(
                 "[dailynews] image_label start: %s images -> %s batches (concurrency=%s)",
@@ -263,7 +281,9 @@ class ImageLabeler:
             )
             call_sem = asyncio.Semaphore(int(cfg.concurrency))
 
-            async def call_batch(batch: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+            async def call_batch(
+                batch: list[dict[str, Any]],
+            ) -> dict[str, dict[str, Any]]:
                 async with call_sem:
                     return await self._label_batch(
                         astrbot_context=astrbot_context,
@@ -277,7 +297,9 @@ class ImageLabeler:
                 labeled.update(m or {})
 
         # Update cache for all items (including those already cached).
-        prepared_by_url: Dict[str, Dict[str, Any]] = {str(it.get("url") or ""): it for it in prepared}
+        prepared_by_url: dict[str, dict[str, Any]] = {
+            str(it.get("url") or ""): it for it in prepared
+        }
         changed = False
 
         for it in items:
@@ -287,7 +309,11 @@ class ImageLabeler:
             src = str(it.get("source") or "").strip()
 
             entry = cache.get(url)
-            if entry and (not cfg.force_refresh) and ((entry.label or "").strip() or bool(entry.skip)):
+            if (
+                entry
+                and (not cfg.force_refresh)
+                and ((entry.label or "").strip() or bool(entry.skip))
+            ):
                 continue
 
             pit = prepared_by_url.get(url) or {}
@@ -300,12 +326,22 @@ class ImageLabeler:
             skip = bool(decision.get("skip") or False)
 
             if not label:
-                label = _shorten_zh(f"{_guess_source_from_url(url) or src or 'other'} 图片", 30)
+                label = _shorten_zh(
+                    f"{_guess_source_from_url(url) or src or 'other'} 图片", 30
+                )
 
             # Conservative heuristic: drop ultra-tall “text wall” screenshots.
-            if not skip and w > 0 and h > 0 and h / max(1.0, float(w)) >= 3.2 and h >= 1400:
+            if (
+                not skip
+                and w > 0
+                and h > 0
+                and h / max(1.0, float(w)) >= 3.2
+                and h >= 1400
+            ):
                 skip = True
-                label = _shorten_zh(f"跳过:长截图文字多({_guess_source_from_url(url) or 'other'})", 30)
+                label = _shorten_zh(
+                    f"跳过:长截图文字多({_guess_source_from_url(url) or 'other'})", 30
+                )
 
             upsert_label(
                 cache,
@@ -323,9 +359,11 @@ class ImageLabeler:
             try:
                 save_labels(cache)
             except Exception as e:
-                astrbot_logger.warning("[dailynews] save_labels failed: %s", e, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] save_labels failed: %s", e, exc_info=True
+                )
 
-        catalog: List[Dict[str, Any]] = []
+        catalog: list[dict[str, Any]] = []
         for it in items:
             url = str(it.get("url") or "").strip()
             if not url:
@@ -348,4 +386,3 @@ class ImageLabeler:
             )
 
         return catalog, cache
-

@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
-from typing import Optional, Tuple
 
 from ..core.image_utils import get_plugin_data_dir
 from .sqlite_store import md_doc_get, md_doc_set
@@ -24,7 +23,7 @@ def doc_path(doc_id: str) -> Path:
     return _docs_dir() / f"{did}.md"
 
 
-def create_doc(markdown: str, *, doc_id: Optional[str] = None) -> Tuple[str, Path]:
+def create_doc(markdown: str, *, doc_id: str | None = None) -> tuple[str, Path]:
     did = (doc_id or "").strip() or uuid.uuid4().hex
     p = doc_path(did)
     write_doc(did, markdown)

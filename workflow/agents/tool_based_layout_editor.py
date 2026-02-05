@@ -3,8 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-import base64
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -21,16 +20,20 @@ from ...tools import (
     MarkdownDocMatchInsertImageTool,
     MarkdownDocReadTool,
 )
-from ..core.config_models import LayoutRefineConfig, RenderImageStyleConfig, RenderPipelineConfig
+from ..core.config_models import (
+    LayoutRefineConfig,
+    RenderImageStyleConfig,
+    RenderPipelineConfig,
+)
 from ..core.image_utils import (
     get_plugin_data_dir,
     merge_images_vertical,
 )
 from ..core.internal_event import make_internal_event
-from ..storage.md_doc_store import create_doc, read_doc, write_doc
+from ..core.utils import _json_from_text
 from ..pipeline.render_pipeline import render_single_page_to_image, split_pages
 from ..pipeline.rendering import load_template
-from ..core.utils import _json_from_text
+from ..storage.md_doc_store import create_doc, read_doc, write_doc
 
 
 class ToolBasedLayoutEditor:
@@ -43,7 +46,7 @@ class ToolBasedLayoutEditor:
         *,
         refine: LayoutRefineConfig,
         style: RenderImageStyleConfig,
-    ) -> Optional[Path]:
+    ) -> Path | None:
         pages = split_pages(
             markdown,
             page_chars=refine.preview_page_chars,
@@ -55,7 +58,7 @@ class ToolBasedLayoutEditor:
         tmpl = load_template("templates/daily_news.html").strip()
         pipeline_cfg = RenderPipelineConfig()
 
-        out_paths: List[str] = []
+        out_paths: list[str] = []
         for idx, page in enumerate(pages, start=1):
             img_path, _ = await render_single_page_to_image(
                 markdown=page,
@@ -89,11 +92,11 @@ class ToolBasedLayoutEditor:
 
     async def _make_candidate_preview(
         self,
-        urls: List[str],
+        urls: list[str],
         *,
         max_width: int = 1080,
         gap: int = 8,
-    ) -> Optional[str]:
+    ) -> str | None:
         if not urls:
             return None
         out = get_plugin_data_dir("layout_tool_requests") / (
@@ -112,9 +115,9 @@ class ToolBasedLayoutEditor:
         self,
         *,
         draft_markdown: str,
-        images_by_source: Dict[str, List[str]],
-        image_catalog: Optional[List[Dict[str, Any]]] = None,
-        user_config: Dict[str, Any],
+        images_by_source: dict[str, list[str]],
+        image_catalog: list[dict[str, Any]] | None = None,
+        user_config: dict[str, Any],
         astrbot_context: Any,
         provider_id: str,
         rounds: int = 2,
@@ -154,16 +157,18 @@ class ToolBasedLayoutEditor:
             if u:
                 allowed_urls.add(u)
 
-        candidate_preview_url: Optional[str] = None
-        candidate_preview_urls: List[str] = []
-        request_budget = max(0, int(request_max_requests)) if send_images_to_model else 0
+        candidate_preview_url: str | None = None
+        candidate_preview_urls: list[str] = []
+        request_budget = (
+            max(0, int(request_max_requests)) if send_images_to_model else 0
+        )
 
         for r in range(1, max(1, int(rounds)) + 1):
             current = read_doc(did).strip()
             if not current:
                 return current
 
-            preview_path: Optional[Path] = None
+            preview_path: Path | None = None
             if send_images_to_model:
                 try:
                     preview_path = await self._render_markdown_preview(
@@ -172,9 +177,13 @@ class ToolBasedLayoutEditor:
                         style=style_cfg,
                     )
                 except Exception as e:
-                    astrbot_logger.warning("[dailynews] tool_layout preview render failed: %s", e, exc_info=True)
+                    astrbot_logger.warning(
+                        "[dailynews] tool_layout preview render failed: %s",
+                        e,
+                        exc_info=True,
+                    )
 
-            image_urls: List[str] = []
+            image_urls: list[str] = []
             if send_images_to_model:
                 if preview_path is not None:
                     image_urls.append(f"file:///{preview_path.resolve().as_posix()}")
@@ -189,7 +198,9 @@ class ToolBasedLayoutEditor:
                 "image_candidates": images_by_source,
                 "image_catalog": image_catalog or [],
                 "constraints": {
-                    "request_max_requests": int(request_budget) if send_images_to_model else 0,
+                    "request_max_requests": int(request_budget)
+                    if send_images_to_model
+                    else 0,
                     "request_max_images": int(request_max_images),
                 },
                 "candidate_preview": {
@@ -228,7 +239,11 @@ class ToolBasedLayoutEditor:
             except Exception as e:
                 # If the model never produces a final response (e.g. loops on md_doc_read),
                 # salvage current doc and stop the tool-based refinement.
-                astrbot_logger.warning("[dailynews] tool_layout tool_loop_agent failed: %s", e, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] tool_layout tool_loop_agent failed: %s",
+                    e,
+                    exc_info=True,
+                )
                 return read_doc(did).strip()
 
             raw = getattr(resp, "completion_text", "") or ""
@@ -242,7 +257,12 @@ class ToolBasedLayoutEditor:
                 write_doc(did, patched_whole)
 
             req = data.get("request_image_urls")
-            if send_images_to_model and request_budget > 0 and isinstance(req, list) and req:
+            if (
+                send_images_to_model
+                and request_budget > 0
+                and isinstance(req, list)
+                and req
+            ):
                 urls = [str(u).strip() for u in req if str(u).strip()]
                 if allowed_urls:
                     urls = [u for u in urls if u in allowed_urls]
@@ -254,7 +274,9 @@ class ToolBasedLayoutEditor:
                         candidate_preview_urls = list(urls)
                     except Exception as e:
                         astrbot_logger.warning(
-                            "[dailynews] tool_layout candidate preview failed: %s", e, exc_info=True
+                            "[dailynews] tool_layout candidate preview failed: %s",
+                            e,
+                            exc_info=True,
                         )
                         candidate_preview_url = None
                         candidate_preview_urls = []
@@ -269,7 +291,9 @@ class ToolBasedLayoutEditor:
                 and candidate_preview_url
                 and candidate_preview_urls
             ):
-                astrbot_logger.info("[dailynews] tool_layout ignoring repeated request_image_urls; proceed")
+                astrbot_logger.info(
+                    "[dailynews] tool_layout ignoring repeated request_image_urls; proceed"
+                )
                 continue
 
             if bool(data.get("done", False)):

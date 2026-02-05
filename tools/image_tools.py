@@ -1,7 +1,7 @@
+import json
 from datetime import datetime
 from pathlib import Path
-import json
-from typing import Any, Dict, List
+from typing import Any
 
 from pydantic import Field
 from pydantic.dataclasses import dataclass
@@ -17,8 +17,13 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from ..workflow.core.image_utils import get_plugin_data_dir, merge_images_vertical, parse_image_urls
-from ..workflow.core.image_utils import download_image_to_jpeg_file, probe_image_size_from_url
+from ..workflow.core.image_utils import (
+    download_image_to_jpeg_file,
+    get_plugin_data_dir,
+    merge_images_vertical,
+    parse_image_urls,
+    probe_image_size_from_url,
+)
 
 
 @dataclass
@@ -29,7 +34,7 @@ class ImageUrlsPreviewTool(FunctionTool[AstrAgentContext]):
 
     name: str = "image_urls_preview"
     description: str = "Merge multiple image URLs into a vertical preview image and return a local file path."
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
@@ -81,7 +86,9 @@ class ImageUrlsPreviewTool(FunctionTool[AstrAgentContext]):
             )
             return str(Path(merged).resolve())
         except Exception as e:
-            astrbot_logger.warning("[dailynews] image_urls_preview failed: %s", e, exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] image_urls_preview failed: %s", e, exc_info=True
+            )
             return f"Preview merge failed: {e}"
 
 
@@ -93,7 +100,7 @@ class ImageUrlDownloadTool(FunctionTool[AstrAgentContext]):
 
     name: str = "image_url_download"
     description: str = "Download one image URL to a local JPEG file and return {local_path,width,height}."
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
@@ -155,5 +162,7 @@ class ImageUrlDownloadTool(FunctionTool[AstrAgentContext]):
                 ensure_ascii=False,
             )
         except Exception as e:
-            astrbot_logger.warning("[dailynews] image_url_download failed: %s", e, exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] image_url_download failed: %s", e, exc_info=True
+            )
             return f"Download failed: {e}"

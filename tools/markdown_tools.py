@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import difflib
 import json
 import re
-import difflib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from pydantic import Field
 from pydantic.dataclasses import dataclass
@@ -32,7 +32,7 @@ def _fuzzy_suggest_lines(
     *,
     limit: int = 5,
     min_score: float = 0.55,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     q = (query or "").strip()
     if not q:
         return []
@@ -41,7 +41,7 @@ def _fuzzy_suggest_lines(
     if not qn:
         return []
 
-    items: List[Tuple[float, int, str]] = []
+    items: list[tuple[float, int, str]] = []
     for idx, raw_line in enumerate((text or "").splitlines(), start=1):
         line = raw_line.strip()
         if not line:
@@ -61,7 +61,7 @@ def _fuzzy_suggest_lines(
         items.append((score, idx, line))
 
     items.sort(key=lambda x: (-x[0], x[1]))
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for score, line_no, line in items[: max(1, min(int(limit), 20))]:
         out.append({"line_no": line_no, "text": line, "score": round(float(score), 3)})
     return out
@@ -75,13 +75,15 @@ def _normalize_occurrence(value: Any, default: int = 1) -> int:
     return n
 
 
-def _find_spans(text: str, *, match: str, regex: bool, occurrence: int) -> List[Tuple[int, int]]:
+def _find_spans(
+    text: str, *, match: str, regex: bool, occurrence: int
+) -> list[tuple[int, int]]:
     s = text or ""
-    m = (match or "")
+    m = match or ""
     if not s or not m:
         return []
 
-    spans: List[Tuple[int, int]] = []
+    spans: list[tuple[int, int]] = []
     if regex:
         if len(m) > 600:
             return []
@@ -109,7 +111,7 @@ def _find_spans(text: str, *, match: str, regex: bool, occurrence: int) -> List[
     return spans
 
 
-def _line_bounds(text: str, pos: int) -> Tuple[int, int]:
+def _line_bounds(text: str, pos: int) -> tuple[int, int]:
     s = text or ""
     pos = max(0, min(int(pos), len(s)))
     ls = s.rfind("\n", 0, pos)
@@ -123,7 +125,9 @@ def _line_bounds(text: str, pos: int) -> Tuple[int, int]:
     return ls, le
 
 
-def _insert_after_line(text: str, *, line_pos: int, insert_text: str, ensure_blank_line: bool) -> str:
+def _insert_after_line(
+    text: str, *, line_pos: int, insert_text: str, ensure_blank_line: bool
+) -> str:
     s = text or ""
     _, le = _line_bounds(s, line_pos)
     insert_at = le
@@ -144,11 +148,11 @@ def _insert_after_line(text: str, *, line_pos: int, insert_text: str, ensure_bla
     return before + ins + after
 
 
-def _apply_edits(text: str, edits: List[Dict[str, Any]]) -> Tuple[str, Dict[str, Any]]:
+def _apply_edits(text: str, edits: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
     md = text or ""
     applied = 0
-    errors: List[str] = []
-    not_found: List[Dict[str, Any]] = []
+    errors: list[str] = []
+    not_found: list[dict[str, Any]] = []
 
     for e in edits or []:
         if not isinstance(e, dict):
@@ -161,7 +165,12 @@ def _apply_edits(text: str, edits: List[Dict[str, Any]]) -> Tuple[str, Dict[str,
         if op not in {"replace", "delete", "insert_after", "insert_before"}:
             errors.append(f"unsupported op: {op}")
             continue
-        spans = _find_spans(md, match=match, regex=regex, occurrence=occurrence if occurrence != 0 else 10**9)
+        spans = _find_spans(
+            md,
+            match=match,
+            regex=regex,
+            occurrence=occurrence if occurrence != 0 else 10**9,
+        )
         if not spans:
             errors.append(f"match not found: {match[:60]}")
             if not regex and match and len(match) <= 240:
@@ -202,43 +211,59 @@ def _apply_edits(text: str, edits: List[Dict[str, Any]]) -> Tuple[str, Dict[str,
 class MarkdownDocCreateTool(FunctionTool[AstrAgentContext]):
     name: str = "md_doc_create"
     description: str = "Create a markdown doc for editing and return {doc_id}."
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
-                "markdown": {"type": "string", "description": "Initial markdown content"},
-                "doc_id": {"type": "string", "description": "Optional doc id (leave empty for auto)"},
+                "markdown": {
+                    "type": "string",
+                    "description": "Initial markdown content",
+                },
+                "doc_id": {
+                    "type": "string",
+                    "description": "Optional doc id (leave empty for auto)",
+                },
             },
             "required": ["markdown"],
         }
     )
 
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
         md = str(kwargs.get("markdown") or "")
         doc_id = str(kwargs.get("doc_id") or "").strip() or None
         did, path = create_doc(md, doc_id=doc_id)
-        return _json_dump({"doc_id": did, "path": str(path.resolve()), "length": len(md)})
+        return _json_dump(
+            {"doc_id": did, "path": str(path.resolve()), "length": len(md)}
+        )
 
 
 @dataclass
 class MarkdownDocReadTool(FunctionTool[AstrAgentContext]):
     name: str = "md_doc_read"
-    description: str = (
-        "Read a markdown doc. Use start/max_chars to paginate; avoid repeating the same call."
-    )
-    parameters: Dict[str, Any] = Field(
+    description: str = "Read a markdown doc. Use start/max_chars to paginate; avoid repeating the same call."
+    parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "doc_id": {"type": "string", "description": "Doc id"},
-                "start": {"type": "integer", "description": "Start offset (chars), default 0"},
-                "max_chars": {"type": "integer", "description": "Max chars to return, default 2400"},
+                "start": {
+                    "type": "integer",
+                    "description": "Start offset (chars), default 0",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Max chars to return, default 2400",
+                },
             },
             "required": ["doc_id"],
         }
     )
 
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
         doc_id = str(kwargs.get("doc_id") or "").strip()
         start = int(kwargs.get("start", 0) or 0)
         max_chars = int(kwargs.get("max_chars", 2400) or 2400)
@@ -253,7 +278,7 @@ class MarkdownDocReadTool(FunctionTool[AstrAgentContext]):
         except Exception:
             extra = None
 
-        state: Dict[str, Any] = {}
+        state: dict[str, Any] = {}
         if isinstance(extra, dict):
             raw = extra.get(guard_key)
             if isinstance(raw, str) and raw.strip():
@@ -305,10 +330,8 @@ class MarkdownDocReadTool(FunctionTool[AstrAgentContext]):
 @dataclass
 class MarkdownDocApplyEditsTool(FunctionTool[AstrAgentContext]):
     name: str = "md_doc_apply_edits"
-    description: str = (
-        "Apply edit operations (replace/insert/delete) to a markdown doc by matching text/regex."
-    )
-    parameters: Dict[str, Any] = Field(
+    description: str = "Apply edit operations (replace/insert/delete) to a markdown doc by matching text/regex."
+    parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
@@ -352,7 +375,9 @@ class MarkdownDocApplyEditsTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
         doc_id = str(kwargs.get("doc_id") or "").strip()
         edits = kwargs.get("edits") or []
         if not isinstance(edits, list) or not edits:
@@ -379,17 +404,21 @@ class MarkdownDocApplyEditsTool(FunctionTool[AstrAgentContext]):
 @dataclass
 class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
     name: str = "md_doc_match_insert_image"
-    description: str = (
-        "Match text in markdown and insert an image markdown `![](url)` right after the matched line."
-    )
-    parameters: Dict[str, Any] = Field(
+    description: str = "Match text in markdown and insert an image markdown `![](url)` right after the matched line."
+    parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "doc_id": {"type": "string", "description": "Doc id"},
                 "match": {"type": "string", "description": "Text or regex to match"},
-                "regex": {"type": "boolean", "description": "Treat match as regex, default false"},
-                "occurrence": {"type": "integer", "description": "1=first, 0=all, 2=second..."},
+                "regex": {
+                    "type": "boolean",
+                    "description": "Treat match as regex, default false",
+                },
+                "occurrence": {
+                    "type": "integer",
+                    "description": "1=first, 0=all, 2=second...",
+                },
                 "image_url": {"type": "string", "description": "Image URL to insert"},
                 "alt": {"type": "string", "description": "Alt text, default empty"},
                 "ensure_blank_line": {
@@ -405,7 +434,9 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
         }
     )
 
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> ToolExecResult:
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
         doc_id = str(kwargs.get("doc_id") or "").strip()
         match = str(kwargs.get("match") or "")
         regex = bool(kwargs.get("regex", False))
@@ -439,9 +470,14 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
                     "image_url": image_url,
                 }
             )
-        spans = _find_spans(md, match=match, regex=regex, occurrence=occurrence if occurrence != 0 else 10**9)
+        spans = _find_spans(
+            md,
+            match=match,
+            regex=regex,
+            occurrence=occurrence if occurrence != 0 else 10**9,
+        )
         if not spans:
-            suggestions: List[Dict[str, Any]] = []
+            suggestions: list[dict[str, Any]] = []
             if not regex and match and len(match) <= 240:
                 suggestions = _fuzzy_suggest_lines(md, match, limit=suggestions_limit)
             return _json_dump(

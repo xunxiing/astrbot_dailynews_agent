@@ -12,4 +12,8 @@ __all__ = [
     "WechatAlbumLatestArticlesTool",
     "ImageUrlsPreviewTool",
     "ImageUrlDownloadTool",
+    "MarkdownDocApplyEditsTool",
+    "MarkdownDocCreateTool",
+    "MarkdownDocMatchInsertImageTool",
+    "MarkdownDocReadTool",
 ]

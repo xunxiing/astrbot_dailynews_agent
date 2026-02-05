@@ -1,5 +1,4 @@
 import sys
-from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 from playwright.sync_api import sync_playwright
@@ -23,8 +22,8 @@ WECHAT_MOBILE_UA = (
 def get_album_articles(
     article_url: str,
     limit: int = 5,
-    album_keyword: Optional[str] = None,
-) -> List[Dict[str, str]]:
+    album_keyword: str | None = None,
+) -> list[dict[str, str]]:
     """
     无头模式：从公众号文章页打开「合集/专辑目录」弹窗并抓取最新文章。
 
@@ -39,15 +38,21 @@ def get_album_articles(
         try:
             import sys
             from pathlib import Path
+
             # analysis/wechatanalysis/latest_articles.py -> parents[2] is plugin root
             root = str(Path(__file__).resolve().parents[2])
             if root not in sys.path:
                 sys.path.append(root)
-            from workflow.pipeline.playwright_bootstrap import get_chromium_executable_path
+            from workflow.pipeline.playwright_bootstrap import (
+                get_chromium_executable_path,
+            )
+
             exe = get_chromium_executable_path()
             executable_path = str(exe) if exe else None
         except Exception as e:
-            astrbot_logger.debug(f"[dailynews] get_chromium_executable_path import failed: {e}")
+            astrbot_logger.debug(
+                f"[dailynews] get_chromium_executable_path import failed: {e}"
+            )
             executable_path = None
 
         if executable_path:
@@ -125,7 +130,7 @@ def get_album_articles(
         raise RuntimeError("没有从目录弹窗里解析到文章链接")
 
     seen = set()
-    articles: List[Dict[str, str]] = []
+    articles: list[dict[str, str]] = []
     for item in items:
         url = item.get("url") or ""
         title = item.get("title") or ""
@@ -149,9 +154,9 @@ def get_album_articles(
 def get_album_articles_chasing_latest(
     article_url: str,
     limit: int = 5,
-    album_keyword: Optional[str] = None,
+    album_keyword: str | None = None,
     max_hops: int = 6,
-) -> List[Dict[str, str]]:
+) -> list[dict[str, str]]:
     """
     解决「目录弹窗默认定位在当前文章附近」导致抓到的并非全局最新的问题：
     每次取“当前窗口里的第一篇(最上面)”作为新种子，再抓一次，直到第一篇不再变化。
@@ -161,7 +166,7 @@ def get_album_articles_chasing_latest(
 
     curr = article_url
     seen = set()
-    last_articles: List[Dict[str, str]] = []
+    last_articles: list[dict[str, str]] = []
 
     for _ in range(max(1, int(max_hops))):
         if curr in seen:
@@ -169,7 +174,9 @@ def get_album_articles_chasing_latest(
         seen.add(curr)
 
         try:
-            articles = get_album_articles(curr, limit=limit, album_keyword=album_keyword)
+            articles = get_album_articles(
+                curr, limit=limit, album_keyword=album_keyword
+            )
         except Exception:
             # 失败时直接返回上一轮结果（若没有则为空）
             return last_articles
@@ -193,9 +200,9 @@ def get_album_articles_chasing_latest(
 def get_album_articles_chasing_latest_with_seed(
     article_url: str,
     limit: int = 5,
-    album_keyword: Optional[str] = None,
+    album_keyword: str | None = None,
     max_hops: int = 6,
-) -> Tuple[str, List[Dict[str, str]]]:
+) -> tuple[str, list[dict[str, str]]]:
     """
     与 get_album_articles_chasing_latest() 一致，但会额外返回稳定后的种子 URL。
     返回: (seed_url, articles)
@@ -203,7 +210,7 @@ def get_album_articles_chasing_latest_with_seed(
 
     curr = article_url
     seen = set()
-    last_articles: List[Dict[str, str]] = []
+    last_articles: list[dict[str, str]] = []
 
     for _ in range(max(1, int(max_hops))):
         if curr in seen:
@@ -211,7 +218,9 @@ def get_album_articles_chasing_latest_with_seed(
         seen.add(curr)
 
         try:
-            articles = get_album_articles(curr, limit=limit, album_keyword=album_keyword)
+            articles = get_album_articles(
+                curr, limit=limit, album_keyword=album_keyword
+            )
         except Exception:
             return curr, last_articles
 
@@ -233,7 +242,9 @@ def get_album_articles_chasing_latest_with_seed(
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        astrbot_logger.info('用法: python latest_articles.py "文章链接" [数量] [目录关键词]')
+        astrbot_logger.info(
+            '用法: python latest_articles.py "文章链接" [数量] [目录关键词]'
+        )
         sys.exit(1)
 
     url = sys.argv[1]

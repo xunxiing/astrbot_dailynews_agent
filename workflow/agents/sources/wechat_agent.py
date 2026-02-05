@@ -1,7 +1,7 @@
 import asyncio
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -13,11 +13,14 @@ except Exception:  # pragma: no cover
 try:
     import sys
     from pathlib import Path
+
     root = str(Path(__file__).resolve().parents[3])
     if root not in sys.path:
         sys.path.append(root)
     from analysis.wechatanalysis.analysis import fetch_wechat_article
-    from analysis.wechatanalysis.latest_articles import get_album_articles_chasing_latest_with_seed
+    from analysis.wechatanalysis.latest_articles import (
+        get_album_articles_chasing_latest_with_seed,
+    )
 except Exception:  # pragma: no cover
     from analysis.wechatanalysis.analysis import fetch_wechat_article  # type: ignore
     from analysis.wechatanalysis.latest_articles import (  # type: ignore
@@ -26,16 +29,16 @@ except Exception:  # pragma: no cover
 
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
-from ...storage.seed_store import _get_seed_state, _update_seed_entry
 from ...core.utils import _json_from_text, _run_sync, ensure_section_links
+from ...storage.seed_store import _get_seed_state, _update_seed_entry
 
 
 class WechatSubAgent:
     """公众号子 Agent：抓取最新文章列表、抓取正文并写出小节"""
 
     async def fetch_latest_articles(
-        self, source: NewsSourceConfig, user_config: Dict[str, Any]
-    ) -> Tuple[str, List[Dict[str, str]]]:
+        self, source: NewsSourceConfig, user_config: dict[str, Any]
+    ) -> tuple[str, list[dict[str, str]]]:
         limit = max(int(source.max_articles), 5)
         max_hops = int(user_config.get("wechat_chase_max_hops", 6))
         persist_seed = bool(user_config.get("wechat_seed_persist", True))
@@ -50,7 +53,7 @@ class WechatSubAgent:
             entry = {}
 
         # Keep a small pool of last-known seed URLs to avoid occasional bad redirects/pages.
-        candidates: List[str] = []
+        candidates: list[str] = []
         seen = set()
 
         def _push(u: str):
@@ -77,7 +80,7 @@ class WechatSubAgent:
             _push(last_good_seed_url)
 
         seed_url = ""
-        articles: List[Dict[str, str]] = []
+        articles: list[dict[str, str]] = []
         last_err: str = ""
 
         for start_url in candidates[: max(1, len(candidates))]:
@@ -123,7 +126,7 @@ class WechatSubAgent:
             if articles:
                 # Update pool: put latest seed_url at front, keep up to 3.
                 if persist_seed and seed_url:
-                    new_pool: List[str] = []
+                    new_pool: list[str] = []
                     for u in [seed_url] + [x for x in candidates if x != seed_url]:
                         if u and u not in new_pool and "mp.weixin.qq.com/s" in u:
                             new_pool.append(u)
@@ -156,8 +159,8 @@ class WechatSubAgent:
         return source.name, articles
 
     async def analyze_source(
-        self, source: NewsSourceConfig, articles: List[Dict[str, str]], llm: LLMRunner
-    ) -> Dict[str, Any]:
+        self, source: NewsSourceConfig, articles: list[dict[str, str]], llm: LLMRunner
+    ) -> dict[str, Any]:
         system_prompt = (
             "你是子Agent（信息侦察）。"
             "你将收到某个公众号来源的最新文章标题与链接。"
@@ -190,7 +193,9 @@ class WechatSubAgent:
             },
         }
 
-        raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+        raw = await llm.ask(
+            system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False)
+        )
         data = _json_from_text(raw) or {}
         topics = data.get("topics", [])
         if not isinstance(topics, list):
@@ -228,9 +233,9 @@ class WechatSubAgent:
         self,
         source: NewsSourceConfig,
         instruction: str,
-        articles: List[Dict[str, str]],
+        articles: list[dict[str, str]],
         llm: LLMRunner,
-        user_config: Dict[str, Any] | None = None,
+        user_config: dict[str, Any] | None = None,
     ) -> SubAgentResult:
         if not articles:
             return SubAgentResult(
@@ -246,12 +251,16 @@ class WechatSubAgent:
         max_fetch_concurrency = 2
         sem = asyncio.Semaphore(max_fetch_concurrency)
 
-        async def _fetch_one(a: Dict[str, str]) -> Dict[str, Any]:
+        async def _fetch_one(a: dict[str, str]) -> dict[str, Any]:
             url = (a.get("url") or "").strip()
             if not url:
-                return {"title": (a.get("title") or "").strip(), "url": "", "error": "missing url"}
+                return {
+                    "title": (a.get("title") or "").strip(),
+                    "url": "",
+                    "error": "missing url",
+                }
 
-            last_err: Optional[str] = None
+            last_err: str | None = None
             for attempt in range(1, 3):
                 try:
                     async with sem:
@@ -262,7 +271,9 @@ class WechatSubAgent:
                     image_urls = detail.get("image_urls") or []
                     if not isinstance(image_urls, list):
                         image_urls = []
-                    image_urls = [str(u) for u in image_urls if isinstance(u, str) and u.strip()][:30]
+                    image_urls = [
+                        str(u) for u in image_urls if isinstance(u, str) and u.strip()
+                    ][:30]
                     return {
                         "title": (detail.get("title") or a.get("title") or "").strip(),
                         "url": url,
@@ -280,10 +291,16 @@ class WechatSubAgent:
                         exc_info=True,
                     )
                     await asyncio.sleep(1.0 * attempt)
-            return {"title": (a.get("title") or "").strip(), "url": url, "error": last_err or "unknown"}
+            return {
+                "title": (a.get("title") or "").strip(),
+                "url": url,
+                "error": last_err or "unknown",
+            }
 
-        article_details = await asyncio.gather(*[_fetch_one(a) for a in chosen], return_exceptions=False)
-        images: List[str] = []
+        article_details = await asyncio.gather(
+            *[_fetch_one(a) for a in chosen], return_exceptions=False
+        )
+        images: list[str] = []
         seen = set()
         for d in article_details:
             if not isinstance(d, dict):
@@ -293,7 +310,9 @@ class WechatSubAgent:
                     seen.add(u)
                     images.append(u)
         if images:
-            astrbot_logger.info("[dailynews] %s collected %s image urls", source.name, len(images))
+            astrbot_logger.info(
+                "[dailynews] %s collected %s image urls", source.name, len(images)
+            )
 
         system_prompt = (
             "你是子Agent（写作）。"
@@ -313,10 +332,20 @@ class WechatSubAgent:
         }
 
         try:
-            raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+            raw = await llm.ask(
+                system_prompt=system_prompt,
+                prompt=json.dumps(prompt, ensure_ascii=False),
+            )
         except Exception as e:
-            astrbot_logger.warning("[dailynews] subagent write failed, fallback: %s", e, exc_info=True)
-            lines = [f"## {source.name}", "", "（模型生成失败/超时，以下为自动回退摘要）", ""]
+            astrbot_logger.warning(
+                "[dailynews] subagent write failed, fallback: %s", e, exc_info=True
+            )
+            lines = [
+                f"## {source.name}",
+                "",
+                "（模型生成失败/超时，以下为自动回退摘要）",
+                "",
+            ]
             for a in chosen:
                 t = (a.get("title") or "").strip()
                 u = (a.get("url") or "").strip()

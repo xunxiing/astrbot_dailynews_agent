@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import aiohttp
 
@@ -19,11 +19,12 @@ from ...core.models import NewsSourceConfig, SubAgentResult
 from ...core.utils import _json_from_text
 from ...pipeline.rendering import load_template
 
+HUXIU_XIUXIU_API = (
+    "https://api-data-mini.huxiu.com/hxgpt/agent/ai-product-daily/v3/detail-list"
+)
 
-HUXIU_XIUXIU_API = "https://api-data-mini.huxiu.com/hxgpt/agent/ai-product-daily/v3/detail-list"
 
-
-def _pick_date(meta: Dict[str, Any] | None) -> str:
+def _pick_date(meta: dict[str, Any] | None) -> str:
     if not isinstance(meta, dict):
         meta = {}
     raw = str(meta.get("date") or "").strip()
@@ -38,7 +39,7 @@ def _pick_date(meta: Dict[str, Any] | None) -> str:
     return (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
 
 
-def _as_list_str(v: Any) -> List[str]:
+def _as_list_str(v: Any) -> list[str]:
     if isinstance(v, list):
         return [str(x).strip() for x in v if str(x).strip()]
     if isinstance(v, str) and v.strip():
@@ -54,8 +55,8 @@ class XiuxiuAISubAgent:
     """
 
     async def fetch_latest_articles(
-        self, source: NewsSourceConfig, user_config: Dict[str, Any]
-    ) -> Tuple[str, List[Dict[str, Any]]]:
+        self, source: NewsSourceConfig, user_config: dict[str, Any]
+    ) -> tuple[str, list[dict[str, Any]]]:
         meta = source.meta or {}
         date_str = _pick_date(meta)
         page_size = max(5, int(source.max_articles or 20))
@@ -76,16 +77,22 @@ class XiuxiuAISubAgent:
         timeout = aiohttp.ClientTimeout(total=20)
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(HUXIU_XIUXIU_API, headers=headers, data=payload) as resp:
+                async with session.post(
+                    HUXIU_XIUXIU_API, headers=headers, data=payload
+                ) as resp:
                     if resp.status != 200:
-                        astrbot_logger.warning("[dailynews] xiuxiu_ai http %s", resp.status)
+                        astrbot_logger.warning(
+                            "[dailynews] xiuxiu_ai http %s", resp.status
+                        )
                         return source.name, []
                     data = await resp.json()
         except asyncio.TimeoutError:
             astrbot_logger.warning("[dailynews] xiuxiu_ai timeout")
             return source.name, []
         except Exception as e:
-            astrbot_logger.warning("[dailynews] xiuxiu_ai fetch failed: %s", e, exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] xiuxiu_ai fetch failed: %s", e, exc_info=True
+            )
             return source.name, []
 
         root = data.get("data") if isinstance(data, dict) else None
@@ -93,16 +100,26 @@ class XiuxiuAISubAgent:
         if not isinstance(event_list, list) or not event_list:
             return source.name, []
 
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for group in event_list:
             if not isinstance(group, dict):
                 continue
-            category = str(group.get("dynamic_group") or group.get("dynamic_title") or "").strip()
-            items = group.get("group_list") if isinstance(group.get("group_list"), list) else []
+            category = str(
+                group.get("dynamic_group") or group.get("dynamic_title") or ""
+            ).strip()
+            items = (
+                group.get("group_list")
+                if isinstance(group.get("group_list"), list)
+                else []
+            )
             for it in items:
                 if not isinstance(it, dict):
                     continue
-                share = it.get("share_info") if isinstance(it.get("share_info"), dict) else {}
+                share = (
+                    it.get("share_info")
+                    if isinstance(it.get("share_info"), dict)
+                    else {}
+                )
                 share_url = str(share.get("share_url") or "").strip()
                 out.append(
                     {
@@ -111,7 +128,9 @@ class XiuxiuAISubAgent:
                         "ai_comment": str(it.get("ai_comment") or "").strip(),
                         "product_name": _as_list_str(it.get("product_name")),
                         "industry": _as_list_str(it.get("industry")),
-                        "publish_datetime": str(it.get("publish_datetime") or "").strip(),
+                        "publish_datetime": str(
+                            it.get("publish_datetime") or ""
+                        ).strip(),
                         "sub_dynamic": str(it.get("sub_dynamic") or "").strip(),
                         "share_url": share_url,
                         "event_id": str(it.get("event_id") or "").strip(),
@@ -121,10 +140,10 @@ class XiuxiuAISubAgent:
         return source.name, out[:page_size]
 
     async def analyze_source(
-        self, source: NewsSourceConfig, articles: List[Dict[str, Any]], llm: LLMRunner
-    ) -> Dict[str, Any]:
+        self, source: NewsSourceConfig, articles: list[dict[str, Any]], llm: LLMRunner
+    ) -> dict[str, Any]:
         cnt = len(articles or [])
-        categories: List[str] = []
+        categories: list[str] = []
         seen = set()
         for a in articles[:20]:
             if not isinstance(a, dict):
@@ -151,9 +170,9 @@ class XiuxiuAISubAgent:
         self,
         source: NewsSourceConfig,
         instruction: str,
-        articles: List[Dict[str, Any]],
+        articles: list[dict[str, Any]],
         llm: LLMRunner,
-        user_config: Dict[str, Any] | None = None,
+        user_config: dict[str, Any] | None = None,
     ) -> SubAgentResult:
         if not articles:
             return SubAgentResult(
@@ -165,7 +184,9 @@ class XiuxiuAISubAgent:
                 error=None,
             )
 
-        system_prompt = str(load_template("templates/prompts/xiuxiu_ai_agent_system.txt") or "").strip()
+        system_prompt = str(
+            load_template("templates/prompts/xiuxiu_ai_agent_system.txt") or ""
+        ).strip()
         prompt = {
             "source_name": source.name,
             "instruction": instruction,
@@ -178,7 +199,10 @@ class XiuxiuAISubAgent:
         }
 
         try:
-            raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+            raw = await llm.ask(
+                system_prompt=system_prompt,
+                prompt=json.dumps(prompt, ensure_ascii=False),
+            )
             data = _json_from_text(raw)
             if isinstance(data, dict):
                 section = str(data.get("section_markdown") or "").strip()
@@ -195,15 +219,20 @@ class XiuxiuAISubAgent:
                     error=None,
                 )
         except Exception:
-            astrbot_logger.warning("[dailynews] xiuxiu_ai write failed; fallback to deterministic markdown", exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] xiuxiu_ai write failed; fallback to deterministic markdown",
+                exc_info=True,
+            )
 
         # Fallback: deterministic markdown evidence (no raw URLs).
-        lines: List[str] = [f"## {source.name}", ""]
-        by_cat: Dict[str, List[Dict[str, Any]]] = {}
+        lines: list[str] = [f"## {source.name}", ""]
+        by_cat: dict[str, list[dict[str, Any]]] = {}
         for a in articles:
             if not isinstance(a, dict):
                 continue
-            by_cat.setdefault(str(a.get("category") or "").strip() or "今日要点", []).append(a)
+            by_cat.setdefault(
+                str(a.get("category") or "").strip() or "今日要点", []
+            ).append(a)
 
         for cat, rows in list(by_cat.items())[:8]:
             if not rows:
@@ -235,4 +264,3 @@ class XiuxiuAISubAgent:
             images=None,
             error=None,
         )
-

@@ -1,10 +1,10 @@
+import asyncio
 import os
 import sys
-import asyncio
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
-from playwright.sync_api import sync_playwright
 import aiohttp
+from playwright.sync_api import sync_playwright
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 # ---------- 工具函数 ----------
+
 
 def sanitize_filename(name: str) -> str:
     """清理标题，变成安全的文件名（兼容 Windows）"""
@@ -28,12 +29,15 @@ def sanitize_filename(name: str) -> str:
 
 # ---------- 第一步：用 Playwright 抓取文章 ----------
 
+
 def fetch_wechat_article(url: str):
     """用 Playwright 获取文章信息（标题、作者、时间、正文、图片链接）"""
     with sync_playwright() as p:
         executable_path = None
         try:
-            from workflow.pipeline.playwright_bootstrap import get_chromium_executable_path
+            from workflow.pipeline.playwright_bootstrap import (
+                get_chromium_executable_path,
+            )
 
             exe = get_chromium_executable_path()
             executable_path = str(exe) if exe else None
@@ -98,6 +102,7 @@ def fetch_wechat_article(url: str):
 
 # ---------- 第二步：用 aiohttp 并发下载图片 ----------
 
+
 async def _download_one_image(session, idx, img_url, images_dir, referer_url):
     """下载单张图片，返回在 MD 中用的相对路径；失败则返回 None"""
     # 从 URL 的 wx_fmt 参数推断图片格式
@@ -150,7 +155,9 @@ async def download_images_async(image_urls, referer_url, images_dir, max_concurr
     async with aiohttp.ClientSession(headers=headers, connector=connector) as session:
         tasks = []
         for idx, url in enumerate(image_urls):
-            tasks.append(_download_one_image(session, idx, url, images_dir, referer_url))
+            tasks.append(
+                _download_one_image(session, idx, url, images_dir, referer_url)
+            )
 
         results = await asyncio.gather(*tasks)
 
@@ -168,6 +175,7 @@ def download_images(image_urls, referer_url, images_dir, max_concurrency=8):
 
 
 # ---------- 第三步：生成 Markdown ----------
+
 
 def build_markdown(data, local_image_paths, url):
     """根据文章信息 + 图片本地路径，生成 Markdown 文本"""
@@ -214,6 +222,7 @@ def save_markdown(md_text, title, output_dir):
 
 
 # ---------- 主流程 ----------
+
 
 def wechat_to_markdown(url: str, output_dir="output", max_concurrency=8):
     """主流程：拉取文章 → 并发下载图片 → 生成并保存 MD"""

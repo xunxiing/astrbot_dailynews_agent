@@ -1,7 +1,7 @@
 import html as html_lib
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from playwright.sync_api import sync_playwright
 
@@ -35,7 +35,9 @@ def _html_to_text_basic(html: str) -> str:
     return text
 
 
-def _find_post_like(obj: Any, depth: int = 0, max_depth: int = 10) -> Optional[Dict[str, Any]]:
+def _find_post_like(
+    obj: Any, depth: int = 0, max_depth: int = 10
+) -> dict[str, Any] | None:
     if depth > max_depth:
         return None
 
@@ -54,7 +56,9 @@ def _find_post_like(obj: Any, depth: int = 0, max_depth: int = 10) -> Optional[D
 
         if "article" in obj and isinstance(obj["article"], dict):
             a = obj["article"]
-            if any(k in a for k in ["subject", "title"]) and any(k in a for k in ["content", "body"]):
+            if any(k in a for k in ["subject", "title"]) and any(
+                k in a for k in ["content", "body"]
+            ):
                 return a
 
         for v in obj.values():
@@ -70,7 +74,7 @@ def _find_post_like(obj: Any, depth: int = 0, max_depth: int = 10) -> Optional[D
     return None
 
 
-def _content_to_text(content: Any) -> Tuple[str, List[str]]:
+def _content_to_text(content: Any) -> tuple[str, list[str]]:
     if content is None:
         return "", []
     if isinstance(content, str):
@@ -90,8 +94,8 @@ def _content_to_text(content: Any) -> Tuple[str, List[str]]:
             img_urls.append(s)
         return _html_to_text_basic(html), img_urls
     if isinstance(content, list):
-        lines: List[str] = []
-        imgs: List[str] = []
+        lines: list[str] = []
+        imgs: list[str] = []
         for blk in content:
             if not isinstance(blk, dict):
                 continue
@@ -118,7 +122,7 @@ def _content_to_text(content: Any) -> Tuple[str, List[str]]:
     return str(content).strip(), []
 
 
-def fetch_miyoushe_post(article_url: str) -> Dict[str, Any]:
+def fetch_miyoushe_post(article_url: str) -> dict[str, Any]:
     """
     抓取米游社帖子页：优先抓取页面发起的 bbs-api `getPostFull` 响应（更稳更全），失败则回退到 DOM 容器解析。
     返回：{title, content_text, image_urls}
@@ -129,7 +133,9 @@ def fetch_miyoushe_post(article_url: str) -> Dict[str, Any]:
     with sync_playwright() as p:
         executable_path = None
         try:
-            from workflow.pipeline.playwright_bootstrap import get_chromium_executable_path
+            from workflow.pipeline.playwright_bootstrap import (
+                get_chromium_executable_path,
+            )
 
             exe = get_chromium_executable_path()
             executable_path = str(exe) if exe else None
@@ -165,12 +171,20 @@ def fetch_miyoushe_post(article_url: str) -> Dict[str, Any]:
                 if resp and resp.status == 200:
                     data = resp.json() or {}
                     post_wrap = (data.get("data") or {}).get("post") or {}
-                    post = post_wrap.get("post") if isinstance(post_wrap.get("post"), dict) else {}
-                    title = (post.get("subject") or post.get("title") or "").strip() or page.title().strip() or "未命名帖子"
+                    post = (
+                        post_wrap.get("post")
+                        if isinstance(post_wrap.get("post"), dict)
+                        else {}
+                    )
+                    title = (
+                        (post.get("subject") or post.get("title") or "").strip()
+                        or page.title().strip()
+                        or "未命名帖子"
+                    )
                     content_html = (post.get("content") or "").strip()
                     content_text = _html_to_text_basic(content_html)
 
-                    imgs: List[str] = []
+                    imgs: list[str] = []
                     img_list = post_wrap.get("image_list")
                     if isinstance(img_list, list):
                         for it in img_list:
@@ -187,9 +201,15 @@ def fetch_miyoushe_post(article_url: str) -> Dict[str, Any]:
                             imgs.append(cu)
 
                     seen = set()
-                    images = [u for u in imgs if u and (u not in seen and not seen.add(u))]
+                    images = [
+                        u for u in imgs if u and (u not in seen and not seen.add(u))
+                    ]
                     browser.close()
-                    return {"title": title, "content_text": content_text, "image_urls": images}
+                    return {
+                        "title": title,
+                        "content_text": content_text,
+                        "image_urls": images,
+                    }
             except Exception:
                 # 继续走 DOM fallback
                 pass
@@ -211,10 +231,16 @@ def fetch_miyoushe_post(article_url: str) -> Dict[str, Any]:
             nuxt = page.evaluate("() => window.__NUXT__")
             post = _find_post_like(nuxt)
             if isinstance(post, dict):
-                title = (post.get("subject") or post.get("title") or "").strip() or page.title().strip() or "未命名帖子"
-                content = post.get("content") or post.get("post_content") or post.get("body")
+                title = (
+                    (post.get("subject") or post.get("title") or "").strip()
+                    or page.title().strip()
+                    or "未命名帖子"
+                )
+                content = (
+                    post.get("content") or post.get("post_content") or post.get("body")
+                )
                 content_text, imgs1 = _content_to_text(content)
-                imgs2: List[str] = []
+                imgs2: list[str] = []
                 for k in ["images", "image_list", "img_list", "covers", "cover"]:
                     v = post.get(k)
                     if isinstance(v, str) and v.startswith("http"):
@@ -232,11 +258,15 @@ def fetch_miyoushe_post(article_url: str) -> Dict[str, Any]:
                 browser.close()
                 imgs = []
                 seen = set()
-                for u in (imgs1 + imgs2):
+                for u in imgs1 + imgs2:
                     if isinstance(u, str) and u and u not in seen:
                         seen.add(u)
                         imgs.append(u)
-                return {"title": title, "content_text": content_text, "image_urls": imgs}
+                return {
+                    "title": title,
+                    "content_text": content_text,
+                    "image_urls": imgs,
+                }
         except Exception:
             pass
 
@@ -278,7 +308,7 @@ def fetch_miyoushe_post(article_url: str) -> Dict[str, Any]:
             pass
         time.sleep(0.6)
 
-        img_urls: List[str] = []
+        img_urls: list[str] = []
         try:
             ql_images = content.first.locator(".ql-image")
             if ql_images.count() > 0:

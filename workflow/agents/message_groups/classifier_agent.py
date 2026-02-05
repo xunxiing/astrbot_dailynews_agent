@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -14,7 +15,6 @@ except Exception:  # pragma: no cover
 
 from ...core.llm import LLMRunner
 from .tag_store import TagDef
-
 
 _URL_RE = re.compile(r"https?://[^\s)>\"]+")
 
@@ -44,13 +44,29 @@ def _heuristic_tag(text: str, tags: Sequence[TagDef]) -> str:
         return "[AstrBot]"
     if has_any(["github", "repo", "release", "commit", "pull request", "pr", "issue"]):
         return "[GitHub项目]"
-    if has_any(["llm", "gpt", "openai", "模型", "大模型", "aigc", "paper", "论文", "qwen", "llama", "transformer"]):
+    if has_any(
+        [
+            "llm",
+            "gpt",
+            "openai",
+            "模型",
+            "大模型",
+            "aigc",
+            "paper",
+            "论文",
+            "qwen",
+            "llama",
+            "transformer",
+        ]
+    ):
         return "[AI日报]"
     if has_any(["原神", "崩坏", "游戏", "二次元", "手游", "版本", "攻略"]):
         return "[游戏/二次元]"
     if has_any(["政策", "法规", "条例", "监管", "国务院", "部委", "国内"]):
         return "[国内政策]"
-    if has_any(["制裁", "外交", "国际", "联合国", "北约", "美国", "欧盟", "国外", "局势"]):
+    if has_any(
+        ["制裁", "外交", "国际", "联合国", "北约", "美国", "欧盟", "国外", "局势"]
+    ):
         return "[国外政策]"
 
     # fallback to the first configured tag
@@ -75,11 +91,11 @@ class TagClassifierAgent:
     async def classify(
         self,
         *,
-        items: Sequence[Dict[str, Any]],
+        items: Sequence[dict[str, Any]],
         tags: Sequence[TagDef],
-        llm: Optional[LLMRunner],
+        llm: LLMRunner | None,
         max_excerpt_chars: int = 900,
-    ) -> List[ClassifiedItem]:
+    ) -> list[ClassifiedItem]:
         allowed = [t.tag for t in tags if (t.tag or "").strip()]
         if not allowed:
             allowed = [
@@ -96,20 +112,28 @@ class TagClassifierAgent:
         payload_items = []
         for it in items:
             iid = str(it.get("id") or "").strip()
-            text = _strip_markdown(str(it.get("text") or ""), max_chars=max_excerpt_chars)
+            text = _strip_markdown(
+                str(it.get("text") or ""), max_chars=max_excerpt_chars
+            )
             if not iid or not text:
                 continue
-            payload_items.append({"id": iid, "source": str(it.get("source") or ""), "text": text})
+            payload_items.append(
+                {"id": iid, "source": str(it.get("source") or ""), "text": text}
+            )
 
         if not payload_items:
             return []
 
         if llm is None:
-            out: List[ClassifiedItem] = []
+            out: list[ClassifiedItem] = []
             for it in payload_items:
                 tag = _heuristic_tag(it["text"], tags)
                 topic = (it["text"][:30] + "…") if len(it["text"]) > 30 else it["text"]
-                out.append(ClassifiedItem(item_id=it["id"], tag=tag, topic=topic, summary=topic))
+                out.append(
+                    ClassifiedItem(
+                        item_id=it["id"], tag=tag, topic=topic, summary=topic
+                    )
+                )
             return out
 
         tag_defs = [{"tag": t.tag, "description": t.description} for t in tags]
@@ -127,26 +151,43 @@ class TagClassifierAgent:
             "tag_definitions": tag_defs,
             "items": payload_items,
             "output_schema": [
-                {"id": "string", "tag": "string", "topic": "string", "summary": "string", "suggested_new_tag": "string"}
+                {
+                    "id": "string",
+                    "tag": "string",
+                    "topic": "string",
+                    "summary": "string",
+                    "suggested_new_tag": "string",
+                }
             ],
         }
 
         try:
-            raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+            raw = await llm.ask(
+                system_prompt=system_prompt,
+                prompt=json.dumps(prompt, ensure_ascii=False),
+            )
             data = self._json_from_text(raw)
         except Exception as e:
-            astrbot_logger.warning("[dailynews] tag classify failed, fallback to heuristic: %s", e, exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] tag classify failed, fallback to heuristic: %s",
+                e,
+                exc_info=True,
+            )
             data = None
 
         if not isinstance(data, list):
-            out2: List[ClassifiedItem] = []
+            out2: list[ClassifiedItem] = []
             for it in payload_items:
                 tag = _heuristic_tag(it["text"], tags)
                 topic = (it["text"][:30] + "…") if len(it["text"]) > 30 else it["text"]
-                out2.append(ClassifiedItem(item_id=it["id"], tag=tag, topic=topic, summary=topic))
+                out2.append(
+                    ClassifiedItem(
+                        item_id=it["id"], tag=tag, topic=topic, summary=topic
+                    )
+                )
             return out2
 
-        results: List[ClassifiedItem] = []
+        results: list[ClassifiedItem] = []
         for row in data:
             if not isinstance(row, dict):
                 continue
@@ -191,8 +232,8 @@ class TagClassifierAgent:
             return None
 
 
-def extract_links(md: str, *, max_links: int = 3) -> List[str]:
-    found: List[str] = []
+def extract_links(md: str, *, max_links: int = 3) -> list[str]:
+    found: list[str] = []
     seen = set()
     for m in _URL_RE.finditer(md or ""):
         u = str(m.group(0) or "").strip()
@@ -203,4 +244,3 @@ def extract_links(md: str, *, max_links: int = 3) -> List[str]:
         if len(found) >= max(1, int(max_links)):
             break
     return found
-

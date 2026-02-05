@@ -1,5 +1,4 @@
 import time
-from typing import Dict, List, Optional
 
 from playwright.sync_api import TimeoutError as PWTimeoutError
 from playwright.sync_api import sync_playwright
@@ -32,15 +31,21 @@ def _try_close_popups(page) -> None:
             pass
 
 
-def _find_post_subject_from_nuxt(obj, depth: int = 0, max_depth: int = 10) -> Optional[str]:
+def _find_post_subject_from_nuxt(
+    obj, depth: int = 0, max_depth: int = 10
+) -> str | None:
     if depth > max_depth:
         return None
 
     if isinstance(obj, dict):
-        if isinstance(obj.get("subject"), str) and obj.get("subject").strip() and "content" in obj:
+        if (
+            isinstance(obj.get("subject"), str)
+            and obj.get("subject").strip()
+            and "content" in obj
+        ):
             return obj.get("subject").strip()
         for v in obj.values():
-            if isinstance(v, (dict, list)):
+            if isinstance(v, dict | list):
                 hit = _find_post_subject_from_nuxt(v, depth + 1, max_depth)
                 if hit:
                     return hit
@@ -61,49 +66,63 @@ def get_user_latest_posts(
     headless: bool = True,
     sleep_between: float = 0.6,
     max_scroll_rounds: int = 20,
-) -> List[Dict[str, str]]:
+) -> list[dict[str, str]]:
     """
     访问米游社用户帖子列表页（accountCenter/postList），逐个点开卡片获取真实的文章 URL。
     返回：[{title,url}, ...]（按列表出现顺序）
     """
-    out: List[Dict[str, str]] = []
+    out: list[dict[str, str]] = []
 
     with sync_playwright() as p:
         executable_path = None
         try:
             import sys
             from pathlib import Path
+
             # analysis/miyousheanalysis/latest_posts.py -> parents[2] is plugin root
             root = str(Path(__file__).resolve().parents[2])
             if root not in sys.path:
                 sys.path.append(root)
-            from workflow.pipeline.playwright_bootstrap import get_chromium_executable_path
+            from workflow.pipeline.playwright_bootstrap import (
+                get_chromium_executable_path,
+            )
+
             exe = get_chromium_executable_path()
             executable_path = str(exe) if exe else None
         except Exception as e:
-            astrbot_logger.debug(f"[dailynews] get_chromium_executable_path import failed: {e}")
+            astrbot_logger.debug(
+                f"[dailynews] get_chromium_executable_path import failed: {e}"
+            )
             executable_path = None
 
         try:
             if executable_path:
-                browser = p.chromium.launch(headless=headless, executable_path=executable_path)
+                browser = p.chromium.launch(
+                    headless=headless, executable_path=executable_path
+                )
             else:
                 astrbot_logger.warning(
                     "[dailynews] playwright chromium not ready; falling back to default Playwright browser path (may fail)."
                 )
                 browser = p.chromium.launch(headless=headless)
         except Exception as e:
-            astrbot_logger.error("[dailynews] failed to launch playwright browser: %s", e)
+            astrbot_logger.error(
+                "[dailynews] failed to launch playwright browser: %s", e
+            )
             return []
 
         context = browser.new_context()
         page = context.new_page()
 
-        astrbot_logger.info("[dailynews] opening miyoushe post list: %s", user_post_list_url)
+        astrbot_logger.info(
+            "[dailynews] opening miyoushe post list: %s", user_post_list_url
+        )
         try:
             page.goto(user_post_list_url, wait_until="domcontentloaded", timeout=90000)
         except PWTimeoutError:
-            astrbot_logger.warning("[dailynews] miyoushe list goto timeout, attempting fallback to networkidle")
+            astrbot_logger.warning(
+                "[dailynews] miyoushe list goto timeout, attempting fallback to networkidle"
+            )
             try:
                 page.goto(user_post_list_url, wait_until="networkidle", timeout=30000)
             except Exception:
@@ -141,7 +160,11 @@ def get_user_latest_posts(
             card = cards.nth(card_idx)
 
             try:
-                preview = card.locator(".mhy-article-card__h3").inner_text(timeout=2000).strip()
+                preview = (
+                    card.locator(".mhy-article-card__h3")
+                    .inner_text(timeout=2000)
+                    .strip()
+                )
             except Exception:
                 preview = ""
 
@@ -211,7 +234,11 @@ def get_user_latest_posts(
                 else:
                     # 回到列表页
                     try:
-                        page.goto(user_post_list_url, wait_until="domcontentloaded", timeout=60000)
+                        page.goto(
+                            user_post_list_url,
+                            wait_until="domcontentloaded",
+                            timeout=60000,
+                        )
                         page.wait_for_selector(".mhy-article-card", timeout=20000)
                     except Exception:
                         break
@@ -223,7 +250,7 @@ def get_user_latest_posts(
 
     # 去重（按出现顺序）
     seen = set()
-    dedup: List[Dict[str, str]] = []
+    dedup: list[dict[str, str]] = []
     for it in out:
         u = (it.get("url") or "").strip()
         if not u or u in seen:

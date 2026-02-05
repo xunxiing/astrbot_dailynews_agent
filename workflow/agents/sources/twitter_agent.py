@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -12,29 +12,36 @@ except Exception:  # pragma: no cover
 try:
     import sys
     from pathlib import Path
+
     # workflow/agents/sources/twitter_agent.py -> parents[3] is plugin root
     root = str(Path(__file__).resolve().parents[3])
     if root not in sys.path:
         sys.path.append(root)
     from analysis.twitteranalysis.latest_tweets import fetch_latest_tweets
 except Exception:  # pragma: no cover
-    from analysis.twitteranalysis.latest_tweets import fetch_latest_tweets  # type: ignore
+    from analysis.twitteranalysis.latest_tweets import (
+        fetch_latest_tweets,  # type: ignore
+    )
 
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
-from ...pipeline.playwright_bootstrap import get_chromium_executable_path
 from ...core.utils import _json_from_text
+from ...pipeline.playwright_bootstrap import get_chromium_executable_path
 
 
 class TwitterSubAgent:
     """X/Twitter 子 Agent：抓取主页最新推文（含图片）并生成 Markdown 小节。"""
 
     async def fetch_latest_articles(
-        self, source: NewsSourceConfig, user_config: Dict[str, Any]
-    ) -> Tuple[str, List[Dict[str, str]]]:
-        limit = int(user_config.get("twitter_max_tweets", source.max_articles or 3) or 3)
+        self, source: NewsSourceConfig, user_config: dict[str, Any]
+    ) -> tuple[str, list[dict[str, str]]]:
+        limit = int(
+            user_config.get("twitter_max_tweets", source.max_articles or 3) or 3
+        )
         meta = source.meta if isinstance(source.meta, dict) else {}
-        proxy = str(meta.get("proxy") or user_config.get("twitter_proxy", "") or "").strip()
+        proxy = str(
+            meta.get("proxy") or user_config.get("twitter_proxy", "") or ""
+        ).strip()
         exe = get_chromium_executable_path()
 
         tweets = await fetch_latest_tweets(
@@ -44,7 +51,7 @@ class TwitterSubAgent:
             executable_path=str(exe) if exe else None,
         )
 
-        articles: List[Dict[str, str]] = []
+        articles: list[dict[str, str]] = []
         for t in tweets:
             if not isinstance(t, dict):
                 continue
@@ -61,8 +68,8 @@ class TwitterSubAgent:
         return source.name, articles
 
     async def analyze_source(
-        self, source: NewsSourceConfig, articles: List[Dict[str, str]], llm: LLMRunner
-    ) -> Dict[str, Any]:
+        self, source: NewsSourceConfig, articles: list[dict[str, str]], llm: LLMRunner
+    ) -> dict[str, Any]:
         system_prompt = (
             "你是子Agent（信息侦察）。你会收到某个 X/Twitter 主页最近推文的标题与链接。"
             "请判断今日值得关注的话题，并给出可写作角度建议。只输出 JSON。"
@@ -79,7 +86,9 @@ class TwitterSubAgent:
                 "today_angle": "string",
             },
         }
-        raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+        raw = await llm.ask(
+            system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False)
+        )
         data = _json_from_text(raw) or {}
         data["source_name"] = source.name
         data["source_type"] = source.type
@@ -89,13 +98,15 @@ class TwitterSubAgent:
         self,
         source: NewsSourceConfig,
         instruction: str,
-        articles: List[Dict[str, str]],
+        articles: list[dict[str, str]],
         llm: LLMRunner,
-        user_config: Dict[str, Any] | None = None,
+        user_config: dict[str, Any] | None = None,
     ) -> SubAgentResult:
         limit = max(1, int(source.max_articles or 3))
         meta = source.meta if isinstance(source.meta, dict) else {}
-        proxy = str(meta.get("proxy") or (user_config or {}).get("twitter_proxy", "") or "").strip()
+        proxy = str(
+            meta.get("proxy") or (user_config or {}).get("twitter_proxy", "") or ""
+        ).strip()
 
         exe = get_chromium_executable_path()
 
@@ -115,10 +126,12 @@ class TwitterSubAgent:
                     msg,
                 )
             else:
-                astrbot_logger.warning("[dailynews] twitter fetch failed: %s", msg, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] twitter fetch failed: %s", msg, exc_info=True
+                )
             tweets = []
 
-        images: List[str] = []
+        images: list[str] = []
         seen = set()
         for t in tweets:
             for u in (t.get("image_urls") or []) if isinstance(t, dict) else []:
@@ -130,8 +143,7 @@ class TwitterSubAgent:
             "你是子Agent（写作）。你会收到 X/Twitter 主页最近推文的内容摘要。"
             "请写出今日日报中的一个 Markdown 小节：包含小标题、要点、并附上推文链接。"
             "风格轻松、像科技/游戏博主。只输出 JSON。"
-             "请你务必使用中文进行总结"
-
+            "请你务必使用中文进行总结"
         )
         prompt = {
             "source_name": source.name,
@@ -145,12 +157,18 @@ class TwitterSubAgent:
             },
         }
 
-        raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+        raw = await llm.ask(
+            system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False)
+        )
         data = _json_from_text(raw) or {}
         section = str(data.get("section_markdown") or "").strip()
         summary = str(data.get("summary") or "").strip()
-        key_points = data.get("key_points") if isinstance(data.get("key_points"), list) else []
-        key_points = [str(x) for x in key_points if isinstance(x, (str, int, float))][:10]
+        key_points = (
+            data.get("key_points") if isinstance(data.get("key_points"), list) else []
+        )
+        key_points = [str(x) for x in key_points if isinstance(x, str | int | float)][
+            :10
+        ]
 
         if not section:
             # fallback: minimal section without LLM

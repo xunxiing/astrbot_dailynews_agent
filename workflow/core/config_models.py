@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any
 
 from .models import NewsSourceConfig
 
@@ -33,7 +34,7 @@ def _to_bool(value: Any, default: bool) -> bool:
         return bool(default)
     if isinstance(value, bool):
         return value
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return bool(value)
     s = str(value).strip().lower()
     if s in {"1", "true", "yes", "y", "on"}:
@@ -48,7 +49,8 @@ def _to_str(value: Any, default: str = "") -> str:
         return str(default)
     return str(value)
 
-def _to_optional_str(value: Any) -> Optional[str]:
+
+def _to_optional_str(value: Any) -> str | None:
     s = _to_str(value, "").strip()
     return s if s else None
 
@@ -64,7 +66,7 @@ class RenderImageStyleConfig:
     float_enabled: bool = True
 
     @classmethod
-    def from_mapping(cls, cfg: Mapping[str, Any]) -> "RenderImageStyleConfig":
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> RenderImageStyleConfig:
         return cls(
             # Hard-coded layout constants, only float_enabled remains configurable.
             full_max_width=400,
@@ -87,7 +89,7 @@ class RenderPipelineConfig:
     custom_browser_path: str = ""
 
     @classmethod
-    def from_mapping(cls, cfg: Mapping[str, Any]) -> "RenderPipelineConfig":
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> RenderPipelineConfig:
         return cls(
             page_chars=max(0, _to_int(cfg.get("render_page_chars"), 2600)),
             max_pages=max(1, _to_int(cfg.get("render_max_pages"), 4)),
@@ -95,7 +97,9 @@ class RenderPipelineConfig:
             poll_timeout_s=max(0.5, _to_float(cfg.get("render_poll_timeout_s"), 6.0)),
             poll_interval_ms=max(50, _to_int(cfg.get("render_poll_interval_ms"), 200)),
             playwright_fallback=_to_bool(cfg.get("render_playwright_fallback"), True),
-            playwright_timeout_ms=max(1000, _to_int(cfg.get("render_playwright_timeout_ms"), 20000)),
+            playwright_timeout_ms=max(
+                1000, _to_int(cfg.get("render_playwright_timeout_ms"), 20000)
+            ),
             custom_browser_path=_to_str(cfg.get("custom_browser_path"), ""),
         )
 
@@ -121,24 +125,42 @@ class ImageLayoutConfig:
     shuffle_seed: str = ""
 
     @classmethod
-    def from_mapping(cls, cfg: Mapping[str, Any]) -> "ImageLayoutConfig":
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> ImageLayoutConfig:
         return cls(
             enabled=_to_bool(cfg.get("image_layout_enabled"), False),
             provider_id=_to_str(cfg.get("image_layout_provider_id"), "").strip(),
-            max_images_total=max(0, _to_int(cfg.get("image_layout_max_images_total"), 6)),
-            max_images_per_source=max(1, _to_int(cfg.get("image_layout_max_images_per_source"), 3)),
-            pass_images_to_model=_to_bool(cfg.get("image_layout_pass_images_to_model"), True),
-            max_images_to_model=max(1, _to_int(cfg.get("image_layout_max_images_to_model"), 6)),
+            max_images_total=max(
+                0, _to_int(cfg.get("image_layout_max_images_total"), 6)
+            ),
+            max_images_per_source=max(
+                1, _to_int(cfg.get("image_layout_max_images_per_source"), 3)
+            ),
+            pass_images_to_model=_to_bool(
+                cfg.get("image_layout_pass_images_to_model"), True
+            ),
+            max_images_to_model=max(
+                1, _to_int(cfg.get("image_layout_max_images_to_model"), 6)
+            ),
             preview_enabled=_to_bool(cfg.get("image_layout_preview_enabled"), False),
-            preview_max_images=max(1, _to_int(cfg.get("image_layout_preview_max_images"), 6)),
-            preview_max_width=max(200, _to_int(cfg.get("image_layout_preview_max_width"), 1080)),
+            preview_max_images=max(
+                1, _to_int(cfg.get("image_layout_preview_max_images"), 6)
+            ),
+            preview_max_width=max(
+                200, _to_int(cfg.get("image_layout_preview_max_width"), 1080)
+            ),
             preview_gap=max(0, _to_int(cfg.get("image_layout_preview_gap"), 8)),
-            request_max_requests=max(0, _to_int(cfg.get("image_layout_request_max_requests"), 1)),
-            request_max_images=max(1, _to_int(cfg.get("image_layout_request_max_images"), 6)),
+            request_max_requests=max(
+                0, _to_int(cfg.get("image_layout_request_max_requests"), 1)
+            ),
+            request_max_images=max(
+                1, _to_int(cfg.get("image_layout_request_max_images"), 6)
+            ),
             tool_enabled=_to_bool(cfg.get("image_layout_tool_enabled"), True),
             tool_rounds=max(1, _to_int(cfg.get("image_layout_tool_rounds"), 2)),
             tool_max_steps=max(5, _to_int(cfg.get("image_layout_tool_max_steps"), 25)),
-            shuffle_candidates=_to_bool(cfg.get("image_layout_shuffle_candidates"), True),
+            shuffle_candidates=_to_bool(
+                cfg.get("image_layout_shuffle_candidates"), True
+            ),
             shuffle_seed=_to_str(cfg.get("image_layout_shuffle_seed"), "").strip(),
         )
 
@@ -156,17 +178,23 @@ class ImageLabelConfig:
     llm_retry_max_s: float = 12.0
 
     @classmethod
-    def from_mapping(cls, cfg: Mapping[str, Any]) -> "ImageLabelConfig":
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> ImageLabelConfig:
         return cls(
             enabled=_to_bool(cfg.get("image_label_enabled"), False),
             provider_id=_to_str(cfg.get("image_label_provider_id"), "").strip(),
-            max_images_total=max(0, _to_int(cfg.get("image_label_max_images_total"), 24)),
+            max_images_total=max(
+                0, _to_int(cfg.get("image_label_max_images_total"), 24)
+            ),
             batch_size=max(1, min(2, _to_int(cfg.get("image_label_batch_size"), 2))),
             concurrency=max(1, _to_int(cfg.get("image_label_concurrency"), 4)),
             force_refresh=_to_bool(cfg.get("image_label_force_refresh"), False),
             llm_max_retries=max(0, _to_int(cfg.get("image_label_llm_max_retries"), 2)),
-            llm_retry_base_s=max(0.1, _to_float(cfg.get("image_label_llm_retry_base_s"), 1.0)),
-            llm_retry_max_s=max(0.5, _to_float(cfg.get("image_label_llm_retry_max_s"), 12.0)),
+            llm_retry_base_s=max(
+                0.1, _to_float(cfg.get("image_label_llm_retry_base_s"), 1.0)
+            ),
+            llm_retry_max_s=max(
+                0.5, _to_float(cfg.get("image_label_llm_retry_max_s"), 12.0)
+            ),
         )
 
 
@@ -181,15 +209,25 @@ class LayoutRefineConfig:
     preview_timeout_ms: int = 20000
 
     @classmethod
-    def from_mapping(cls, cfg: Mapping[str, Any]) -> "LayoutRefineConfig":
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> LayoutRefineConfig:
         return cls(
             enabled=_to_bool(cfg.get("image_layout_refine_enabled"), False),
             rounds=max(1, _to_int(cfg.get("image_layout_refine_rounds"), 2)),
-            max_requests=max(0, _to_int(cfg.get("image_layout_refine_max_requests"), 2)),
-            request_max_images=max(1, _to_int(cfg.get("image_layout_refine_request_max_images"), 6)),
-            preview_page_chars=max(400, _to_int(cfg.get("image_layout_refine_preview_page_chars"), 2400)),
-            preview_pages=max(1, _to_int(cfg.get("image_layout_refine_preview_pages"), 1)),
-            preview_timeout_ms=max(1000, _to_int(cfg.get("image_layout_refine_preview_timeout_ms"), 20000)),
+            max_requests=max(
+                0, _to_int(cfg.get("image_layout_refine_max_requests"), 2)
+            ),
+            request_max_images=max(
+                1, _to_int(cfg.get("image_layout_refine_request_max_images"), 6)
+            ),
+            preview_page_chars=max(
+                400, _to_int(cfg.get("image_layout_refine_preview_page_chars"), 2400)
+            ),
+            preview_pages=max(
+                1, _to_int(cfg.get("image_layout_refine_preview_pages"), 1)
+            ),
+            preview_timeout_ms=max(
+                1000, _to_int(cfg.get("image_layout_refine_preview_timeout_ms"), 20000)
+            ),
         )
 
 
@@ -209,12 +247,20 @@ class LayoutPrompts:
         image_layout_tool_system_path: str = "templates/prompts/image_layout_tool_agent_system.txt",
         layout_refiner_system_path: str = "templates/prompts/layout_refiner_system.txt",
         image_labeler_system_path: str = "templates/prompts/image_labeler_system.txt",
-    ) -> "LayoutPrompts":
+    ) -> LayoutPrompts:
         return cls(
-            image_layout_system=str(load_template(image_layout_system_path) or "").strip(),
-            image_layout_tool_system=str(load_template(image_layout_tool_system_path) or "").strip(),
-            layout_refiner_system=str(load_template(layout_refiner_system_path) or "").strip(),
-            image_labeler_system=str(load_template(image_labeler_system_path) or "").strip(),
+            image_layout_system=str(
+                load_template(image_layout_system_path) or ""
+            ).strip(),
+            image_layout_tool_system=str(
+                load_template(image_layout_tool_system_path) or ""
+            ).strip(),
+            layout_refiner_system=str(
+                load_template(layout_refiner_system_path) or ""
+            ).strip(),
+            image_labeler_system=str(
+                load_template(image_labeler_system_path) or ""
+            ).strip(),
         )
 
 
@@ -223,7 +269,7 @@ class NewsSourcesConfig:
     sources: list[NewsSourceConfig]
 
     @classmethod
-    def from_mapping(cls, cfg: Mapping[str, Any]) -> "NewsSourcesConfig":
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> NewsSourcesConfig:
         raw = cfg.get("news_sources") or []
         if not isinstance(raw, list):
             return cls(sources=[])
@@ -397,7 +443,7 @@ class NewsWorkflowModeConfig:
     mode: str = "multi"
 
     @classmethod
-    def from_mapping(cls, cfg: Mapping[str, Any]) -> "NewsWorkflowModeConfig":
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> NewsWorkflowModeConfig:
         raw = _to_str(cfg.get("news_workflow_mode"), "multi").strip().lower()
         if raw in {"single", "single_agent", "single-agent"}:
             return cls(mode="single")
@@ -412,7 +458,7 @@ class SingleAgentConfig:
     max_chars: int = 1500
 
     @classmethod
-    def from_mapping(cls, cfg: Mapping[str, Any]) -> "SingleAgentConfig":
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> SingleAgentConfig:
         min_chars = max(100, _to_int(cfg.get("single_agent_min_chars"), 700))
         max_chars = max(min_chars, _to_int(cfg.get("single_agent_max_chars"), 1500))
         return cls(

@@ -1,5 +1,6 @@
 import asyncio
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -15,8 +16,8 @@ class LLMRunner:
         astrbot_context: Any,
         timeout_s: int = 180,
         max_retries: int = 1,
-        provider_id: Optional[str] = None,
-        provider_ids: Optional[Iterable[str]] = None,
+        provider_id: str | None = None,
+        provider_ids: Iterable[str] | None = None,
     ):
         self._ctx = astrbot_context
         self._timeout_s = timeout_s
@@ -38,7 +39,7 @@ class LLMRunner:
         self._provider_ids = ids
 
     async def ask(self, *, system_prompt: str, prompt: str) -> str:
-        last_exc: Optional[BaseException] = None
+        last_exc: BaseException | None = None
         for attempt in range(1, int(self._max_retries) + 2):
             try:
                 if self._provider_ids:

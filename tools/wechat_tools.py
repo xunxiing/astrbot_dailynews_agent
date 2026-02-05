@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from pydantic import Field
 from pydantic.dataclasses import dataclass
@@ -16,6 +16,7 @@ try:
 except (ImportError, ValueError):
     import sys
     from pathlib import Path
+
     root = str(Path(__file__).resolve().parents[1])
     if root not in sys.path:
         sys.path.append(root)
@@ -30,6 +31,7 @@ except Exception:  # pragma: no cover
 
 # 插件根目录：.../astrbot_plugin_dailynews
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+
 
 # 默认把 Markdown 输出到 analysis/wechatanalysis/output
 def _default_output_dir() -> Path:
@@ -52,16 +54,18 @@ async def _run_in_thread(func, *args, **kwargs):
 
 # ========== Tool 1: 解析单篇公众号为 Markdown ==========
 
+
 @dataclass
 class WechatArticleMarkdownTool(FunctionTool[AstrAgentContext]):
     """
     将单篇微信公众号文章解析为 Markdown，并保存到插件目录下。
     """
+
     name: str = "wechat_article_to_markdown"
     description: str = (
         "解析微信公众号文章，将其保存为本地 Markdown 文件，并返回文件路径。"
     )
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
@@ -110,16 +114,18 @@ class WechatArticleMarkdownTool(FunctionTool[AstrAgentContext]):
 
 # ========== Tool 2: 获取『AI 早报 · 目录』最近几篇文章 ==========
 
+
 @dataclass
 class WechatAlbumLatestArticlesTool(FunctionTool[AstrAgentContext]):
     """
     从『AI 早报』专辑目录中抓取最近的若干篇文章信息。
     """
+
     name: str = "wechat_album_latest_articles"
     description: str = (
         "从微信公众号的『AI 早报』专辑目录中抓取最近的若干篇文章标题和链接。"
     )
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
@@ -155,7 +161,7 @@ class WechatAlbumLatestArticlesTool(FunctionTool[AstrAgentContext]):
 
         # 这里同样在线程池中运行同步的 Playwright 逻辑
         try:
-            articles: List[Dict[str, Any]] = await _run_in_thread(
+            articles: list[dict[str, Any]] = await _run_in_thread(
                 get_album_articles,
                 url,
                 limit,

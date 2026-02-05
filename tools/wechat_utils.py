@@ -1,11 +1,12 @@
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Optional
 
 # 这里用相对导入，你需要保证 astrbot_plugin_dailynews、analysis、
 # analysis/wechatanalysis、tools 这些目录都有 __init__.py
 from ..analysis.wechatanalysis.analysis import wechat_to_markdown as _wechat_to_markdown
-from ..analysis.wechatanalysis.latest_articles import get_album_articles as _get_album_articles
+from ..analysis.wechatanalysis.latest_articles import (
+    get_album_articles as _get_album_articles,
+)
 
 try:
     from astrbot.api.star import StarTools
@@ -15,6 +16,7 @@ except Exception:  # pragma: no cover
 
 # 插件根目录：.../astrbot_plugin_dailynews
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+
 
 # 统一把公众号的 md 输出到 analysis/wechatanalysis/output 目录
 def _wechat_output_dir() -> Path:
@@ -51,8 +53,8 @@ async def async_wechat_to_markdown(url: str) -> str:
 def get_latest_wechat_articles(
     article_url: str,
     limit: int = 5,
-    album_keyword: Optional[str] = None,
-) -> List[Dict[str, str]]:
+    album_keyword: str | None = None,
+) -> list[dict[str, str]]:
     """
     使用你写的 get_album_articles() 从『AI 早报』专辑弹窗里拿最近几篇文章。
     """

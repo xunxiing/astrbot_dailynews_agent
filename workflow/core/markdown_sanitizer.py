@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-
 _WINDOWS_PATH_RE = re.compile(r"[A-Za-z]:\\\\|\\\\Users\\\\", flags=re.I)
 _FILE_URI_RE = re.compile(r"file:///", flags=re.I)
 
@@ -152,24 +151,42 @@ def sanitize_markdown_for_publish(text: str) -> str:
     cleaned = "\n".join(out_lines)
 
     # Replace domain-as-label markdown links with a consistent label to reduce visual noise.
-    cleaned = _DOMAIN_LABEL_LINK_RE.sub(lambda m: f"[查看来源]({m.group('url')})", cleaned)
+    cleaned = _DOMAIN_LABEL_LINK_RE.sub(
+        lambda m: f"[查看来源]({m.group('url')})", cleaned
+    )
 
     # Merge link-only bullets into the previous bullet to avoid ugly "查看来源" standalone lines.
     merged_lines: list[str] = []
     for line in cleaned.splitlines():
         s = (line or "").rstrip()
-        m = re.match(r"^\s*([-*+]\s+)?\[(查看来源|阅读原文)\]\((https?://[^)]+)\)\s*$", s, flags=re.I)
+        m = re.match(
+            r"^\s*([-*+]\s+)?\[(查看来源|阅读原文)\]\((https?://[^)]+)\)\s*$",
+            s,
+            flags=re.I,
+        )
         if m and merged_lines:
             url = m.group(3)
             prev = merged_lines[-1].rstrip()
-            if prev.lstrip().startswith(("-", "*", "+")) and "[查看来源](" not in prev and "[阅读原文](" not in prev:
+            if (
+                prev.lstrip().startswith(("-", "*", "+"))
+                and "[查看来源](" not in prev
+                and "[阅读原文](" not in prev
+            ):
                 merged_lines[-1] = f"{prev} ( [查看来源]({url}) )"
                 continue
-        m2 = re.match(r"^\s*[-*+]\s+\[(查看来源|阅读原文)\]\((https?://[^)]+)\)\s*$", s, flags=re.I)
+        m2 = re.match(
+            r"^\s*[-*+]\s+\[(查看来源|阅读原文)\]\((https?://[^)]+)\)\s*$",
+            s,
+            flags=re.I,
+        )
         if m2 and merged_lines:
             url = m2.group(2)
             prev = merged_lines[-1].rstrip()
-            if prev.lstrip().startswith(("-", "*", "+")) and "[查看来源](" not in prev and "[阅读原文](" not in prev:
+            if (
+                prev.lstrip().startswith(("-", "*", "+"))
+                and "[查看来源](" not in prev
+                and "[阅读原文](" not in prev
+            ):
                 merged_lines[-1] = f"{prev} ( [查看来源]({url}) )"
                 continue
         merged_lines.append(s)

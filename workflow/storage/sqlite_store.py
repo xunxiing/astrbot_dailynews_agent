@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -133,13 +133,15 @@ def kv_delete(key: str) -> None:
         astrbot_logger.warning("[dailynews] kv_delete failed: %s", e, exc_info=True)
 
 
-def md_doc_get(doc_id: str) -> Optional[str]:
+def md_doc_get(doc_id: str) -> str | None:
     did = str(doc_id or "").strip()
     if not did:
         return None
     try:
         with _connect() as conn:
-            row = conn.execute("SELECT content FROM md_docs WHERE doc_id=?", (did,)).fetchone()
+            row = conn.execute(
+                "SELECT content FROM md_docs WHERE doc_id=?", (did,)
+            ).fetchone()
         if not row:
             return None
         return str(row["content"] or "")
@@ -163,11 +165,11 @@ def md_doc_set(doc_id: str, content: str) -> None:
         astrbot_logger.warning("[dailynews] md_doc_set failed: %s", e, exc_info=True)
 
 
-def seed_get_all() -> Dict[str, Any]:
+def seed_get_all() -> dict[str, Any]:
     try:
         with _connect() as conn:
             rows = conn.execute("SELECT key,value FROM seed_state").fetchall()
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         for r in rows or []:
             k = str(r["key"])
             v = str(r["value"] or "")
@@ -181,7 +183,7 @@ def seed_get_all() -> Dict[str, Any]:
         return {}
 
 
-def seed_set_entry(key: str, entry: Dict[str, Any]) -> None:
+def seed_set_entry(key: str, entry: dict[str, Any]) -> None:
     k = str(key or "").strip()
     if not k:
         return
@@ -197,7 +199,9 @@ def seed_set_entry(key: str, entry: Dict[str, Any]) -> None:
                 (k, payload, _now_iso()),
             )
     except Exception as e:
-        astrbot_logger.warning("[dailynews] seed_set_entry failed: %s", e, exc_info=True)
+        astrbot_logger.warning(
+            "[dailynews] seed_set_entry failed: %s", e, exc_info=True
+        )
 
 
 @dataclass
@@ -212,13 +216,13 @@ class ImageLabelRow:
     skip: bool
 
 
-def image_labels_get_all() -> Dict[str, ImageLabelRow]:
+def image_labels_get_all() -> dict[str, ImageLabelRow]:
     try:
         with _connect() as conn:
             rows = conn.execute(
                 "SELECT url,label,source,updated_at,local_path,width,height,skip FROM image_labels"
             ).fetchall()
-        out: Dict[str, ImageLabelRow] = {}
+        out: dict[str, ImageLabelRow] = {}
         for r in rows or []:
             url = str(r["url"] or "")
             if not url:
@@ -235,7 +239,9 @@ def image_labels_get_all() -> Dict[str, ImageLabelRow]:
             )
         return out
     except Exception as e:
-        astrbot_logger.warning("[dailynews] image_labels_get_all failed: %s", e, exc_info=True)
+        astrbot_logger.warning(
+            "[dailynews] image_labels_get_all failed: %s", e, exc_info=True
+        )
         return {}
 
 
@@ -244,7 +250,7 @@ def image_label_upsert(
     url: str,
     label: str,
     source: str = "",
-    updated_at: Optional[str] = None,
+    updated_at: str | None = None,
     local_path: str = "",
     width: int = 0,
     height: int = 0,
@@ -273,5 +279,6 @@ def image_label_upsert(
                 ),
             )
     except Exception as e:
-        astrbot_logger.warning("[dailynews] image_label_upsert failed: %s", e, exc_info=True)
-
+        astrbot_logger.warning(
+            "[dailynews] image_label_upsert failed: %s", e, exc_info=True
+        )

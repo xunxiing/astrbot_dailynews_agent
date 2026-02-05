@@ -2,7 +2,7 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -18,9 +18,8 @@ except Exception:  # pragma: no cover
 
 from .sqlite_store import seed_get_all, seed_set_entry
 
-
 _SEED_LOCK = asyncio.Lock()
-_SEED_CACHE: Optional[Dict[str, Any]] = None
+_SEED_CACHE: dict[str, Any] | None = None
 _SEED_MIGRATED: bool = False
 
 
@@ -33,7 +32,7 @@ def _seed_state_path() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "wechat_seed_state.json"
 
 
-def _load_seed_state_sync(path: Path) -> Dict[str, Any]:
+def _load_seed_state_sync(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
@@ -43,14 +42,14 @@ def _load_seed_state_sync(path: Path) -> Dict[str, Any]:
         return {}
 
 
-def _save_seed_state_sync(path: Path, state: Dict[str, Any]):
+def _save_seed_state_sync(path: Path, state: dict[str, Any]):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
 
 
-async def _get_seed_state() -> Dict[str, Any]:
+async def _get_seed_state() -> dict[str, Any]:
     global _SEED_CACHE
     global _SEED_MIGRATED
     async with _SEED_LOCK:
@@ -79,20 +78,25 @@ async def _get_seed_state() -> Dict[str, Any]:
         return _SEED_CACHE
 
 
-async def _update_seed_entry(key: str, entry: Dict[str, Any]):
+async def _update_seed_entry(key: str, entry: dict[str, Any]):
     global _SEED_CACHE
     global _SEED_MIGRATED
     async with _SEED_LOCK:
         if _SEED_CACHE is None:
-            _SEED_CACHE = await asyncio.get_running_loop().run_in_executor(None, seed_get_all)
+            _SEED_CACHE = await asyncio.get_running_loop().run_in_executor(
+                None, seed_get_all
+            )
             if not isinstance(_SEED_CACHE, dict):
                 _SEED_CACHE = {}
         entry = dict(entry)
         entry.setdefault("updated_at", datetime.now().isoformat())
         _SEED_CACHE[key] = entry
         # sqlite is the source of truth; keep legacy JSON as a readable mirror (best-effort).
-        await asyncio.get_running_loop().run_in_executor(None, lambda: seed_set_entry(key, entry))
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: seed_set_entry(key, entry)
+        )
         if not _SEED_MIGRATED:
             await asyncio.get_running_loop().run_in_executor(
-                None, lambda: _save_seed_state_sync(_seed_state_path(), _SEED_CACHE or {})
+                None,
+                lambda: _save_seed_state_sync(_seed_state_path(), _SEED_CACHE or {}),
             )

@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
-def _json_from_text(text: str) -> Optional[Dict[str, Any]]:
+def _json_from_text(text: str) -> dict[str, Any] | None:
     text = (text or "").strip()
     if not text:
         return None
@@ -29,12 +29,12 @@ async def _run_sync(func, *args, **kwargs):
     return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
 
-def ensure_section_links(section: str, articles: List[Dict[str, Any]]) -> str:
+def ensure_section_links(section: str, articles: list[dict[str, Any]]) -> str:
     """
     Ensure each article URL appears in the section at least once.
     Hard requirement: never output raw http(s) URLs as plain text lines.
     """
-    urls: List[str] = []
+    urls: list[str] = []
     for a in articles:
         if not isinstance(a, dict):
             continue
@@ -51,7 +51,7 @@ def ensure_section_links(section: str, articles: List[Dict[str, Any]]) -> str:
         return section_text
 
     # Only fill missing links (avoid duplication), and never show raw URLs.
-    lines: List[str] = [section_text.rstrip(), "", "### 来源（补全）"]
+    lines: list[str] = [section_text.rstrip(), "", "### 来源（补全）"]
     for a in articles:
         if not isinstance(a, dict):
             continue
@@ -64,4 +64,3 @@ def ensure_section_links(section: str, articles: List[Dict[str, Any]]) -> str:
         else:
             lines.append(f"- [阅读原文]({url})")
     return "\n".join([x for x in lines if x is not None]).strip()
-

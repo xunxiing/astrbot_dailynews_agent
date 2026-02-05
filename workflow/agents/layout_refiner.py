@@ -3,8 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-import base64
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -13,14 +12,18 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from ..core.config_models import LayoutRefineConfig, RenderImageStyleConfig, RenderPipelineConfig
+from ..core.config_models import (
+    LayoutRefineConfig,
+    RenderImageStyleConfig,
+    RenderPipelineConfig,
+)
 from ..core.image_utils import (
     get_plugin_data_dir,
     merge_images_vertical,
 )
+from ..core.utils import _json_from_text
 from ..pipeline.render_pipeline import render_single_page_to_image, split_pages
 from ..pipeline.rendering import load_template
-from ..core.utils import _json_from_text
 
 
 class LayoutRefiner:
@@ -33,7 +36,7 @@ class LayoutRefiner:
         *,
         refine: LayoutRefineConfig,
         style: RenderImageStyleConfig,
-    ) -> Optional[Path]:
+    ) -> Path | None:
         pages = split_pages(
             markdown,
             page_chars=refine.preview_page_chars,
@@ -43,16 +46,16 @@ class LayoutRefiner:
             return None
 
         tmpl = load_template("templates/daily_news.html").strip()
-        pipeline_cfg = RenderPipelineConfig() # Default rendering settings for preview
+        pipeline_cfg = RenderPipelineConfig()  # Default rendering settings for preview
 
-        out_paths: List[str] = []
+        out_paths: list[str] = []
         for idx, page in enumerate(pages, start=1):
             # Use unified render pipeline for consistency
             img_path, _ = await render_single_page_to_image(
                 markdown=page,
                 template_str=tmpl,
-                render_html=lambda ctx: None, # No remote HTML for preview
-                render_t2i=lambda md: None,   # No T2I for preview
+                render_html=lambda ctx: None,  # No remote HTML for preview
+                render_t2i=lambda md: None,  # No T2I for preview
                 pipeline=pipeline_cfg,
                 style=style,
                 title="每日资讯日报",
@@ -82,9 +85,9 @@ class LayoutRefiner:
         self,
         *,
         markdown: str,
-        images_by_source: Dict[str, List[str]],
-        image_catalog: Optional[List[Dict[str, Any]]] = None,
-        user_config: Dict[str, Any],
+        images_by_source: dict[str, list[str]],
+        image_catalog: list[dict[str, Any]] | None = None,
+        user_config: dict[str, Any],
         astrbot_context: Any,
         provider_id: str,
     ) -> str:
@@ -111,7 +114,11 @@ class LayoutRefiner:
                     style=style_cfg,
                 )
             except Exception as e:
-                astrbot_logger.warning("[dailynews] layout_refiner render preview failed: %s", e, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] layout_refiner render preview failed: %s",
+                    e,
+                    exc_info=True,
+                )
                 preview_path = None
             if preview_path is None:
                 return current
@@ -142,7 +149,9 @@ class LayoutRefiner:
 
             req = data.get("request_image_urls")
             if request_budget > 0 and isinstance(req, list) and req:
-                urls = [str(u).strip() for u in req if str(u).strip()][: int(refine_cfg.request_max_images)]
+                urls = [str(u).strip() for u in req if str(u).strip()][
+                    : int(refine_cfg.request_max_images)
+                ]
                 request_budget -= 1
                 req_url = ""
                 try:

@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -16,7 +16,7 @@ from ..core.utils import _json_from_text
 
 class MainNewsAgent:
     async def analyze_sub_agent_reports(
-        self, reports: List[Dict[str, Any]], user_config: Dict[str, Any], llm: LLMRunner
+        self, reports: list[dict[str, Any]], user_config: dict[str, Any], llm: LLMRunner
     ) -> MainAgentDecision:
         preferred_types = user_config.get("preferred_source_types", ["wechat"])
         max_sources = int(user_config.get("max_sources_per_day", 3))
@@ -49,7 +49,9 @@ class MainNewsAgent:
             },
         }
 
-        raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+        raw = await llm.ask(
+            system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False)
+        )
         data = _json_from_text(raw)
 
         if not isinstance(data, dict):
@@ -63,12 +65,16 @@ class MainNewsAgent:
         processing_instructions = data.get("processing_instructions", {})
         if not isinstance(processing_instructions, dict):
             processing_instructions = {}
-        processing_instructions = {str(k): str(v) for k, v in processing_instructions.items()}
+        processing_instructions = {
+            str(k): str(v) for k, v in processing_instructions.items()
+        }
 
         reported_names = {r.get("source_name") for r in reports if isinstance(r, dict)}
         sources_to_process = [s for s in sources_to_process if s in reported_names]
 
-        preferred_set = set(preferred_types) if isinstance(preferred_types, list) else set()
+        preferred_set = (
+            set(preferred_types) if isinstance(preferred_types, list) else set()
+        )
         preferred_reports = [
             r
             for r in reports
@@ -85,7 +91,7 @@ class MainNewsAgent:
             and r.get("source_type") not in preferred_set
         ]
 
-        def _score(r: Dict[str, Any]) -> Tuple[int, int]:
+        def _score(r: dict[str, Any]) -> tuple[int, int]:
             try:
                 return int(r.get("quality_score", 0)), int(r.get("priority", 0))
             except Exception:
@@ -96,7 +102,7 @@ class MainNewsAgent:
         all_reports = preferred_reports + other_reports
         wanted = min(len(all_reports), max_sources)
 
-        dedup: List[str] = []
+        dedup: list[str] = []
         for s in sources_to_process:
             if s not in dedup:
                 dedup.append(s)
@@ -119,43 +125,66 @@ class MainNewsAgent:
             if isinstance(r, dict) and r.get("source_name")
         }
         for name in sources_to_process:
-            if name in processing_instructions and processing_instructions[name].strip():
+            if (
+                name in processing_instructions
+                and processing_instructions[name].strip()
+            ):
                 continue
             rep = report_map.get(name) or {}
             angle = str(rep.get("today_angle") or "").strip()
             if angle:
                 processing_instructions[name] = angle
             else:
-                topics = rep.get("topics", []) if isinstance(rep.get("topics"), list) else []
-                topic_str = "、".join([str(t) for t in topics[:3]]) if topics else "热点"
-                processing_instructions[name] = f"请聚焦 {topic_str}，输出精炼要点并给出文章链接。"
+                topics = (
+                    rep.get("topics", []) if isinstance(rep.get("topics"), list) else []
+                )
+                topic_str = (
+                    "、".join([str(t) for t in topics[:3]]) if topics else "热点"
+                )
+                processing_instructions[name] = (
+                    f"请聚焦 {topic_str}，输出精炼要点并给出文章链接。"
+                )
 
         astrbot_logger.debug("[dailynews] sources_to_process: %s", sources_to_process)
 
-        final_format = str(data.get("final_format") or user_config.get("output_format", "markdown"))
+        final_format = str(
+            data.get("final_format") or user_config.get("output_format", "markdown")
+        )
         return MainAgentDecision(
             sources_to_process=sources_to_process,
             processing_instructions=processing_instructions,
             final_format=final_format,
         )
 
-    def _fallback_decision(self, reports: List[Dict[str, Any]], user_config: Dict[str, Any]) -> MainAgentDecision:
+    def _fallback_decision(
+        self, reports: list[dict[str, Any]], user_config: dict[str, Any]
+    ) -> MainAgentDecision:
         preferred_types = user_config.get("preferred_source_types", ["wechat"])
         max_sources = int(user_config.get("max_sources_per_day", 3))
 
-        preferred_set = set(preferred_types) if isinstance(preferred_types, list) else set()
+        preferred_set = (
+            set(preferred_types) if isinstance(preferred_types, list) else set()
+        )
 
-        def score(r: Dict[str, Any]) -> Tuple[int, int]:
+        def score(r: dict[str, Any]) -> tuple[int, int]:
             return int(r.get("quality_score", 0)), int(r.get("priority", 0))
 
-        preferred = [r for r in reports if (not preferred_set) or r.get("source_type") in preferred_set]
-        other = [r for r in reports if preferred_set and r.get("source_type") not in preferred_set]
+        preferred = [
+            r
+            for r in reports
+            if (not preferred_set) or r.get("source_type") in preferred_set
+        ]
+        other = [
+            r
+            for r in reports
+            if preferred_set and r.get("source_type") not in preferred_set
+        ]
         preferred.sort(key=score, reverse=True)
         other.sort(key=score, reverse=True)
         candidates = preferred + other
 
-        selected: List[str] = []
-        instructions: Dict[str, str] = {}
+        selected: list[str] = []
+        instructions: dict[str, str] = {}
         for r in candidates:
             if len(selected) >= max_sources:
                 break
@@ -174,16 +203,20 @@ class MainNewsAgent:
         )
 
     async def summarize_all_results(
-        self, sub_results: List[Any], format_type: str, llm: LLMRunner
+        self, sub_results: list[Any], format_type: str, llm: LLMRunner
     ) -> str:
-        ok: List[SubAgentResult] = []
-        passthrough: List[SubAgentResult] = []
-        failed: List[str] = []
+        ok: list[SubAgentResult] = []
+        passthrough: list[SubAgentResult] = []
+        failed: list[str] = []
         for r in sub_results:
             if isinstance(r, Exception):
                 failed.append(str(r) or f"{type(r).__name__}")
                 continue
-            if isinstance(r, SubAgentResult) and not r.error and (r.content or "").strip():
+            if (
+                isinstance(r, SubAgentResult)
+                and not r.error
+                and (r.content or "").strip()
+            ):
                 if bool(getattr(r, "no_llm_merge", False)):
                     passthrough.append(r)
                 else:
@@ -200,7 +233,11 @@ class MainNewsAgent:
             return "\n".join(lines)
 
         if not ok and passthrough:
-            parts = ["# 每日资讯日报", f"*生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*", ""]
+            parts = [
+                "# 每日资讯日报",
+                f"*生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+                "",
+            ]
             for s in passthrough:
                 parts.append(s.content.strip())
                 parts.append("")
@@ -226,13 +263,22 @@ class MainNewsAgent:
             "output_format": format_type,
         }
         try:
-            merged = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+            merged = await llm.ask(
+                system_prompt=system_prompt,
+                prompt=json.dumps(prompt, ensure_ascii=False),
+            )
             merged = (merged or "").strip()
             if passthrough:
-                merged = (merged + "\n\n" + "\n\n".join([s.content.strip() for s in passthrough])).strip()
+                merged = (
+                    merged
+                    + "\n\n"
+                    + "\n\n".join([s.content.strip() for s in passthrough])
+                ).strip()
             return merged
         except Exception as e:
-            astrbot_logger.warning("[dailynews] merge failed, fallback to concat: %s", e, exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] merge failed, fallback to concat: %s", e, exc_info=True
+            )
             parts = ["# 每日资讯日报", f"*生成时间: {prompt['now']}*", ""]
             for s in ok:
                 parts.append(s.content.strip())

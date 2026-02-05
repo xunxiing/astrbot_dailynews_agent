@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 import base64
 import re
+import sys
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable, List, Optional, Sequence
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -17,7 +17,11 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 from ..core.config_models import RenderImageStyleConfig, RenderPipelineConfig
-from ..core.image_utils import adaptive_layout_html_images, get_plugin_data_dir, inline_html_remote_images
+from ..core.image_utils import (
+    adaptive_layout_html_images,
+    get_plugin_data_dir,
+    inline_html_remote_images,
+)
 from .local_render import render_template_to_image_playwright, wait_for_file_ready
 from .rendering import markdown_to_html, safe_text
 
@@ -61,15 +65,15 @@ def _root_asset_data_uri(rel_path: str, mime: str) -> str:
         return ""
 
 
-def split_pages(text: str, page_chars: int, max_pages: int) -> List[str]:
+def split_pages(text: str, page_chars: int, max_pages: int) -> list[str]:
     s = (text or "").strip()
     if not s:
         return []
     if page_chars <= 0:
         return [s]
 
-    pages: List[str] = []
-    buf: List[str] = []
+    pages: list[str] = []
+    buf: list[str] = []
     buf_len = 0
     for line in s.splitlines():
         piece = line + "\n"
@@ -92,7 +96,7 @@ def is_valid_image_file(path: Path) -> bool:
         if path.stat().st_size < 128:
             return False
         head = path.read_bytes()[:16]
-        if head.startswith(b"\xFF\xD8\xFF"):  # JPEG
+        if head.startswith(b"\xff\xd8\xff"):  # JPEG
             return True
         if head.startswith(b"\x89PNG\r\n\x1a\n"):  # PNG
             return True
@@ -108,22 +112,22 @@ class RenderedPage:
     index: int
     total: int
     markdown: str
-    image_path: Optional[Path]
+    image_path: Path | None
     method: str = ""
 
 
-RenderHtmlFunc = Callable[[dict], Awaitable[Optional[Path]]]
-RenderT2IFunc = Callable[[str], Awaitable[Optional[Path]]]
+RenderHtmlFunc = Callable[[dict], Awaitable[Path | None]]
+RenderT2IFunc = Callable[[str], Awaitable[Path | None]]
 
 
 async def _try_with_retries(
     *,
     attempts: int,
-    call: Callable[[], Awaitable[Optional[Path]]],
+    call: Callable[[], Awaitable[Path | None]],
     poll_timeout_s: float,
     poll_interval_ms: int,
     log_level: str = "error",
-) -> Optional[Path]:
+) -> Path | None:
     last: Exception | None = None
     last_exc_info = None
     for attempt in range(max(0, attempts) + 1):
@@ -215,7 +219,7 @@ def _promote_headings_for_chenyu(md: str) -> str:
     elif has_h3:
         promote_map = {3: 1, 4: 2}
 
-    out: List[str] = []
+    out: list[str] = []
     in_fence = False
     removed_first_h1 = False
     for line in lines:
@@ -264,7 +268,7 @@ def _wrap_h1_sections_for_chenyu(body_html: str) -> str:
         return f'<div class="section-box"><div class="md">{s}</div></div>'
 
     pre = (parts[0] or "").strip()
-    out: List[str] = []
+    out: list[str] = []
     i = 1
     while i < len(parts):
         h1 = parts[i] or ""
@@ -292,12 +296,12 @@ async def render_daily_news_pages(
     style: RenderImageStyleConfig,
     title: str = "每日资讯日报",
     subtitle_fmt: str = "第{idx}/{total}页",
-) -> List[RenderedPage]:
+) -> list[RenderedPage]:
     pages_list = list(pages)
     if not pages_list:
         return []
 
-    out: List[RenderedPage] = []
+    out: list[RenderedPage] = []
     total = len(pages_list)
     for idx, page in enumerate(pages_list, start=1):
         img_path, method = await render_single_page_to_image(
@@ -336,7 +340,7 @@ async def render_single_page_to_image(
     title: str = "每日资讯日报",
     subtitle: str = "",
     idx: int = 1,
-) -> Tuple[Optional[Path], str]:
+) -> tuple[Path | None, str]:
     """
     渲染单页 Markdown 为图片。
     """
@@ -380,7 +384,7 @@ async def render_single_page_to_image(
     }
 
     # Prefer local rendering first when enabled (t2i endpoints can be unstable).
-    img: Optional[Path] = None
+    img: Path | None = None
     method = ""
     if pipeline.playwright_fallback:
         try:

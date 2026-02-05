@@ -3,8 +3,8 @@ import base64
 import html as _html
 import io
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 import aiohttp
@@ -25,8 +25,8 @@ except Exception:  # pragma: no cover
 
 _DATA_URI_RE = re.compile(r"^data:image/[a-zA-Z0-9.+-]+;base64,", re.I)
 _IMG_CLASS_RE = re.compile(r'\sclass=(?P<q>["\'])(?P<cls>[^"\']*)(?P=q)', re.I)
-_FETCH_WARNED: Set[Tuple[str, int]] = set()
-_INLINE_NOOP_WARNED: Set[str] = set()
+_FETCH_WARNED: set[tuple[str, int]] = set()
+_INLINE_NOOP_WARNED: set[str] = set()
 
 
 def get_plugin_data_dir(subdir: str) -> Path:
@@ -51,9 +51,11 @@ def get_plugin_data_dir(subdir: str) -> Path:
         "render_fallback",
     }
 
-    base: Optional[Path] = None
+    base: Path | None = None
     try:
-        from astrbot.core.utils.astrbot_path import get_astrbot_data_path  # type: ignore
+        from astrbot.core.utils.astrbot_path import (
+            get_astrbot_data_path,  # type: ignore
+        )
 
         base = Path(get_astrbot_data_path()) / "plugin_data" / plugin_name
     except Exception:
@@ -70,14 +72,18 @@ def get_plugin_data_dir(subdir: str) -> Path:
         try:
             # plugin root is parents[2] if in core/
             is_core = Path(__file__).resolve().parent.name == "core"
-            plugin_root = Path(__file__).resolve().parents[2] if is_core else Path(__file__).resolve().parents[1]
-            
+            plugin_root = (
+                Path(__file__).resolve().parents[2]
+                if is_core
+                else Path(__file__).resolve().parents[1]
+            )
+
             # Use plugin_root relative path first as it's the most reliable
             # AstrBot/data/plugins/astrbot_dailynews_agent/
             # parents[1] -> plugins/
             # parents[2] -> data/
             data_dir = plugin_root.parents[1]
-            
+
             if (data_dir / "plugin_data").exists():
                 base = data_dir / "plugin_data" / plugin_name
             else:
@@ -93,8 +99,8 @@ def get_plugin_data_dir(subdir: str) -> Path:
     return base / s
 
 
-def _normalize_urls(urls: Iterable[str]) -> List[str]:
-    out: List[str] = []
+def _normalize_urls(urls: Iterable[str]) -> list[str]:
+    out: list[str] = []
     seen = set()
     for u in urls:
         if not isinstance(u, str):
@@ -108,34 +114,34 @@ def _normalize_urls(urls: Iterable[str]) -> List[str]:
     return out
 
 
-def _split_url_input(value: str) -> List[str]:
+def _split_url_input(value: str) -> list[str]:
     if not value:
         return []
     parts = re.split(r"[\s\r\n]+", value.strip())
     return [p for p in (x.strip() for x in parts) if p]
 
 
-def _guess_referer(url: str) -> Optional[str]:
+def _guess_referer(url: str) -> str | None:
     u = url.lower()
     if "mp.weixin.qq.com" in u or "mmbiz.qpic.cn" in u:
         return "https://mp.weixin.qq.com/"
     # MiYoShe / miHoYo image CDNs often require a referer under *.miyoushe.com or bbs.mihoyo.com
-    if (
-        "miyoushe.com" in u
-        or "mihoyo.com" in u
-        or "miyoushe.net" in u
-    ):
+    if "miyoushe.com" in u or "mihoyo.com" in u or "miyoushe.net" in u:
         return "https://www.miyoushe.com/"
     return None
 
 
-async def _fetch_http_image(session: aiohttp.ClientSession, url: str) -> Optional[bytes]:
+async def _fetch_http_image(
+    session: aiohttp.ClientSession, url: str
+) -> bytes | None:
     headers = {"User-Agent": "AstrBotDailyNews/1.0"}
     referer = _guess_referer(url)
     if referer:
         headers["Referer"] = referer
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        async with session.get(
+            url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
+        ) as resp:
             if resp.status != 200:
                 try:
                     host = (urlparse(url).netloc or "").lower()
@@ -157,7 +163,7 @@ async def _fetch_http_image(session: aiohttp.ClientSession, url: str) -> Optiona
         return None
 
 
-def _decode_base64_image(url: str) -> Optional[bytes]:
+def _decode_base64_image(url: str) -> bytes | None:
     if url.startswith("base64://"):
         try:
             return base64.b64decode(url.removeprefix("base64://"))
@@ -171,7 +177,7 @@ def _decode_base64_image(url: str) -> Optional[bytes]:
     return None
 
 
-def _read_local_image(url: str) -> Optional[bytes]:
+def _read_local_image(url: str) -> bytes | None:
     path = url
     if url.startswith("file:///"):
         path = url.replace("file:///", "")
@@ -184,12 +190,12 @@ def _read_local_image(url: str) -> Optional[bytes]:
         return None
 
 
-async def fetch_images_bytes(urls: Iterable[str]) -> List[bytes]:
+async def fetch_images_bytes(urls: Iterable[str]) -> list[bytes]:
     normalized = _normalize_urls(urls)
     if not normalized:
         return []
 
-    out: List[bytes] = []
+    out: list[bytes] = []
     async with aiohttp.ClientSession() as session:
         for url in normalized:
             data = _decode_base64_image(url)
@@ -210,12 +216,12 @@ async def fetch_images_bytes(urls: Iterable[str]) -> List[bytes]:
     return out
 
 
-async def fetch_image_bytes_one(url: str) -> Optional[bytes]:
+async def fetch_image_bytes_one(url: str) -> bytes | None:
     data = await fetch_images_bytes([url])
     return data[0] if data else None
 
 
-def probe_image_size(image_bytes: bytes) -> Optional[Tuple[int, int]]:
+def probe_image_size(image_bytes: bytes) -> tuple[int, int] | None:
     try:
         img = Image.open(io.BytesIO(image_bytes))
         return int(img.width), int(img.height)
@@ -223,7 +229,7 @@ def probe_image_size(image_bytes: bytes) -> Optional[Tuple[int, int]]:
         return None
 
 
-async def probe_image_size_from_url(url: str) -> Optional[Tuple[int, int]]:
+async def probe_image_size_from_url(url: str) -> tuple[int, int] | None:
     b = await fetch_image_bytes_one(url)
     if not b:
         return None
@@ -236,7 +242,7 @@ async def download_image_to_jpeg_file(
     out_path: Path,
     max_width: int = 1200,
     quality: int = 88,
-) -> Optional[Tuple[Path, Tuple[int, int]]]:
+) -> tuple[Path, tuple[int, int]] | None:
     """
     Download/convert an image URL into a local JPEG file.
 
@@ -265,7 +271,9 @@ async def download_image_to_jpeg_file(
         return None
 
 
-def _to_jpeg_bytes(data: bytes, *, max_width: int = 1200, quality: int = 85) -> Optional[bytes]:
+def _to_jpeg_bytes(
+    data: bytes, *, max_width: int = 1200, quality: int = 85
+) -> bytes | None:
     try:
         img = Image.open(io.BytesIO(data))
         img = img.convert("RGB")
@@ -280,7 +288,7 @@ def _to_jpeg_bytes(data: bytes, *, max_width: int = 1200, quality: int = 85) -> 
         return None
 
 
-async def image_url_to_data_uri(url: str) -> Optional[str]:
+async def image_url_to_data_uri(url: str) -> str | None:
     raw = await fetch_image_bytes_one(url)
     if not raw:
         return None
@@ -291,7 +299,10 @@ async def image_url_to_data_uri(url: str) -> Optional[str]:
     return "data:image/jpeg;base64," + b64
 
 
-_IMG_SRC_RE = re.compile(r"""<img(?P<before>[^>]*?)\ssrc=(?P<q>["'])(?P<src>[^"']+)(?P=q)(?P<after>[^>]*)>""", re.I)
+_IMG_SRC_RE = re.compile(
+    r"""<img(?P<before>[^>]*?)\ssrc=(?P<q>["'])(?P<src>[^"']+)(?P=q)(?P<after>[^>]*)>""",
+    re.I,
+)
 
 
 async def inline_html_remote_images(
@@ -309,7 +320,7 @@ async def inline_html_remote_images(
     if not s:
         return s
 
-    srcs: List[str] = []
+    srcs: list[str] = []
     for m in _IMG_SRC_RE.finditer(s):
         src = _html.unescape((m.group("src") or "").strip())
         if src.startswith("http://") or src.startswith("https://"):
@@ -321,7 +332,7 @@ async def inline_html_remote_images(
     if not srcs:
         return s
 
-    mapping: Dict[str, str] = {}
+    mapping: dict[str, str] = {}
     for src in srcs:
         data = await fetch_image_bytes_one(src)
         if not data:
@@ -329,7 +340,9 @@ async def inline_html_remote_images(
         jpeg = _to_jpeg_bytes(data, max_width=max_width, quality=quality)
         if not jpeg:
             continue
-        mapping[src] = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
+        mapping[src] = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode(
+            "ascii"
+        )
 
     if not mapping:
         try:
@@ -376,7 +389,7 @@ async def localize_html_remote_images(
     if not s:
         return s
 
-    srcs: List[str] = []
+    srcs: list[str] = []
     for m in _IMG_SRC_RE.finditer(s):
         src = _html.unescape((m.group("src") or "").strip())
         if src.startswith("http://") or src.startswith("https://"):
@@ -393,7 +406,7 @@ async def localize_html_remote_images(
     out_dir = get_plugin_data_dir("html_image_cache")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    mapping: Dict[str, str] = {}
+    mapping: dict[str, str] = {}
     for src in srcs:
         try:
             h = hashlib.sha1(src.encode("utf-8", errors="ignore")).hexdigest()[:20]
@@ -438,7 +451,7 @@ def _classify_image_for_layout(
     float_if_width_le: int,
     float_enabled: bool,
     float_dir: str,
-) -> List[str]:
+) -> list[str]:
     classes = ["md-img"]
     if width <= 0 or height <= 0:
         classes.append("md-img--full")
@@ -469,7 +482,7 @@ def _classify_image_for_layout(
     return classes
 
 
-def _merge_img_class_attr(tag: str, classes_to_add: List[str]) -> str:
+def _merge_img_class_attr(tag: str, classes_to_add: list[str]) -> str:
     add = " ".join([c for c in classes_to_add if c])
     if not add:
         return tag
@@ -515,7 +528,7 @@ async def adaptive_layout_html_images(
         return s
 
     # Collect unique srcs in order, capped.
-    srcs: List[str] = []
+    srcs: list[str] = []
     for m in matches:
         src = _html.unescape((m.group("src") or "").strip())
         if not src:
@@ -528,7 +541,7 @@ async def adaptive_layout_html_images(
     if not srcs:
         return s
 
-    sizes: dict[str, Tuple[int, int]] = {}
+    sizes: dict[str, tuple[int, int]] = {}
     for src in srcs:
         b = _decode_base64_image(src)
         if b is None and (src.startswith("http://") or src.startswith("https://")):
@@ -599,16 +612,17 @@ async def adaptive_layout_html_images(
     )
     return out
 
+
 def _merge_images_vertical_sync(
-    images_bytes: List[bytes],
+    images_bytes: list[bytes],
     out_path: Path,
     *,
     max_width: int = 1080,
     gap: int = 8,
-    bg_color: Tuple[int, int, int] = (255, 255, 255),
+    bg_color: tuple[int, int, int] = (255, 255, 255),
 ) -> Path:
-    pil_images: List[Image.Image] = []
-    widths: List[int] = []
+    pil_images: list[Image.Image] = []
+    widths: list[int] = []
     for b in images_bytes:
         try:
             img = Image.open(io.BytesIO(b))
@@ -622,7 +636,7 @@ def _merge_images_vertical_sync(
         raise RuntimeError("no valid images to merge")
 
     target_width = min(max(widths), max_width)
-    resized: List[Image.Image] = []
+    resized: list[Image.Image] = []
     total_height = 0
     for img in pil_images:
         if img.width > target_width:
@@ -673,7 +687,7 @@ async def merge_images_vertical(
     )
 
 
-def parse_image_urls(value: object) -> List[str]:
+def parse_image_urls(value: object) -> list[str]:
     if isinstance(value, list):
         return _normalize_urls([str(x) for x in value])
     if isinstance(value, str):

@@ -4,7 +4,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import aiohttp
 
@@ -16,7 +16,6 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 from ...core.models import NewsSourceConfig
-
 
 _REPO_RE = re.compile(
     r"""
@@ -32,7 +31,7 @@ _REPO_RE = re.compile(
 )
 
 
-def parse_repo(value: str) -> Optional[Tuple[str, str]]:
+def parse_repo(value: str) -> tuple[str, str] | None:
     m = _REPO_RE.match((value or "").strip())
     if not m:
         return None
@@ -44,7 +43,12 @@ def parse_repo(value: str) -> Optional[Tuple[str, str]]:
 
 
 def iso_utc(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        dt.astimezone(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def first_line(s: str) -> str:
@@ -61,13 +65,13 @@ class GitHubConfig:
     max_releases: int
 
     @classmethod
-    def from_user_config(cls, cfg: Dict[str, Any]) -> "GitHubConfig":
+    def from_user_config(cls, cfg: dict[str, Any]) -> GitHubConfig:
         def _to_bool(v: Any, default: bool) -> bool:
             if v is None:
                 return bool(default)
             if isinstance(v, bool):
                 return v
-            if isinstance(v, (int, float)):
+            if isinstance(v, int | float):
                 return bool(v)
             s = str(v).strip().lower()
             if s in {"1", "true", "yes", "y", "on"}:
@@ -99,7 +103,7 @@ class GitHubClient:
     def __init__(self, *, token: str):
         self._token = (token or "").strip()
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         h = {
             "Accept": "application/vnd.github+json",
             "User-Agent": "astrbot-dailynews-agent/1.0",
@@ -108,8 +112,10 @@ class GitHubClient:
             h["Authorization"] = f"Bearer {self._token}"
         return h
 
-    async def _get_json(self, session: aiohttp.ClientSession, url: str, *, attempts: int = 3) -> Any:
-        last_err: Optional[Exception] = None
+    async def _get_json(
+        self, session: aiohttp.ClientSession, url: str, *, attempts: int = 3
+    ) -> Any:
+        last_err: Exception | None = None
         for attempt in range(1, max(1, int(attempts)) + 1):
             try:
                 async with session.get(
@@ -124,7 +130,9 @@ class GitHubClient:
                         await asyncio.sleep(min(1.5 * attempt, 6.0))
                         continue
                     if resp.status == 403:
-                        remaining = (resp.headers.get("X-RateLimit-Remaining") or "").strip()
+                        remaining = (
+                            resp.headers.get("X-RateLimit-Remaining") or ""
+                        ).strip()
                         reset = (resp.headers.get("X-RateLimit-Reset") or "").strip()
                         if remaining == "0" and reset.isdigit():
                             now = int(datetime.now(tz=timezone.utc).timestamp())
@@ -149,18 +157,22 @@ class GitHubClient:
         max_commits: int,
         max_prs: int,
         max_releases: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         base = f"https://api.github.com/repos/{owner}/{repo}"
         since_iso = iso_utc(since)
         async with aiohttp.ClientSession() as session:
             repo_info = await self._get_json(session, base)
-            html_url = str(repo_info.get("html_url") or f"https://github.com/{owner}/{repo}")
+            html_url = str(
+                repo_info.get("html_url") or f"https://github.com/{owner}/{repo}"
+            )
             default_branch = str(repo_info.get("default_branch") or "main")
 
             releases_url = f"{base}/releases?per_page=10"
             tags_url = f"{base}/tags?per_page=1"
             commits_url = f"{base}/commits?per_page=30&sha={default_branch}"
-            pulls_url = f"{base}/pulls?state=all&sort=updated&direction=desc&per_page=30"
+            pulls_url = (
+                f"{base}/pulls?state=all&sort=updated&direction=desc&per_page=30"
+            )
 
             rels, tags, commits, pulls = await asyncio.gather(
                 self._get_json(session, releases_url),
@@ -174,7 +186,7 @@ class GitHubClient:
         commits_all = commits if isinstance(commits, list) else []
         pulls_all = pulls if isinstance(pulls, list) else []
 
-        def _dt(s: str) -> Optional[datetime]:
+        def _dt(s: str) -> datetime | None:
             if not s:
                 return None
             try:
@@ -184,11 +196,13 @@ class GitHubClient:
             except Exception:
                 return None
 
-        releases_recent: List[Dict[str, Any]] = []
+        releases_recent: list[dict[str, Any]] = []
         for r in releases_all:
             if not isinstance(r, dict):
                 continue
-            published_at = _dt(str(r.get("published_at") or "")) or _dt(str(r.get("created_at") or ""))
+            published_at = _dt(str(r.get("published_at") or "")) or _dt(
+                str(r.get("created_at") or "")
+            )
             if published_at is None or published_at < since:
                 continue
             releases_recent.append(
@@ -219,7 +233,7 @@ class GitHubClient:
         if tags_all and isinstance(tags_all[0], dict):
             latest_tag = str(tags_all[0].get("name") or "").strip()
 
-        commits_recent: List[Dict[str, Any]] = []
+        commits_recent: list[dict[str, Any]] = []
         latest_commit = None
         for c in commits_all:
             if not isinstance(c, dict):
@@ -248,7 +262,7 @@ class GitHubClient:
                 if max_commits > 0 and len(commits_recent) >= max_commits:
                     break
 
-        prs_recent: List[Dict[str, Any]] = []
+        prs_recent: list[dict[str, Any]] = []
         for pr in pulls_all:
             if not isinstance(pr, dict):
                 continue
@@ -269,11 +283,17 @@ class GitHubClient:
                 break
 
         version = ""
-        if isinstance(latest_release, dict) and str(latest_release.get("tag") or "").strip():
+        if (
+            isinstance(latest_release, dict)
+            and str(latest_release.get("tag") or "").strip()
+        ):
             version = str(latest_release.get("tag") or "").strip()
         elif latest_tag:
             version = latest_tag
-        elif isinstance(latest_commit, dict) and str(latest_commit.get("sha") or "").strip():
+        elif (
+            isinstance(latest_commit, dict)
+            and str(latest_commit.get("sha") or "").strip()
+        ):
             version = str(latest_commit.get("sha") or "").strip()
 
         return {
@@ -288,7 +308,9 @@ class GitHubClient:
             },
             "window": {
                 "since": since_iso,
-                "hours": int((datetime.now(tz=timezone.utc) - since).total_seconds() // 3600),
+                "hours": int(
+                    (datetime.now(tz=timezone.utc) - since).total_seconds() // 3600
+                ),
             },
             "version": version,
             "latest_release": latest_release,
@@ -299,27 +321,37 @@ class GitHubClient:
         }
 
 
-def updates_from_snapshot(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
-    updates: List[Dict[str, Any]] = []
+def updates_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    updates: list[dict[str, Any]] = []
     for r in snapshot.get("releases_recent") or []:
         if isinstance(r, dict):
-            updates.append({"kind": "release", "title": r.get("name") or r.get("tag"), "url": r.get("url")})
+            updates.append(
+                {
+                    "kind": "release",
+                    "title": r.get("name") or r.get("tag"),
+                    "url": r.get("url"),
+                }
+            )
     for c in snapshot.get("commits_recent") or []:
         if isinstance(c, dict):
-            updates.append({"kind": "commit", "title": c.get("message"), "url": c.get("url")})
+            updates.append(
+                {"kind": "commit", "title": c.get("message"), "url": c.get("url")}
+            )
     for pr in snapshot.get("prs_recent") or []:
         if isinstance(pr, dict):
-            updates.append({"kind": "pr", "title": pr.get("title"), "url": pr.get("url")})
+            updates.append(
+                {"kind": "pr", "title": pr.get("title"), "url": pr.get("url")}
+            )
     return updates
 
 
-def build_github_sources_from_config(cfg: Dict[str, Any]) -> List[NewsSourceConfig]:
+def build_github_sources_from_config(cfg: dict[str, Any]) -> list[NewsSourceConfig]:
     if not bool(cfg.get("github_enabled", False)):
         return []
     repos = cfg.get("github_repos") or []
     if not isinstance(repos, list):
         return []
-    out: List[NewsSourceConfig] = []
+    out: list[NewsSourceConfig] = []
     for r in repos:
         s = str(r or "").strip()
         if not s:
@@ -345,8 +377,8 @@ def build_github_sources_from_config(cfg: Dict[str, Any]) -> List[NewsSourceConf
 async def fetch_github_snapshot_for_source(
     *,
     source: NewsSourceConfig,
-    user_config: Dict[str, Any],
-) -> Optional[Dict[str, Any]]:
+    user_config: dict[str, Any],
+) -> dict[str, Any] | None:
     def _to_int(v: Any, default: int) -> int:
         try:
             if v is None or isinstance(v, bool):

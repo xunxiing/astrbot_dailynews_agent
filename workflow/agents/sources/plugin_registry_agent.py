@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import os
-import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import aiohttp
-import asyncio
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -18,13 +18,13 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from .github_source import parse_repo
 from ...core.image_utils import get_plugin_data_dir
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
+from .github_source import parse_repo
 
 
-def _parse_iso_dt(s: str) -> Optional[datetime]:
+def _parse_iso_dt(s: str) -> datetime | None:
     s = (s or "").strip()
     if not s:
         return None
@@ -59,12 +59,13 @@ def _default_official_registry_path() -> Path:
     except Exception:
         return Path("plugins.json")
 
+
 def _registry_cache_id(registry_path: str) -> str:
     s = str(registry_path or "").strip().replace("\\", "/").lower()
     return hashlib.sha1(s.encode("utf-8", "ignore")).hexdigest()[:16]
 
 
-def _find_any_github_token_from_templates(user_config: Dict[str, Any]) -> str:
+def _find_any_github_token_from_templates(user_config: dict[str, Any]) -> str:
     raw = (user_config or {}).get("news_sources") or []
     if not isinstance(raw, list):
         return ""
@@ -81,7 +82,7 @@ def _find_any_github_token_from_templates(user_config: Dict[str, Any]) -> str:
 
 @dataclass(frozen=True)
 class RegistrySnapshot:
-    snapshot_at: Optional[datetime]
+    snapshot_at: datetime | None
     keys: set[str]
     snapshot_path: str
     prev_snapshot_path: str
@@ -95,7 +96,7 @@ def _load_snapshot(cache_dir: Path, registry_path: str) -> RegistrySnapshot:
     snap_path = cache_dir / f"{cid}.snapshot.json"
     prev_path = cache_dir / f"{cid}.snapshot.prev.json"
 
-    snapshot_at: Optional[datetime] = None
+    snapshot_at: datetime | None = None
     keys: set[str] = set()
     try:
         if meta_path.exists():
@@ -145,7 +146,9 @@ def _write_snapshot(
             try:
                 snap_path.replace(prev_path)
             except Exception:
-                prev_path.write_text(snap_path.read_text(encoding="utf-8"), encoding="utf-8")
+                prev_path.write_text(
+                    snap_path.read_text(encoding="utf-8"), encoding="utf-8"
+                )
     except Exception:
         pass
 
@@ -155,18 +158,27 @@ def _write_snapshot(
         # fallback to canonical json if raw contains non-utf8 or other issues
         try:
             data = json.loads(raw_text)
-            snap_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            snap_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
         except Exception:
-            snap_path.write_text(raw_text.encode("utf-8", "ignore").decode("utf-8"), encoding="utf-8")
+            snap_path.write_text(
+                raw_text.encode("utf-8", "ignore").decode("utf-8"), encoding="utf-8"
+            )
 
     meta = {
-        "snapshot_at": now.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "snapshot_at": now.astimezone(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
         "registry_path": str(registry_path),
         "snapshot_file": str(snap_path),
         "prev_snapshot_file": str(prev_path),
     }
     try:
-        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        meta_path.write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception:
         pass
 
@@ -177,7 +189,7 @@ class RegistryPlugin:
     display_name: str
     repo: str
     version: str
-    registry_updated_at: Optional[datetime]
+    registry_updated_at: datetime | None
     stars: int
     desc: str
 
@@ -187,9 +199,9 @@ class RepoMeta:
     owner: str
     repo: str
     html_url: str
-    created_at: Optional[datetime]
-    pushed_at: Optional[datetime]
-    updated_at: Optional[datetime]
+    created_at: datetime | None
+    pushed_at: datetime | None
+    updated_at: datetime | None
     stars: int
     forks: int
     description: str
@@ -199,8 +211,8 @@ class PluginRegistrySubAgent:
     """插件源子 Agent：读取 plugins.json / 第三方 registry，并用 GitHub API 校验最近窗口内的新仓库/活跃仓库。"""
 
     async def fetch_latest_articles(
-        self, source: NewsSourceConfig, user_config: Dict[str, Any]
-    ) -> Tuple[str, List[Dict[str, Any]]]:
+        self, source: NewsSourceConfig, user_config: dict[str, Any]
+    ) -> tuple[str, list[dict[str, Any]]]:
         meta = source.meta or {}
         since_hours = int(meta.get("since_hours") or 27)
         max_plugins = int(meta.get("max_plugins") or source.max_articles or 20)
@@ -212,7 +224,9 @@ class PluginRegistrySubAgent:
         try:
             raw_text = Path(registry_path).read_text(encoding="utf-8")
         except Exception as e:
-            astrbot_logger.warning("[dailynews] plugin_registry read failed (%s): %s", registry_path, e)
+            astrbot_logger.warning(
+                "[dailynews] plugin_registry read failed (%s): %s", registry_path, e
+            )
             return source.name, []
 
         plugins = self._load_registry_from_text(raw_text)
@@ -232,7 +246,9 @@ class PluginRegistrySubAgent:
         rotated = False
         first_init = baseline_at is None
         if first_init:
-            _write_snapshot(snapshot, registry_path=registry_path, now=now, raw_text=raw_text)
+            _write_snapshot(
+                snapshot, registry_path=registry_path, now=now, raw_text=raw_text
+            )
             rotated = True
             baseline_at = now
             baseline_keys = set(curr_keys)
@@ -241,7 +257,9 @@ class PluginRegistrySubAgent:
             if age >= timedelta(hours=24):
                 # Diff against previous snapshot, then rotate snapshot to current.
                 rotated = True
-                _write_snapshot(snapshot, registry_path=registry_path, now=now, raw_text=raw_text)
+                _write_snapshot(
+                    snapshot, registry_path=registry_path, now=now, raw_text=raw_text
+                )
 
         added_keys = set()
         if baseline_keys:
@@ -252,11 +270,13 @@ class PluginRegistrySubAgent:
             baseline_path = snapshot.prev_snapshot_path
 
         window_keys = {
-            p.key for p in plugins if p.registry_updated_at is not None and p.registry_updated_at >= since_dt
+            p.key
+            for p in plugins
+            if p.registry_updated_at is not None and p.registry_updated_at >= since_dt
         }
 
         # Candidates: union of (within updated_at window) + (newly listed vs snapshot).
-        candidates: List[RegistryPlugin] = []
+        candidates: list[RegistryPlugin] = []
         key_to_plugin = {p.key: p for p in plugins}
         for k in list(window_keys) + list(added_keys):
             p = key_to_plugin.get(k)
@@ -271,12 +291,16 @@ class PluginRegistrySubAgent:
             ),
             reverse=True,
         )
-        candidates = candidates[: max_plugins * 3]  # allow some to be filtered out after GitHub check
+        candidates = candidates[
+            : max_plugins * 3
+        ]  # allow some to be filtered out after GitHub check
 
-        token = str(user_config.get("github_token") or "").strip() or _find_any_github_token_from_templates(user_config)
+        token = str(
+            user_config.get("github_token") or ""
+        ).strip() or _find_any_github_token_from_templates(user_config)
         repo_metas = await self._fetch_repo_metas(candidates, token=token)
 
-        rows: List[Dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
         for p in candidates:
             repo = parse_repo(p.repo)
             rmeta = None
@@ -284,8 +308,12 @@ class PluginRegistrySubAgent:
                 owner, name = repo
                 rmeta = repo_metas.get((owner, name))
 
-            is_new_repo = bool(rmeta and rmeta.created_at and rmeta.created_at >= since_dt)
-            is_active_repo = bool(rmeta and rmeta.pushed_at and rmeta.pushed_at >= since_dt)
+            is_new_repo = bool(
+                rmeta and rmeta.created_at and rmeta.created_at >= since_dt
+            )
+            is_active_repo = bool(
+                rmeta and rmeta.pushed_at and rmeta.pushed_at >= since_dt
+            )
             in_window = p.key in window_keys
             is_new_in_registry = p.key in added_keys
 
@@ -295,19 +323,25 @@ class PluginRegistrySubAgent:
                     "display_name": p.display_name,
                     "repo": p.repo,
                     "version": p.version,
-                    "registry_updated_at": p.registry_updated_at.isoformat().replace("+00:00", "Z")
+                    "registry_updated_at": p.registry_updated_at.isoformat().replace(
+                        "+00:00", "Z"
+                    )
                     if p.registry_updated_at
                     else "",
                     "plugin_stars": int(p.stars),
                     "desc": p.desc,
                     "repo_html_url": rmeta.html_url if rmeta else "",
-                    "repo_created_at": rmeta.created_at.isoformat().replace("+00:00", "Z")
+                    "repo_created_at": rmeta.created_at.isoformat().replace(
+                        "+00:00", "Z"
+                    )
                     if (rmeta and rmeta.created_at)
                     else "",
                     "repo_pushed_at": rmeta.pushed_at.isoformat().replace("+00:00", "Z")
                     if (rmeta and rmeta.pushed_at)
                     else "",
-                    "repo_updated_at": rmeta.updated_at.isoformat().replace("+00:00", "Z")
+                    "repo_updated_at": rmeta.updated_at.isoformat().replace(
+                        "+00:00", "Z"
+                    )
                     if (rmeta and rmeta.updated_at)
                     else "",
                     "repo_stars": int(rmeta.stars) if rmeta else 0,
@@ -319,7 +353,9 @@ class PluginRegistrySubAgent:
                     "registry_snapshot_path": snapshot.snapshot_path,
                     "registry_snapshot_prev_path": snapshot.prev_snapshot_path,
                     "registry_snapshot_baseline_path": baseline_path,
-                    "registry_snapshot_baseline_at": baseline_at.isoformat().replace("+00:00", "Z")
+                    "registry_snapshot_baseline_at": baseline_at.isoformat().replace(
+                        "+00:00", "Z"
+                    )
                     if baseline_at
                     else "",
                     "registry_snapshot_rotated": bool(rotated),
@@ -330,10 +366,10 @@ class PluginRegistrySubAgent:
         # Keep:
         # 1) newly listed vs snapshot
         # 2) within window AND (repo new)
-        kept: List[Dict[str, Any]] = []
+        kept: list[dict[str, Any]] = []
         seen_keys: set[str] = set()
 
-        def _push(row: Dict[str, Any]) -> None:
+        def _push(row: dict[str, Any]) -> None:
             k = str(row.get("key") or "")
             if not k or k in seen_keys:
                 return
@@ -348,15 +384,20 @@ class PluginRegistrySubAgent:
                 _push(r)
 
         # Explicitly drop "recently active only" plugins from the final report.
-        kept = [r for r in kept if bool(r.get("is_new_in_registry_snapshot") or False) or bool(r.get("is_new_repo") or False)]
+        kept = [
+            r
+            for r in kept
+            if bool(r.get("is_new_in_registry_snapshot") or False)
+            or bool(r.get("is_new_repo") or False)
+        ]
 
         kept = kept[:max_plugins]
 
         return source.name, kept
 
     async def analyze_source(
-        self, source: NewsSourceConfig, articles: List[Dict[str, Any]], llm: LLMRunner
-    ) -> Dict[str, Any]:
+        self, source: NewsSourceConfig, articles: list[dict[str, Any]], llm: LLMRunner
+    ) -> dict[str, Any]:
         meta = source.meta or {}
         since_hours = int(meta.get("since_hours") or 27)
         new_cnt = 0
@@ -368,7 +409,7 @@ class PluginRegistrySubAgent:
                 listed_cnt += 1
 
         angle = f"近 {since_hours} 小时：新增上架 {listed_cnt} / 新仓库 {new_cnt}"
-        sample: List[Dict[str, Any]] = []
+        sample: list[dict[str, Any]] = []
         for a in (articles or [])[:3]:
             if not isinstance(a, dict):
                 continue
@@ -376,7 +417,9 @@ class PluginRegistrySubAgent:
                 {
                     "display_name": a.get("display_name") or a.get("key"),
                     "repo": a.get("repo_html_url") or a.get("repo"),
-                    "is_new_in_registry_snapshot": bool(a.get("is_new_in_registry_snapshot") or False),
+                    "is_new_in_registry_snapshot": bool(
+                        a.get("is_new_in_registry_snapshot") or False
+                    ),
                     "is_new_repo": bool(a.get("is_new_repo") or False),
                 }
             )
@@ -397,9 +440,9 @@ class PluginRegistrySubAgent:
         self,
         source: NewsSourceConfig,
         instruction: str,
-        articles: List[Dict[str, Any]],
+        articles: list[dict[str, Any]],
         llm: LLMRunner,
-        user_config: Dict[str, Any] | None = None,
+        user_config: dict[str, Any] | None = None,
     ) -> SubAgentResult:
         meta = source.meta or {}
         since_hours = int(meta.get("since_hours") or 27)
@@ -419,7 +462,11 @@ class PluginRegistrySubAgent:
             # Still show snapshot info (it may have been initialized/refreshed in fetch_latest_articles).
             cache_dir = get_plugin_data_dir("plugin_registry_cache")
             snap = _load_snapshot(cache_dir, registry_path)
-            snap_at = snap.snapshot_at.isoformat().replace("+00:00", "Z") if snap.snapshot_at else ""
+            snap_at = (
+                snap.snapshot_at.isoformat().replace("+00:00", "Z")
+                if snap.snapshot_at
+                else ""
+            )
             lines = [
                 f"## {source.name}",
                 "",
@@ -427,10 +474,18 @@ class PluginRegistrySubAgent:
                 f"- 窗口：近 {since_hours} 小时（GitHub `created_at` 校验）",
             ]
             if snap.snapshot_path:
-                lines.append(f"- 当前快照：`{snap.snapshot_path}`" + (f"（`{snap_at}`）" if snap_at else ""))
+                lines.append(
+                    f"- 当前快照：`{snap.snapshot_path}`"
+                    + (f"（`{snap_at}`）" if snap_at else "")
+                )
             if snap.prev_snapshot_path and Path(snap.prev_snapshot_path).exists():
                 lines.append(f"- 上一次快照：`{snap.prev_snapshot_path}`")
-            lines.extend(["", f"未抓取到符合条件的插件（近 {since_hours} 小时内新增上架/新仓库）。"])
+            lines.extend(
+                [
+                    "",
+                    f"未抓取到符合条件的插件（近 {since_hours} 小时内新增上架/新仓库）。",
+                ]
+            )
             return SubAgentResult(
                 source_name=source.name,
                 content="\n".join(lines).strip(),
@@ -448,14 +503,20 @@ class PluginRegistrySubAgent:
         for a in articles:
             if not isinstance(a, dict):
                 continue
-            snapshot_at = snapshot_at or str(a.get("registry_snapshot_baseline_at") or "")
+            snapshot_at = snapshot_at or str(
+                a.get("registry_snapshot_baseline_at") or ""
+            )
             snapshot_path = snapshot_path or str(a.get("registry_snapshot_path") or "")
-            prev_snapshot_path = prev_snapshot_path or str(a.get("registry_snapshot_prev_path") or "")
-            baseline_snapshot_path = baseline_snapshot_path or str(a.get("registry_snapshot_baseline_path") or "")
+            prev_snapshot_path = prev_snapshot_path or str(
+                a.get("registry_snapshot_prev_path") or ""
+            )
+            baseline_snapshot_path = baseline_snapshot_path or str(
+                a.get("registry_snapshot_baseline_path") or ""
+            )
             rotated = rotated or bool(a.get("registry_snapshot_rotated") or False)
 
-        newly_listed: List[Dict[str, Any]] = []
-        window_new_repo: List[Dict[str, Any]] = []
+        newly_listed: list[dict[str, Any]] = []
+        window_new_repo: list[dict[str, Any]] = []
         for a in articles:
             if not isinstance(a, dict):
                 continue
@@ -479,7 +540,7 @@ class PluginRegistrySubAgent:
                 no_llm_merge=True,
             )
 
-        def _line(p: Dict[str, Any]) -> str:
+        def _line(p: dict[str, Any]) -> str:
             name = str(p.get("display_name") or p.get("key") or "").strip() or "plugin"
             repo_url = str(p.get("repo_html_url") or p.get("repo") or "").strip()
             version = str(p.get("version") or "").strip()
@@ -507,16 +568,26 @@ class PluginRegistrySubAgent:
             head = pieces[0] + (f"（{suffix}）" if suffix else "")
             return f"- {head}" + (f"\n  - {desc}" if desc else "")
 
-        lines: List[str] = []
+        lines: list[str] = []
         lines.append(f"## {source.name}")
         lines.append("")
         lines.append(f"- 索引文件：`{registry_path}`")
         lines.append(f"- 窗口：近 {since_hours} 小时（GitHub `created_at` 校验）")
         if baseline_snapshot_path and Path(baseline_snapshot_path).exists():
-            lines.append(f"- 对比基线快照：`{baseline_snapshot_path}`（`{snapshot_at or 'unknown'}`）")
-        if snapshot_path and snapshot_path != baseline_snapshot_path and Path(snapshot_path).exists():
+            lines.append(
+                f"- 对比基线快照：`{baseline_snapshot_path}`（`{snapshot_at or 'unknown'}`）"
+            )
+        if (
+            snapshot_path
+            and snapshot_path != baseline_snapshot_path
+            and Path(snapshot_path).exists()
+        ):
             lines.append(f"- 当前快照：`{snapshot_path}`")
-        if prev_snapshot_path and prev_snapshot_path != baseline_snapshot_path and Path(prev_snapshot_path).exists():
+        if (
+            prev_snapshot_path
+            and prev_snapshot_path != baseline_snapshot_path
+            and Path(prev_snapshot_path).exists()
+        ):
             lines.append(f"- 上一次快照：`{prev_snapshot_path}`")
         if rotated:
             lines.append("- 本次运行已刷新 24h 快照（用于明日对比）")
@@ -570,7 +641,7 @@ class PluginRegistrySubAgent:
             return str(p.resolve())
         return str(_default_official_registry_path().resolve())
 
-    def _load_registry(self, registry_path: str) -> List[RegistryPlugin]:
+    def _load_registry(self, registry_path: str) -> list[RegistryPlugin]:
         p = Path(str(registry_path))
         if not p.exists() or not p.is_file():
             astrbot_logger.warning("[dailynews] plugin_registry file not found: %s", p)
@@ -578,22 +649,24 @@ class PluginRegistrySubAgent:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except Exception as e:
-            astrbot_logger.warning("[dailynews] plugin_registry invalid json (%s): %s", p, e, exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] plugin_registry invalid json (%s): %s", p, e, exc_info=True
+            )
             return []
         return self._plugins_from_loaded_json(data)
 
-    def _load_registry_from_text(self, text: str) -> List[RegistryPlugin]:
+    def _load_registry_from_text(self, text: str) -> list[RegistryPlugin]:
         try:
             data = json.loads(text or "")
         except Exception:
             return []
         return self._plugins_from_loaded_json(data)
 
-    def _plugins_from_loaded_json(self, data: Any) -> List[RegistryPlugin]:
+    def _plugins_from_loaded_json(self, data: Any) -> list[RegistryPlugin]:
         root = data.get("data") if isinstance(data, dict) else None
         if not isinstance(root, dict):
             return []
-        out: List[RegistryPlugin] = []
+        out: list[RegistryPlugin] = []
         for key, v in root.items():
             if not isinstance(v, dict):
                 continue
@@ -622,16 +695,18 @@ class PluginRegistrySubAgent:
             )
         return out
 
-    async def _fetch_repo_metas(self, plugins: List[RegistryPlugin], *, token: str) -> Dict[Tuple[str, str], RepoMeta]:
-        repos: List[Tuple[str, str]] = []
+    async def _fetch_repo_metas(
+        self, plugins: list[RegistryPlugin], *, token: str
+    ) -> dict[tuple[str, str], RepoMeta]:
+        repos: list[tuple[str, str]] = []
         for p in plugins:
             parsed = parse_repo(p.repo)
             if not parsed:
                 continue
             repos.append(parsed)
 
-        uniq: List[Tuple[str, str]] = []
-        seen: set[Tuple[str, str]] = set()
+        uniq: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
         for r in repos:
             if r in seen:
                 continue
@@ -648,11 +723,15 @@ class PluginRegistrySubAgent:
         sem = asyncio.Semaphore(6)
         timeout = aiohttp.ClientTimeout(total=20)
 
-        async def _one(session: aiohttp.ClientSession, owner: str, repo: str) -> Optional[RepoMeta]:
+        async def _one(
+            session: aiohttp.ClientSession, owner: str, repo: str
+        ) -> RepoMeta | None:
             url = f"https://api.github.com/repos/{owner}/{repo}"
             async with sem:
                 try:
-                    async with session.get(url, headers=headers, timeout=timeout) as resp:
+                    async with session.get(
+                        url, headers=headers, timeout=timeout
+                    ) as resp:
                         if resp.status != 200:
                             txt = await resp.text()
                             astrbot_logger.debug(
@@ -679,7 +758,7 @@ class PluginRegistrySubAgent:
                 description=str(j.get("description") or ""),
             )
 
-        out: Dict[Tuple[str, str], RepoMeta] = {}
+        out: dict[tuple[str, str], RepoMeta] = {}
         async with aiohttp.ClientSession() as session:
             tasks = [asyncio.create_task(_one(session, o, r)) for (o, r) in uniq]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -688,5 +767,7 @@ class PluginRegistrySubAgent:
                 out[(res.owner, res.repo)] = res
             elif isinstance(res, Exception):
                 o, r = uniq[idx]
-                astrbot_logger.debug("[dailynews] github repo meta exception %s/%s: %s", o, r, res)
+                astrbot_logger.debug(
+                    "[dailynews] github repo meta exception %s/%s: %s", o, r, res
+                )
         return out

@@ -1,16 +1,14 @@
 import asyncio
-import base64
 import json
 import os
 import sys
+import textwrap
 from datetime import datetime
 from pathlib import Path
-import textwrap
-from typing import List
 
-from astrbot.api import logger as astrbot_logger
 from astrbot.api import AstrBotConfig
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api import logger as astrbot_logger
+from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
 from .tools import (
@@ -25,19 +23,22 @@ from .tools import (
 )
 from .workflow import (
     DailyNewsScheduler,
-    load_template,
-    get_plugin_data_dir,
-    merge_images_vertical,
     ImageLayoutAgent,
-    SubAgentResult,
     RenderImageStyleConfig,
     RenderPipelineConfig,
+    SubAgentResult,
+    ensure_playwright_chromium_installed,
+    get_plugin_data_dir,
+    load_template,
+    merge_images_vertical,
     render_daily_news_pages,
     split_pages,
-    ensure_playwright_chromium_installed,
 )
-from .workflow.pipeline.playwright_bootstrap import detect_windows_bootstrap_download_root
-from .workflow.pipeline.playwright_bootstrap import check_playwright_chromium_ready, config_needs_playwright
+from .workflow.pipeline.playwright_bootstrap import (
+    check_playwright_chromium_ready,
+    config_needs_playwright,
+    detect_windows_bootstrap_download_root,
+)
 
 try:
     from astrbot.core.message.components import Image as _ImageComponent
@@ -57,7 +58,7 @@ def _is_valid_image_file(path: Path) -> bool:
         if path.stat().st_size < 128:
             return False
         head = path.read_bytes()[:16]
-        if head.startswith(b"\xFF\xD8\xFF"):  # JPEG
+        if head.startswith(b"\xff\xd8\xff"):  # JPEG
             return True
         if head.startswith(b"\x89PNG\r\n\x1a\n"):  # PNG
             return True
@@ -117,7 +118,9 @@ class DailyNewsPlugin(Star):
 
                 self._scheduler_task = asyncio.create_task(self.scheduler.start())
             except Exception:
-                astrbot_logger.error("[dailynews] failed to start scheduler", exc_info=True)
+                astrbot_logger.error(
+                    "[dailynews] failed to start scheduler", exc_info=True
+                )
 
         # Warn users if they still have the Windows-only bootstrap browser in plugin data.
         # This commonly happens when migrating AstrBot data from Windows -> Linux.
@@ -142,7 +145,9 @@ class DailyNewsPlugin(Star):
         # Non-Windows: do NOT auto-download browsers. Guide users to official Playwright install.
         try:
             pipeline_cfg = RenderPipelineConfig.from_mapping(self.config)
-            if (not sys.platform.startswith("win")) and pipeline_cfg.playwright_fallback:
+            if (
+                not sys.platform.startswith("win")
+            ) and pipeline_cfg.playwright_fallback:
                 pw_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
                 if pw_path and "playwright_browsers" in pw_path.replace("\\", "/"):
                     astrbot_logger.warning(
@@ -262,7 +267,9 @@ class DailyNewsPlugin(Star):
         if not config_needs_playwright(cfg):
             return None
         pipeline_cfg = RenderPipelineConfig.from_mapping(cfg)
-        ok, msg = await check_playwright_chromium_ready(custom_browser_path=pipeline_cfg.custom_browser_path)
+        ok, msg = await check_playwright_chromium_ready(
+            custom_browser_path=pipeline_cfg.custom_browser_path
+        )
         if ok:
             return None
         # Don't spam the same session repeatedly, but always stop execution.
@@ -306,7 +313,9 @@ class DailyNewsPlugin(Star):
 
         async def _render_html(ctx: dict) -> Path | None:
             try:
-                p = await self.html_render(_select_render_template(self.config), ctx, return_url=False)
+                p = await self.html_render(
+                    _select_render_template(self.config), ctx, return_url=False
+                )
                 return Path(str(p)).resolve()
             except Exception:
                 astrbot_logger.error("[dailynews] html_render failed", exc_info=True)
@@ -339,7 +348,9 @@ class DailyNewsPlugin(Star):
         )
 
         for r in rendered:
-            if r.image_path is None or not _is_valid_image_file(Path(r.image_path).resolve()):
+            if r.image_path is None or not _is_valid_image_file(
+                Path(r.image_path).resolve()
+            ):
                 yield event.plain_result(r.markdown)
                 continue
 
@@ -363,9 +374,13 @@ class DailyNewsPlugin(Star):
         yield event.plain_result("正在生成日报，请稍候...")
         content = await self.scheduler.generate_once()
         if not (content or "").strip():
-            astrbot_logger.warning("[dailynews] /daily_news got empty content; sending fallback text")
+            astrbot_logger.warning(
+                "[dailynews] /daily_news got empty content; sending fallback text"
+            )
             content = "生成失败：日报内容为空（可能是抓取/LLM 超时或被其它插件过滤），请查看 AstrBot 日志。"
-        delivery_mode = str(self.config.get("delivery_mode", "html_image") or "html_image")
+        delivery_mode = str(
+            self.config.get("delivery_mode", "html_image") or "html_image"
+        )
         if delivery_mode == "html_image":
             async for r in self._send_as_html_images(event, content):
                 yield r
@@ -379,7 +394,9 @@ class DailyNewsPlugin(Star):
         self.config["enabled"] = not bool(self.config.get("enabled", False))
         if hasattr(self.config, "save_config"):
             self.config.save_config()
-        yield event.plain_result(f"自动日报已{'开启' if self.config['enabled'] else '关闭'}")
+        yield event.plain_result(
+            f"自动日报已{'开启' if self.config['enabled'] else '关闭'}"
+        )
 
     @filter.command("news_config")
     async def news_config(self, event: AstrMessageEvent):
@@ -430,7 +447,9 @@ class DailyNewsPlugin(Star):
         ).strip()
 
         if long_mode:
-            filler = "\n".join([f"- filler line {i}: {('内容' * 40)}" for i in range(1, 120)])
+            filler = "\n".join(
+                [f"- filler line {i}: {('内容' * 40)}" for i in range(1, 120)]
+            )
             test_md = f"{test_md}\n\n## 5. 长内容（分页测试）\n{filler}\n"
 
         content = test_md.format(
@@ -446,10 +465,15 @@ class DailyNewsPlugin(Star):
         )
         astrbot_logger.debug(
             "[dailynews] /news_test_md preview=%s",
-            (content[:260].replace("\n", "\\n") + ("..." if len(content) > 260 else "")),
+            (
+                content[:260].replace("\n", "\\n")
+                + ("..." if len(content) > 260 else "")
+            ),
         )
 
-        delivery_mode = str(self.config.get("delivery_mode", "html_image") or "html_image")
+        delivery_mode = str(
+            self.config.get("delivery_mode", "html_image") or "html_image"
+        )
         if force_mode in {"plain", "text"}:
             delivery_mode = "plain"
         elif force_mode in {"html", "img", "image"}:
@@ -468,7 +492,11 @@ class DailyNewsPlugin(Star):
         合并多张图片 URL 为纵向预览图。
         用法：/news_image_preview url1 url2 url3 ...
         """
-        from .workflow.image_utils import get_plugin_data_dir, merge_images_vertical, parse_image_urls
+        from .workflow.image_utils import (
+            get_plugin_data_dir,
+            merge_images_vertical,
+            parse_image_urls,
+        )
 
         urls = parse_image_urls(args)
         if not urls:
@@ -480,7 +508,9 @@ class DailyNewsPlugin(Star):
         try:
             merged = await merge_images_vertical(urls, out_path=out_path)
         except Exception as e:
-            astrbot_logger.error("[dailynews] news_image_preview failed: %s", e, exc_info=True)
+            astrbot_logger.error(
+                "[dailynews] news_image_preview failed: %s", e, exc_info=True
+            )
             yield event.plain_result(f"合并失败：{e}")
             return
 
@@ -535,18 +565,24 @@ class DailyNewsPlugin(Star):
         for idx, r in enumerate(fetched):
             src = fetch_sources[idx]
             if isinstance(r, Exception):
-                astrbot_logger.warning("[dailynews] news_image_debug fetch list failed: %s", r, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] news_image_debug fetch list failed: %s",
+                    r,
+                    exc_info=True,
+                )
                 source_articles[src.name] = []
                 continue
             name, articles = r
             source_articles[name] = articles or []
 
         # 2) 抓正文并提取 image_urls（不走 LLM）
-        from .workflow import _run_sync
-        from .analysis.wechatanalysis.analysis import fetch_wechat_article
         from .analysis.miyousheanalysis.analysis import fetch_miyoushe_post
+        from .analysis.wechatanalysis.analysis import fetch_wechat_article
+        from .workflow import _run_sync
 
-        async def _collect_images(source_name: str, source_type: str, arts, max_articles: int):
+        async def _collect_images(
+            source_name: str, source_type: str, arts, max_articles: int
+        ):
             urls = []
             for a in (arts or [])[: max(1, int(max_articles or 1))]:
                 u = (a.get("url") or "").strip() if isinstance(a, dict) else ""
@@ -601,12 +637,19 @@ class DailyNewsPlugin(Star):
             yield event.plain_result("\n".join(lines + ["无可预览图片"]).strip())
             return
 
-        out_path = get_plugin_data_dir("image_previews") / f"debug_preview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        out_path = (
+            get_plugin_data_dir("image_previews")
+            / f"debug_preview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        )
         try:
-            merged = await merge_images_vertical(all_for_preview[: max_urls], out_path=out_path)
+            merged = await merge_images_vertical(
+                all_for_preview[:max_urls], out_path=out_path
+            )
             img_file = Path(str(merged)).resolve()
             if not _is_valid_image_file(img_file):
-                yield event.plain_result("\n".join(lines + ["预览图生成失败：图片无效"]).strip())
+                yield event.plain_result(
+                    "\n".join(lines + ["预览图生成失败：图片无效"]).strip()
+                )
                 return
             p = img_file.as_posix()
             if _ImageComponent is not None:
@@ -614,8 +657,12 @@ class DailyNewsPlugin(Star):
             else:
                 yield event.image_result(p)
         except Exception as e:
-            astrbot_logger.error("[dailynews] news_image_debug preview failed: %s", e, exc_info=True)
-            yield event.plain_result("\n".join(lines + [f"预览图生成失败：{e}"]).strip())
+            astrbot_logger.error(
+                "[dailynews] news_image_debug preview failed: %s", e, exc_info=True
+            )
+            yield event.plain_result(
+                "\n".join(lines + [f"预览图生成失败：{e}"]).strip()
+            )
 
     @filter.command("news_layout_test")
     async def news_layout_test(self, event: AstrMessageEvent, args: str = ""):
@@ -662,18 +709,24 @@ class DailyNewsPlugin(Star):
         for idx, r in enumerate(fetched):
             src = fetch_sources[idx]
             if isinstance(r, Exception):
-                astrbot_logger.warning("[dailynews] news_layout_test fetch list failed: %s", r, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] news_layout_test fetch list failed: %s",
+                    r,
+                    exc_info=True,
+                )
                 source_articles[src.name] = []
                 continue
             name, articles = r
             source_articles[name] = articles or []
 
         # 2) 抓正文并提取 image_urls（不走 LLM 写作）
-        from .workflow import _run_sync
-        from .analysis.wechatanalysis.analysis import fetch_wechat_article
         from .analysis.miyousheanalysis.analysis import fetch_miyoushe_post
+        from .analysis.wechatanalysis.analysis import fetch_wechat_article
+        from .workflow import _run_sync
 
-        async def _collect_images(source_name: str, source_type: str, arts, max_articles: int):
+        async def _collect_images(
+            source_name: str, source_type: str, arts, max_articles: int
+        ):
             urls = []
             for a in (arts or [])[: max(1, int(max_articles or 1))]:
                 u = (a.get("url") or "").strip() if isinstance(a, dict) else ""
@@ -775,7 +828,7 @@ class DailyNewsPlugin(Star):
     @filter.command("news_subscribe")
     async def news_subscribe(self, event: AstrMessageEvent):
         """订阅：把当前会话加入推送列表"""
-        targets: List[str] = list(self.config.get("target_sessions", []) or [])
+        targets: list[str] = list(self.config.get("target_sessions", []) or [])
         if event.unified_msg_origin not in targets:
             targets.append(event.unified_msg_origin)
         self.config["target_sessions"] = targets
@@ -786,8 +839,10 @@ class DailyNewsPlugin(Star):
     @filter.command("news_unsubscribe")
     async def news_unsubscribe(self, event: AstrMessageEvent):
         """退订：把当前会话移出推送列表"""
-        targets: List[str] = list(self.config.get("target_sessions", []) or [])
-        self.config["target_sessions"] = [x for x in targets if x != event.unified_msg_origin]
+        targets: list[str] = list(self.config.get("target_sessions", []) or [])
+        self.config["target_sessions"] = [
+            x for x in targets if x != event.unified_msg_origin
+        ]
         if hasattr(self.config, "save_config"):
             self.config.save_config()
         yield event.plain_result("已退订本会话的每日推送")
@@ -801,7 +856,9 @@ class DailyNewsPlugin(Star):
         """
         parts = (args or "").strip().split()
         if len(parts) < 1:
-            yield event.plain_result("用法：/news_add_source URL（或 /news_add_source 名称 URL）")
+            yield event.plain_result(
+                "用法：/news_add_source URL（或 /news_add_source 名称 URL）"
+            )
             return
 
         display_name = ""
@@ -817,7 +874,9 @@ class DailyNewsPlugin(Star):
         low = url.lower()
         if "miyoushe.com" in low:
             key = "miyoushe"
-        elif "github.com" in low or ("/" in url and " " not in url and "http" not in low and ":" not in url):
+        elif "github.com" in low or (
+            "/" in url and " " not in url and "http" not in low and ":" not in url
+        ):
             key = "github"
         elif "x.com" in low or "twitter.com" in low:
             key = "twitter"
@@ -858,7 +917,9 @@ class DailyNewsPlugin(Star):
                         "name": display_name,
                         "url": url,
                         "priority": int(self.config.get("twitter_priority", 1) or 1),
-                        "max_articles": int(self.config.get("twitter_max_tweets", 3) or 3),
+                        "max_articles": int(
+                            self.config.get("twitter_max_tweets", 3) or 3
+                        ),
                     }
                 )
         elif key == "miyoushe":
@@ -923,7 +984,7 @@ class DailyNewsPlugin(Star):
             return
 
         # Legacy fallback (older configs)
-        sources: List[str] = list(self.config.get("wechat_sources", []) or [])
+        sources: list[str] = list(self.config.get("wechat_sources", []) or [])
         self.config["wechat_sources"] = [x for x in sources if x != url]
         if hasattr(self.config, "save_config"):
             self.config.save_config()

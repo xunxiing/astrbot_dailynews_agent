@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -39,7 +38,7 @@ class SingleAgentInput:
     source_type: str
     source_url: str
     priority: int
-    items: List[Dict[str, Any]]
+    items: list[dict[str, Any]]
 
 
 class SingleAgentNewsWriter:
@@ -55,12 +54,12 @@ class SingleAgentNewsWriter:
     async def _collect_materials(
         self,
         *,
-        sources: List[NewsSourceConfig],
-        fetched: Dict[str, List[Dict[str, Any]]],
-        user_config: Dict[str, Any],
-    ) -> List[SingleAgentInput]:
+        sources: list[NewsSourceConfig],
+        fetched: dict[str, list[dict[str, Any]]],
+        user_config: dict[str, Any],
+    ) -> list[SingleAgentInput]:
         """Collect materials for the single-agent model."""
-        materials: List[SingleAgentInput] = []
+        materials: list[SingleAgentInput] = []
 
         for src in sources:
             items = fetched.get(src.name, []) or []
@@ -80,7 +79,9 @@ class SingleAgentNewsWriter:
 
         return materials
 
-    def _pick_provider_id(self, *, user_config: Dict[str, Any], single_cfg: SingleAgentConfig) -> str:
+    def _pick_provider_id(
+        self, *, user_config: dict[str, Any], single_cfg: SingleAgentConfig
+    ) -> str:
         provider_id = str(single_cfg.provider_id or "").strip()
         if provider_id:
             return provider_id
@@ -106,9 +107,9 @@ class SingleAgentNewsWriter:
     async def write_report(
         self,
         *,
-        sources: List[NewsSourceConfig],
-        fetched: Dict[str, List[Dict[str, Any]]],
-        user_config: Dict[str, Any],
+        sources: list[NewsSourceConfig],
+        fetched: dict[str, list[dict[str, Any]]],
+        user_config: dict[str, Any],
         astrbot_context: Any,
     ) -> str:
         mode = _norm_mode(user_config.get("news_workflow_mode", "multi"))
@@ -116,9 +117,13 @@ class SingleAgentNewsWriter:
             raise RuntimeError("SingleAgentNewsWriter called while not in single mode")
 
         single_cfg = SingleAgentConfig.from_mapping(user_config)
-        provider_id = self._pick_provider_id(user_config=user_config, single_cfg=single_cfg)
+        provider_id = self._pick_provider_id(
+            user_config=user_config, single_cfg=single_cfg
+        )
         if not provider_id:
-            raise RuntimeError("single agent provider_id is empty; set single_agent_provider_id or main_agent_provider_id")
+            raise RuntimeError(
+                "single agent provider_id is empty; set single_agent_provider_id or main_agent_provider_id"
+            )
 
         materials = await self._collect_materials(
             sources=sources,
@@ -141,16 +146,20 @@ class SingleAgentNewsWriter:
         )
         doc_id, _ = create_doc(draft)
 
-        system_prompt = str(load_template("templates/prompts/single_agent_system.txt") or "").strip()
+        system_prompt = str(
+            load_template("templates/prompts/single_agent_system.txt") or ""
+        ).strip()
         if not system_prompt:
-            raise RuntimeError("single agent system prompt is empty: templates/prompts/single_agent_system.txt")
+            raise RuntimeError(
+                "single agent system prompt is empty: templates/prompts/single_agent_system.txt"
+            )
 
         # Dynamic constraints only (keep the main prompt in templates/).
         system_prompt = (
             system_prompt
             + "\n\n"
             + "## Dynamic constraints\n"
-            + f"- 禁止插入图片（不要输出 `![]()` 或 `<img>`）。\n"
+            + "- 禁止插入图片（不要输出 `![]()` 或 `<img>`）。\n"
             + f"- 日报字数建议 {int(single_cfg.min_chars)}-{int(single_cfg.max_chars)} 字。\n"
         )
 
@@ -197,7 +206,9 @@ class SingleAgentNewsWriter:
 
         # Ensure image features are not used even if user enabled image layout in config.
         if bool(user_config.get("image_layout_enabled", False)):
-            astrbot_logger.info("[dailynews] [single_agent] ignore image_layout_enabled=true (single mode)")
+            astrbot_logger.info(
+                "[dailynews] [single_agent] ignore image_layout_enabled=true (single mode)"
+            )
 
         try:
             resp = await astrbot_context.tool_loop_agent(
@@ -212,21 +223,32 @@ class SingleAgentNewsWriter:
             raw = getattr(resp, "completion_text", "") or ""
             data = _json_from_text(raw) or {}
             if not isinstance(data, dict):
-                astrbot_logger.warning("[dailynews] [single_agent] model did not return JSON; using doc as-is")
+                astrbot_logger.warning(
+                    "[dailynews] [single_agent] model did not return JSON; using doc as-is"
+                )
             else:
                 patched_whole = str(data.get("patched_markdown") or "").strip()
                 if patched_whole:
                     write_doc(doc_id, patched_whole)
         except Exception as e:
-            astrbot_logger.warning("[dailynews] [single_agent] tool_loop_agent failed: %s", e, exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] [single_agent] tool_loop_agent failed: %s",
+                e,
+                exc_info=True,
+            )
             # Fallback: do one plain LLM call without tools.
             llm = LLMRunner(
                 astrbot_context,
-                timeout_s=max(60, int(user_config.get("llm_write_timeout_s", 360) or 360)),
+                timeout_s=max(
+                    60, int(user_config.get("llm_write_timeout_s", 360) or 360)
+                ),
                 max_retries=max(0, int(user_config.get("llm_max_retries", 1) or 1)),
                 provider_id=provider_id,
             )
-            raw_md = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(payload, ensure_ascii=False))
+            raw_md = await llm.ask(
+                system_prompt=system_prompt,
+                prompt=json.dumps(payload, ensure_ascii=False),
+            )
             raw_md = (raw_md or "").strip()
             if raw_md:
                 write_doc(doc_id, raw_md)

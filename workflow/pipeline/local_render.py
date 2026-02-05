@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -21,7 +21,7 @@ except Exception:  # pragma: no cover
     async_playwright = None  # type: ignore
 
 
-def render_jinja_template(template_str: str, context: Dict[str, Any]) -> str:
+def render_jinja_template(template_str: str, context: dict[str, Any]) -> str:
     """
     AstrBot 的 render_custom_template 使用 Jinja2；这里做本地 Playwright 兜底时也用同样渲染。
     """
@@ -36,7 +36,7 @@ async def screenshot_html_playwright(
     html: str,
     *,
     out_path: Path,
-    viewport: Tuple[int, int] = (1080, 720),
+    viewport: tuple[int, int] = (1080, 720),
     timeout_ms: int = 20000,
     full_page: bool = True,
     browser_executable_path: str | None = None,
@@ -65,14 +65,18 @@ async def screenshot_html_playwright(
                 executable_path = None
 
         if executable_path is not None:
-            browser = await p.chromium.launch(headless=True, executable_path=str(executable_path))
+            browser = await p.chromium.launch(
+                headless=True, executable_path=str(executable_path)
+            )
         else:
             browser = await p.chromium.launch(headless=True)
         try:
             page = await browser.new_page(
                 viewport={"width": int(viewport[0]), "height": int(viewport[1])}
             )
-            await page.set_content(html or "", wait_until="load", timeout=int(timeout_ms))
+            await page.set_content(
+                html or "", wait_until="load", timeout=int(timeout_ms)
+            )
             await page.wait_for_timeout(200)
             await page.screenshot(
                 path=str(out_path),
@@ -87,10 +91,10 @@ async def screenshot_html_playwright(
 
 async def render_template_to_image_playwright(
     template_str: str,
-    context: Dict[str, Any],
+    context: dict[str, Any],
     *,
     out_path: Path,
-    viewport: Tuple[int, int] = (1080, 720),
+    viewport: tuple[int, int] = (1080, 720),
     timeout_ms: int = 20000,
     full_page: bool = True,
     browser_executable_path: str | None = None,

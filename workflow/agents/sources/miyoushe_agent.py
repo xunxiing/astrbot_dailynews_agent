@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -12,6 +12,7 @@ except Exception:  # pragma: no cover
 try:
     import sys
     from pathlib import Path
+
     # workflow/agents/sources/miyoushe_agent.py -> parents[3] is plugin root
     root = str(Path(__file__).resolve().parents[3])
     if root not in sys.path:
@@ -20,7 +21,9 @@ try:
     from analysis.miyousheanalysis.latest_posts import get_user_latest_posts
 except Exception:  # pragma: no cover
     from analysis.miyousheanalysis.analysis import fetch_miyoushe_post  # type: ignore
-    from analysis.miyousheanalysis.latest_posts import get_user_latest_posts  # type: ignore
+    from analysis.miyousheanalysis.latest_posts import (
+        get_user_latest_posts,  # type: ignore
+    )
 
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
@@ -31,8 +34,8 @@ class MiyousheSubAgent:
     """米游社子 Agent：抓取用户帖子列表 -> 抓取帖子正文 -> 写出小节"""
 
     async def fetch_latest_articles(
-        self, source: NewsSourceConfig, user_config: Dict[str, Any]
-    ) -> Tuple[str, List[Dict[str, str]]]:
+        self, source: NewsSourceConfig, user_config: dict[str, Any]
+    ) -> tuple[str, list[dict[str, str]]]:
         limit = max(int(source.max_articles), 5)
         headless = bool(user_config.get("miyoushe_headless", True))
         sleep_between = float(user_config.get("miyoushe_sleep_between_s", 0.6) or 0.6)
@@ -43,7 +46,7 @@ class MiyousheSubAgent:
             return source.name, []
 
         if "accountCenter/postList" in url:
-            last_err: Optional[str] = None
+            last_err: str | None = None
             for attempt in range(1, 4):
                 try:
                     posts = await asyncio.wait_for(
@@ -93,8 +96,8 @@ class MiyousheSubAgent:
         return source.name, [{"title": "", "url": url}]
 
     async def analyze_source(
-        self, source: NewsSourceConfig, articles: List[Dict[str, str]], llm: LLMRunner
-    ) -> Dict[str, Any]:
+        self, source: NewsSourceConfig, articles: list[dict[str, str]], llm: LLMRunner
+    ) -> dict[str, Any]:
         system_prompt = (
             "你是子Agent（信息侦察）。"
             "你将收到某个来源的最新文章标题与链接。"
@@ -127,7 +130,9 @@ class MiyousheSubAgent:
             },
         }
 
-        raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+        raw = await llm.ask(
+            system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False)
+        )
         data = _json_from_text(raw) or {}
         topics = data.get("topics", [])
         if not isinstance(topics, list):
@@ -163,9 +168,9 @@ class MiyousheSubAgent:
         self,
         source: NewsSourceConfig,
         instruction: str,
-        articles: List[Dict[str, str]],
+        articles: list[dict[str, str]],
         llm: LLMRunner,
-        user_config: Dict[str, Any] | None = None,
+        user_config: dict[str, Any] | None = None,
     ) -> SubAgentResult:
         if not articles:
             return SubAgentResult(
@@ -180,12 +185,16 @@ class MiyousheSubAgent:
         max_fetch_concurrency = 2
         sem = asyncio.Semaphore(max_fetch_concurrency)
 
-        async def _fetch_one(a: Dict[str, str]) -> Dict[str, Any]:
+        async def _fetch_one(a: dict[str, str]) -> dict[str, Any]:
             url = (a.get("url") or "").strip()
             if not url:
-                return {"title": (a.get("title") or "").strip(), "url": "", "error": "missing url"}
+                return {
+                    "title": (a.get("title") or "").strip(),
+                    "url": "",
+                    "error": "missing url",
+                }
 
-            last_err: Optional[str] = None
+            last_err: str | None = None
             for attempt in range(1, 3):
                 try:
                     async with sem:
@@ -208,10 +217,16 @@ class MiyousheSubAgent:
                         exc_info=True,
                     )
                     await asyncio.sleep(1.0 * attempt)
-            return {"title": (a.get("title") or "").strip(), "url": url, "error": last_err or "unknown"}
+            return {
+                "title": (a.get("title") or "").strip(),
+                "url": url,
+                "error": last_err or "unknown",
+            }
 
-        article_details = await asyncio.gather(*[_fetch_one(a) for a in chosen], return_exceptions=False)
-        images: List[str] = []
+        article_details = await asyncio.gather(
+            *[_fetch_one(a) for a in chosen], return_exceptions=False
+        )
+        images: list[str] = []
         seen = set()
         for d in article_details:
             if not isinstance(d, dict):
@@ -221,7 +236,9 @@ class MiyousheSubAgent:
                     seen.add(u)
                     images.append(u)
         if images:
-            astrbot_logger.info("[dailynews] %s collected %s image urls", source.name, len(images))
+            astrbot_logger.info(
+                "[dailynews] %s collected %s image urls", source.name, len(images)
+            )
 
         system_prompt = (
             "你是子Agent（写作）。"
@@ -241,10 +258,22 @@ class MiyousheSubAgent:
         }
 
         try:
-            raw = await llm.ask(system_prompt=system_prompt, prompt=json.dumps(prompt, ensure_ascii=False))
+            raw = await llm.ask(
+                system_prompt=system_prompt,
+                prompt=json.dumps(prompt, ensure_ascii=False),
+            )
         except Exception as e:
-            astrbot_logger.warning("[dailynews] miyoushe subagent write failed, fallback: %s", e, exc_info=True)
-            lines = [f"## {source.name}", "", "（模型生成失败/超时，以下为自动回退摘要）", ""]
+            astrbot_logger.warning(
+                "[dailynews] miyoushe subagent write failed, fallback: %s",
+                e,
+                exc_info=True,
+            )
+            lines = [
+                f"## {source.name}",
+                "",
+                "（模型生成失败/超时，以下为自动回退摘要）",
+                "",
+            ]
             for a in chosen:
                 u = (a.get("url") or "").strip()
                 t = (a.get("title") or "").strip()

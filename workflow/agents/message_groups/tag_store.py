@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -18,10 +18,15 @@ from ...storage import sqlite_store
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(tz=timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
-def _load_json_file(path: Path) -> Optional[Dict[str, Any]]:
+def _load_json_file(path: Path) -> dict[str, Any] | None:
     try:
         if not path.exists() or not path.is_file():
             return None
@@ -55,7 +60,7 @@ class TagStore:
     def identifier(self) -> str:
         return f"sqlite://kv/{self._KV_KEY}"
 
-    def ensure_initialized(self) -> Dict[str, Any]:
+    def ensure_initialized(self) -> dict[str, Any]:
         # 1) Load from sqlite kv (single source of truth)
         data = sqlite_store.kv_get(self._KV_KEY, default=None)
         if isinstance(data, dict) and isinstance(data.get("tags"), list):
@@ -82,7 +87,7 @@ class TagStore:
         if not isinstance(tags, list):
             tags = []
 
-        new_data: Dict[str, Any] = {
+        new_data: dict[str, Any] = {
             "version": 1,
             "updated_at": _utc_now_iso(),
             "tags": tags,
@@ -91,12 +96,16 @@ class TagStore:
         try:
             sqlite_store.kv_set(self._KV_KEY, new_data)
         except Exception:
-            astrbot_logger.warning("[dailynews] failed to init tag rules in sqlite kv: %s", self._KV_KEY, exc_info=True)
+            astrbot_logger.warning(
+                "[dailynews] failed to init tag rules in sqlite kv: %s",
+                self._KV_KEY,
+                exc_info=True,
+            )
         return new_data
 
-    def load_tags(self) -> List[TagDef]:
+    def load_tags(self) -> list[TagDef]:
         data = self.ensure_initialized()
-        out: List[TagDef] = []
+        out: list[TagDef] = []
         for it in data.get("tags") or []:
             if not isinstance(it, dict):
                 continue
@@ -107,16 +116,28 @@ class TagStore:
             out.append(TagDef(tag=tag, description=desc))
         return out
 
-    def promote_learned_tags(self, *, suggestions: Dict[str, int], min_count: int) -> bool:
+    def promote_learned_tags(
+        self, *, suggestions: dict[str, int], min_count: int
+    ) -> bool:
         if not suggestions:
             return False
 
         data = self.ensure_initialized()
-        existing = {str(it.get("tag") or "").strip() for it in (data.get("tags") or []) if isinstance(it, dict)}
-        learned: List[Dict[str, Any]] = list(data.get("learned_tags") or []) if isinstance(data.get("learned_tags"), list) else []
+        existing = {
+            str(it.get("tag") or "").strip()
+            for it in (data.get("tags") or [])
+            if isinstance(it, dict)
+        }
+        learned: list[dict[str, Any]] = (
+            list(data.get("learned_tags") or [])
+            if isinstance(data.get("learned_tags"), list)
+            else []
+        )
 
         changed = False
-        for raw_tag, cnt in sorted(suggestions.items(), key=lambda kv: (-int(kv[1]), kv[0])):
+        for raw_tag, cnt in sorted(
+            suggestions.items(), key=lambda kv: (-int(kv[1]), kv[0])
+        ):
             tag = str(raw_tag or "").strip()
             if not tag or tag in existing:
                 continue
@@ -137,7 +158,9 @@ class TagStore:
                 )
                 changed = True
 
-            learned.append({"tag": tag, "count": int(cnt), "promoted_at": _utc_now_iso()})
+            learned.append(
+                {"tag": tag, "count": int(cnt), "promoted_at": _utc_now_iso()}
+            )
 
         if changed:
             data["updated_at"] = _utc_now_iso()
@@ -145,5 +168,9 @@ class TagStore:
             try:
                 sqlite_store.kv_set(self._KV_KEY, data)
             except Exception:
-                astrbot_logger.warning("[dailynews] failed to save tag rules to sqlite kv: %s", self._KV_KEY, exc_info=True)
+                astrbot_logger.warning(
+                    "[dailynews] failed to save tag rules to sqlite kv: %s",
+                    self._KV_KEY,
+                    exc_info=True,
+                )
         return changed
