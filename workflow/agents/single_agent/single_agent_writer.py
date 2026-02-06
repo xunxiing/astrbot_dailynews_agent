@@ -32,6 +32,33 @@ def _norm_mode(value: Any) -> str:
     return "multi"
 
 
+def _maybe_extract_markdown_from_json(text: str) -> str:
+    data = _json_from_text(text or "")
+    if not isinstance(data, dict):
+        return ""
+    for key in (
+        "patched_markdown",
+        "final_markdown",
+        "markdown",
+        "final_summary",
+        "content",
+    ):
+        v = data.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
+
+def _decode_backslash_newlines(text: str) -> str:
+    s = str(text or "")
+    if "\\n" not in s and "\\t" not in s and "\\r" not in s:
+        return s
+    # Only decode when the string clearly looks double-escaped (lots of "\n" but few real newlines).
+    if s.count("\n") <= 2 and s.count("\\n") >= 6:
+        s = s.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
+    return s
+
+
 @dataclass(frozen=True)
 class SingleAgentInput:
     source_name: str
@@ -161,6 +188,8 @@ class SingleAgentNewsWriter:
             + "## Dynamic constraints\n"
             + "- 禁止插入图片（不要输出 `![]()` 或 `<img>`）。\n"
             + f"- 日报字数建议 {int(single_cfg.min_chars)}-{int(single_cfg.max_chars)} 字。\n"
+            + "- 文档内容必须是纯 Markdown，请不要把 JSON 写入文档。\n"
+            + "- `patched_markdown` 只放 Markdown，不要 double-escape（不要出现 `\\\\n` 字面量）。\n"
         )
 
         tools = ToolSet([MarkdownDocReadTool(), MarkdownDocApplyEditsTool()])
@@ -229,6 +258,7 @@ class SingleAgentNewsWriter:
             else:
                 patched_whole = str(data.get("patched_markdown") or "").strip()
                 if patched_whole:
+                    patched_whole = _decode_backslash_newlines(patched_whole).strip()
                     write_doc(doc_id, patched_whole)
         except Exception as e:
             astrbot_logger.warning(
@@ -257,6 +287,13 @@ class SingleAgentNewsWriter:
         if placeholder in md:
             # If the model never edited the doc, remove placeholder to avoid leaking.
             md = md.replace(placeholder, "").strip()
+
+        # Guard-rail: some models may accidentally write the JSON wrapper into the doc.
+        # If so, extract patched_markdown (or other markdown-like fields) and decode escaped newlines.
+        extracted = _maybe_extract_markdown_from_json(md)
+        if extracted:
+            md = extracted
+        md = _decode_backslash_newlines(md).strip()
 
         # Safety sanitize: no raw URLs / local file paths / debug leaks.
         md = sanitize_markdown_for_publish(md)

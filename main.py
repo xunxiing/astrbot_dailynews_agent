@@ -392,14 +392,19 @@ class DailyNewsPlugin(Star):
                 "[dailynews] manual publish to astrbook failed", exc_info=True
             )
 
-        delivery_mode = str(
-            self.config.get("delivery_mode", "html_image") or "html_image"
-        )
-        if delivery_mode == "html_image":
-            async for r in self._send_as_html_images(event, content):
-                yield r
-            return
+        # Send to current session directly (with fallback inside scheduler) to avoid
+        # "prepared but failed to send" cases when platform times out on images.
+        try:
+            cfg = self.scheduler.get_config_snapshot()
+            sent = await self.scheduler._send_to_targets(
+                content, [event.unified_msg_origin], config=cfg
+            )
+            if sent > 0:
+                return
+        except Exception:
+            astrbot_logger.error("[dailynews] manual send failed", exc_info=True)
 
+        # Last resort: let pipeline try to send plain text.
         yield event.plain_result(content)
 
     @filter.command("news_toggle")

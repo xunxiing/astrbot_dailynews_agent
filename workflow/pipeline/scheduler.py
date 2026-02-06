@@ -1079,8 +1079,11 @@ class DailyNewsScheduler:
                             )
                         else:
                             chain = MessageChain().file_image(p)
-                        await self.context.send_message(umo, chain)
-                        sent_this = True
+                        try:
+                            await self.context.send_message(umo, chain)
+                            sent_this = True
+                        except Exception:
+                            continue
                     if sent_this and send_links_forward and link_node_chunks:
                         try:
                             if (
@@ -1113,6 +1116,14 @@ class DailyNewsScheduler:
                                 await self.context.send_message(umo, chain)
                             except Exception:
                                 pass
+                    if not sent_this:
+                        # Fallback: if sending images fails (platform timeout / upload issues), try plain text.
+                        try:
+                            chain = MessageChain().message(content)
+                            await self.context.send_message(umo, chain)
+                            sent_this = True
+                        except Exception:
+                            sent_this = False
                 else:
                     chain = MessageChain().message(content)
                     await self.context.send_message(umo, chain)
