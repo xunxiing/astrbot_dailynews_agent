@@ -459,6 +459,7 @@ class NewsWorkflowModeConfig:
     Workflow mode switch.
     - multi: existing multi-agent pipeline (default)
     - single: single-agent mode (no image insertion)
+    - react: goal-oriented react mode with native function-calling loop
     """
 
     mode: str = "multi"
@@ -468,6 +469,8 @@ class NewsWorkflowModeConfig:
         raw = _to_str(cfg.get("news_workflow_mode"), "multi").strip().lower()
         if raw in {"single", "single_agent", "single-agent"}:
             return cls(mode="single")
+        if raw in {"react", "react_agent", "react-agent"}:
+            return cls(mode="react")
         return cls(mode="multi")
 
 
@@ -487,4 +490,35 @@ class SingleAgentConfig:
             max_steps=max(5, _to_int(cfg.get("single_agent_max_steps"), 18)),
             min_chars=min_chars,
             max_chars=max_chars,
+        )
+
+
+@dataclass(frozen=True)
+class ReactAgentConfig:
+    provider_id: str = ""
+    max_steps: int = 18
+    max_tool_failures: int = 6
+    max_no_progress_rounds: int = 3
+    max_repeat_action: int = 2
+    tool_call_timeout_s: int = 90
+    enable_trace: bool = True
+
+    @classmethod
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> ReactAgentConfig:
+        return cls(
+            provider_id=_to_str(cfg.get("react_agent_provider_id"), "").strip(),
+            max_steps=max(3, _to_int(cfg.get("react_agent_max_steps"), 18)),
+            max_tool_failures=max(
+                1, _to_int(cfg.get("react_agent_max_tool_failures"), 6)
+            ),
+            max_no_progress_rounds=max(
+                1, _to_int(cfg.get("react_agent_max_no_progress_rounds"), 3)
+            ),
+            max_repeat_action=max(
+                1, _to_int(cfg.get("react_agent_max_repeat_action"), 2)
+            ),
+            tool_call_timeout_s=max(
+                5, _to_int(cfg.get("react_agent_tool_call_timeout_s"), 90)
+            ),
+            enable_trace=_to_bool(cfg.get("react_agent_enable_trace"), True),
         )

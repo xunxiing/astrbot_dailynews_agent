@@ -25,7 +25,8 @@
     "default": "multi",
     "options": [
       "multi",
-      "single"
+      "single",
+      "react"
     ],
     "hint": "multi=多 Agent 工作流（默认）；single=single agent 模式（不支持插图）"
   },

@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover
 from ..agents.image_layout_agent import ImageLayoutAgent
 from ..agents.main_agent import MainNewsAgent
 from ..agents.message_groups.group_manager import MessageGroupManager
+from ..agents.react.orchestrator import ReActDailyNewsOrchestrator
 from ..agents.single_agent.single_agent_writer import SingleAgentNewsWriter
 from ..core.llm import LLMRunner
 from ..core.markdown_sanitizer import sanitize_markdown_for_publish
@@ -286,6 +287,60 @@ class NewsWorkflowManager:
                     .strip()
                     .lower()
                 )
+                if workflow_mode in {"react", "react_agent", "react-agent"}:
+                    astrbot_logger.info("[dailynews] [workflow] react mode enabled")
+                    user_goal = str(
+                        user_config.get("react_user_goal")
+                        or user_config.get("user_goal")
+                        or ""
+                    ).strip()
+                    if not user_goal:
+                        user_goal = (
+                            "Generate a daily report that covers today's important updates "
+                            "from all configured sources, with concrete details and links."
+                        )
+                    react_result = await ReActDailyNewsOrchestrator(
+                        sub_agent_classes=self.sub_agents
+                    ).run(
+                        user_goal=user_goal,
+                        user_config=user_config,
+                        astrbot_context=astrbot_context,
+                        sources=sources,
+                        fetched=fetched,
+                    )
+                    final_md = sanitize_markdown_for_publish(
+                        str(react_result.final_markdown or "")
+                    )
+                    if not final_md:
+                        return {
+                            "status": "error",
+                            "error": "react mode produced empty final summary",
+                            "mode": "react",
+                            "react_meta": {
+                                "steps": react_result.steps,
+                                "termination_reason": react_result.termination_reason,
+                                "tool_calls": len(react_result.tool_trace),
+                                "status": react_result.status,
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    return {
+                        "status": "success",
+                        "mode": "react",
+                        "decision": None,
+                        "sub_reports": [],
+                        "sub_results": [],
+                        "image_plan": None,
+                        "react_meta": {
+                            "steps": react_result.steps,
+                            "termination_reason": react_result.termination_reason,
+                            "tool_calls": len(react_result.tool_trace),
+                            "status": react_result.status,
+                        },
+                        "final_summary": final_md,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
                 if workflow_mode in {"single", "single_agent", "single-agent"}:
                     astrbot_logger.info(
                         "[dailynews] [workflow] single-agent mode enabled"
@@ -318,6 +373,7 @@ class NewsWorkflowManager:
                     )
                     return {
                         "status": "success",
+                        "mode": "single",
                         "decision": None,
                         "sub_reports": [],
                         "sub_results": [],
@@ -723,6 +779,7 @@ class NewsWorkflowManager:
                 )
                 return {
                     "status": "success",
+                    "mode": "multi",
                     "decision": decision,
                     "sub_reports": reports,
                     "sub_results": sub_results,
