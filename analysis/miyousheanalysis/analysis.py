@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import html as html_lib
 import re
-import time
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
-from playwright.sync_api import sync_playwright
+import requests
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -13,331 +15,234 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 
+DETAIL_API = "https://bbs-api.miyoushe.com/post/wapi/getPostFull"
+
+DEFAULT_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
+
+KNOWN_GAME_SLUG = {"ys", "sr", "zzz", "bh3", "bh2", "wd", "dby", "hna", "planet"}
+SLUG_TO_GID = {
+    "ys": 2,
+    "sr": 6,
+    "bh3": 1,
+    "zzz": 8,
+}
+
+
+def _request_json(
+    session: requests.Session, url: str, params: dict[str, Any], referer: str
+) -> dict[str, Any]:
+    headers = dict(DEFAULT_HEADERS)
+    headers["Referer"] = referer
+    resp = session.get(url, params=params, headers=headers, timeout=20)
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("retcode") != 0:
+        raise RuntimeError(f"retcode={data.get('retcode')} msg={data.get('message')}")
+    return data
+
+
 def _strip_tags(s: str) -> str:
     return re.sub(r"<[^>]+>", "", s or "")
 
 
-def _html_to_text_basic(html: str) -> str:
-    if not html:
+def _html_to_text_basic(raw_html: str) -> str:
+    if not raw_html:
         return ""
 
-    html = re.sub(r"(?is)<script[^>]*>.*?</script>", "", html)
-    html = re.sub(r"(?is)<style[^>]*>.*?</style>", "", html)
-    html = re.sub(r"(?is)<img\\b[^>]*>", "", html)
+    s = re.sub(r"(?is)<script[^>]*>.*?</script>", "", raw_html)
+    s = re.sub(r"(?is)<style[^>]*>.*?</style>", "", s)
+    s = re.sub(r"(?is)<img\\b[^>]*>", "", s)
 
-    html = re.sub(r"(?i)<br\\s*/?>", "\n", html)
-    html = re.sub(r"(?i)</p\\s*>", "\n\n", html)
-    html = re.sub(r"(?i)<p\\b[^>]*>", "", html)
+    s = re.sub(r"(?i)<br\\s*/?>", "\n", s)
+    s = re.sub(r"(?is)</p\\s*>", "\n\n", s)
+    s = re.sub(r"(?is)</div\\s*>", "\n", s)
+    s = re.sub(r"(?is)<li\\b[^>]*>", "\n- ", s)
+    s = re.sub(r"(?is)</li\\s*>", "", s)
 
-    text = _strip_tags(html)
-    text = html_lib.unescape(text)
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    return text
+    s = _strip_tags(s)
+    s = html_lib.unescape(s)
+    s = re.sub(r"\r\n?", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
 
 
-def _find_post_like(
-    obj: Any, depth: int = 0, max_depth: int = 10
-) -> dict[str, Any] | None:
-    if depth > max_depth:
-        return None
-
+def _find_post_container(obj: Any) -> dict[str, Any] | None:
     if isinstance(obj, dict):
-        if "post" in obj and isinstance(obj["post"], dict):
-            p = obj["post"]
-            if any(k in p for k in ["subject", "title"]) and any(
-                k in p for k in ["content", "post_content", "body"]
-            ):
-                return p
-
-        if any(k in obj for k in ["subject", "title"]) and any(
-            k in obj for k in ["content", "post_content", "body"]
-        ):
+        if "subject" in obj and "content" in obj:
             return obj
-
-        if "article" in obj and isinstance(obj["article"], dict):
-            a = obj["article"]
-            if any(k in a for k in ["subject", "title"]) and any(
-                k in a for k in ["content", "body"]
-            ):
-                return a
-
         for v in obj.values():
-            hit = _find_post_like(v, depth + 1, max_depth)
-            if hit:
+            hit = _find_post_container(v)
+            if hit is not None:
                 return hit
-
-    if isinstance(obj, list):
-        for it in obj:
-            hit = _find_post_like(it, depth + 1, max_depth)
-            if hit:
+    elif isinstance(obj, list):
+        for item in obj:
+            hit = _find_post_container(item)
+            if hit is not None:
                 return hit
     return None
 
 
-def _content_to_text(content: Any) -> tuple[str, list[str]]:
-    if content is None:
-        return "", []
-    if isinstance(content, str):
-        html = content or ""
-        # Some Nuxt payloads store rich HTML content, and `image_list` may be empty.
-        # Extract inline images from HTML to improve image candidate coverage.
-        imgs = re.findall(r'(?:src|data-src)=["\']([^"\']+)["\']', html, flags=re.I)
-        seen = set()
-        img_urls = []
-        for u in imgs:
-            s = str(u or "").strip()
-            if not s:
-                continue
-            if s in seen:
-                continue
-            seen.add(s)
-            img_urls.append(s)
-        return _html_to_text_basic(html), img_urls
-    if isinstance(content, list):
-        lines: list[str] = []
-        imgs: list[str] = []
-        for blk in content:
-            if not isinstance(blk, dict):
-                continue
-            if "insert" in blk and "type" not in blk:
-                ins = blk.get("insert")
-                if isinstance(ins, str):
-                    lines.append(ins)
-                elif isinstance(ins, dict) and "image" in ins:
-                    url = ins["image"]
-                    imgs.append(url)
-                continue
-            t = blk.get("type")
-            ins = blk.get("insert")
-            if t == "text" and isinstance(ins, str):
-                lines.append(ins)
-            elif t == "image" and isinstance(ins, dict) and "image" in ins:
-                url = ins["image"]
-                imgs.append(url)
-            else:
-                if isinstance(ins, str):
-                    lines.append(ins)
-        text = "\n\n".join([x for x in lines if str(x).strip()]).strip()
-        return text, imgs
-    return str(content).strip(), []
+def _extract_post_id(article_url: str) -> str:
+    raw = str(article_url or "").strip()
+    m = re.search(r"/article/(\d+)", raw)
+    if m:
+        return m.group(1)
+    parsed = urlparse(raw)
+    q = parse_qs(parsed.query)
+    for key in ("post_id", "id"):
+        vals = q.get(key)
+        if vals and str(vals[0]).isdigit():
+            return str(vals[0])
+    m2 = re.search(r"\b(\d{6,})\b", raw)
+    return m2.group(1) if m2 else ""
+
+
+def _infer_slug(article_url: str) -> str:
+    parsed = urlparse(str(article_url or "").strip())
+    for seg in parsed.path.split("/"):
+        if seg in KNOWN_GAME_SLUG:
+            return seg
+    return "ys"
+
+
+def _extract_inline_images(raw_html: str) -> list[str]:
+    if not raw_html:
+        return []
+    imgs = re.findall(r'(?:src|data-src)=["\']([^"\']+)["\']', raw_html, flags=re.I)
+    out: list[str] = []
+    seen: set[str] = set()
+    for u in imgs:
+        s = str(u or "").strip()
+        if not s or not s.startswith(("http://", "https://")):
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _extract_images_from_node(node: Any, *, depth: int = 0, max_depth: int = 6) -> list[str]:
+    if depth > max_depth:
+        return []
+
+    out: list[str] = []
+    if isinstance(node, dict):
+        for key in ("url", "src", "img", "image", "image_url"):
+            v = node.get(key)
+            if isinstance(v, str) and v.startswith(("http://", "https://")):
+                out.append(v)
+
+        for key in ("cover", "covers", "image_list", "images", "img_list", "pics"):
+            if key in node:
+                out.extend(
+                    _extract_images_from_node(node.get(key), depth=depth + 1, max_depth=max_depth)
+                )
+
+        for v in node.values():
+            if isinstance(v, (dict, list)):
+                out.extend(_extract_images_from_node(v, depth=depth + 1, max_depth=max_depth))
+
+    elif isinstance(node, list):
+        for item in node:
+            out.extend(_extract_images_from_node(item, depth=depth + 1, max_depth=max_depth))
+
+    return out
+
+
+def _dedupe_urls(urls: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        s = str(u or "").strip()
+        if not s or not s.startswith(("http://", "https://")):
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
 
 
 def fetch_miyoushe_post(article_url: str) -> dict[str, Any]:
     """
-    抓取米游社帖子页：优先抓取页面发起的 bbs-api `getPostFull` 响应（更稳更全），失败则回退到 DOM 容器解析。
-    返回：{title, content_text, image_urls}
+    Fetch a Miyoushe article by post_id through getPostFull API.
+    Return: {"title": str, "content_text": str, "image_urls": list[str]}
     """
-    m = re.search(r"/article/(\d+)", article_url or "")
-    post_id = m.group(1) if m else ""
+    article_url = str(article_url or "").strip()
+    if not article_url:
+        raise ValueError("empty article_url")
 
-    with sync_playwright() as p:
-        executable_path = None
-        try:
-            from workflow.pipeline.playwright_bootstrap import (
-                get_chromium_executable_path,
-            )
+    post_id = _extract_post_id(article_url)
+    if not post_id:
+        raise ValueError(f"cannot parse post_id from url: {article_url}")
 
-            exe = get_chromium_executable_path()
-            executable_path = str(exe) if exe else None
-        except Exception:
-            executable_path = None
+    slug = _infer_slug(article_url)
+    gid = int(SLUG_TO_GID.get(slug, 2))
 
-        if executable_path:
-            browser = p.chromium.launch(headless=True, executable_path=executable_path)
-        else:
-            astrbot_logger.warning(
-                "[dailynews] playwright chromium not ready; falling back to default Playwright browser path (may fail)."
-            )
-            browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        )
-        page = context.new_page()
+    with requests.Session() as session:
+        detail: dict[str, Any] | None = None
 
-        astrbot_logger.info("[dailynews] opening miyoushe article: %s", article_url)
-        # 1) 优先：等待页面请求的 getPostFull 返回，再从 JSON 里取内容
-        if post_id:
+        # Try inferred gid first, then fallback gid=2 for compatibility.
+        for try_gid in (gid, 2):
             try:
-                with page.expect_response(
-                    lambda r: "getPostFull" in r.url and f"post_id={post_id}" in r.url,
-                    timeout=30000,
-                ) as resp_info:
-                    page.goto(article_url, wait_until="domcontentloaded", timeout=60000)
-                resp = resp_info.value
-                if resp and resp.status == 200:
-                    data = resp.json() or {}
-                    post_wrap = (data.get("data") or {}).get("post") or {}
-                    post = (
-                        post_wrap.get("post")
-                        if isinstance(post_wrap.get("post"), dict)
-                        else {}
-                    )
-                    title = (
-                        (post.get("subject") or post.get("title") or "").strip()
-                        or page.title().strip()
-                        or "未命名帖子"
-                    )
-                    content_html = (post.get("content") or "").strip()
-                    content_text = _html_to_text_basic(content_html)
-
-                    imgs: list[str] = []
-                    img_list = post_wrap.get("image_list")
-                    if isinstance(img_list, list):
-                        for it in img_list:
-                            if isinstance(it, dict):
-                                u = it.get("url") or it.get("img") or it.get("src")
-                                if isinstance(u, str) and u.startswith("http"):
-                                    imgs.append(u)
-                            elif isinstance(it, str) and it.startswith("http"):
-                                imgs.append(it)
-                    cover = post_wrap.get("cover")
-                    if isinstance(cover, dict):
-                        cu = cover.get("url") or cover.get("img") or cover.get("src")
-                        if isinstance(cu, str) and cu.startswith("http"):
-                            imgs.append(cu)
-
-                    seen = set()
-                    images = [
-                        u for u in imgs if u and (u not in seen and not seen.add(u))
-                    ]
-                    browser.close()
-                    return {
-                        "title": title,
-                        "content_text": content_text,
-                        "image_urls": images,
-                    }
-            except Exception:
-                # 继续走 DOM fallback
-                pass
-
-        # 确保页面已加载一些内容，避免只拿到 Loading...
-        try:
-            page.goto(article_url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_load_state("domcontentloaded", timeout=15000)
-            time.sleep(1.2)
-        except Exception:
-            pass
-
-        # 1) Nuxt 优先
-        try:
-            page.wait_for_function(
-                "() => window.__NUXT__ && Object.keys(window.__NUXT__).length > 0",
-                timeout=12000,
-            )
-            nuxt = page.evaluate("() => window.__NUXT__")
-            post = _find_post_like(nuxt)
-            if isinstance(post, dict):
-                title = (
-                    (post.get("subject") or post.get("title") or "").strip()
-                    or page.title().strip()
-                    or "未命名帖子"
+                detail = _request_json(
+                    session,
+                    DETAIL_API,
+                    {"gids": try_gid, "post_id": post_id, "read": 1},
+                    article_url,
                 )
-                content = (
-                    post.get("content") or post.get("post_content") or post.get("body")
+                break
+            except Exception as e:
+                astrbot_logger.debug(
+                    "[dailynews] miyoushe getPostFull failed post_id=%s gid=%s err=%s",
+                    post_id,
+                    try_gid,
+                    e,
                 )
-                content_text, imgs1 = _content_to_text(content)
-                imgs2: list[str] = []
-                for k in ["images", "image_list", "img_list", "covers", "cover"]:
-                    v = post.get(k)
-                    if isinstance(v, str) and v.startswith("http"):
-                        imgs2.append(v)
-                    elif isinstance(v, list):
-                        for it in v:
-                            if isinstance(it, str) and it.startswith("http"):
-                                imgs2.append(it)
-                            elif isinstance(it, dict):
-                                for kk in ["url", "image", "src"]:
-                                    u = it.get(kk)
-                                    if isinstance(u, str) and u.startswith("http"):
-                                        imgs2.append(u)
 
-                browser.close()
-                imgs = []
-                seen = set()
-                for u in imgs1 + imgs2:
-                    if isinstance(u, str) and u and u not in seen:
-                        seen.add(u)
-                        imgs.append(u)
-                return {
-                    "title": title,
-                    "content_text": content_text,
-                    "image_urls": imgs,
-                }
-        except Exception:
-            pass
+        if not isinstance(detail, dict):
+            raise RuntimeError(f"miyoushe detail api failed for post_id={post_id}")
 
-        # 2) DOM fallback：只抓正文容器
-        title = ""
-        for sel in [
-            ".mhy-article__title",
-            ".mhy-article-page__title",
-            ".mhy-article-page__title h1",
-            "h1",
-            "h2",
-        ]:
-            try:
-                loc = page.locator(sel)
-                if loc.count() > 0 and loc.first.is_visible():
-                    title = loc.first.inner_text(timeout=5000).strip()
-                    if title:
-                        break
-            except Exception:
-                pass
-        if not title:
-            # 从 body 文本里粗略提取（DOM 结构变化时兜底）
-            body = (page.inner_text("body") or "").strip()
-            title = page.title().strip() or "未命名帖子"
-            if body and "文章发表" in body:
-                head = body.splitlines()
-                for line in head[:30]:
-                    s = (line or "").strip()
-                    if s and "文章发表" not in s and "米游社" not in s and len(s) >= 6:
-                        title = s
-                        break
+    data = detail.get("data") if isinstance(detail, dict) else {}
+    if not isinstance(data, dict):
+        data = {}
 
-        content = page.locator(".mhy-img-text-article__content.ql-editor")
-        if content.count() == 0:
-            content = page.locator(".mhy-article-page__content")
-        try:
-            content.first.wait_for(state="visible", timeout=15000)
-        except Exception:
-            pass
-        time.sleep(0.6)
+    post_wrap = data.get("post") if isinstance(data.get("post"), dict) else {}
+    base_post = post_wrap.get("post") if isinstance(post_wrap.get("post"), dict) else {}
+    post_obj = _find_post_container(data) or base_post
 
-        img_urls: list[str] = []
-        try:
-            ql_images = content.first.locator(".ql-image")
-            if ql_images.count() > 0:
-                urls = ql_images.evaluate_all(
-                    r"""
-                    els => els.map(e => {
-                      const img = e.querySelector("img");
-                      const src = img?.currentSrc || img?.src || img?.getAttribute("data-src") || img?.getAttribute("src");
-                      if (src) return src;
-                      const bg = getComputedStyle(e).backgroundImage;
-                      if (!bg) return null;
-                      const m = bg.match(/url\\([\"']?(.*?)[\"']?\\)/i);
-                      return m ? m[1] : null;
-                    }).filter(Boolean)
-                    """
-                )
-                img_urls.extend(urls)
-        except Exception:
-            pass
+    title = str(
+        post_obj.get("subject")
+        or post_obj.get("title")
+        or base_post.get("subject")
+        or base_post.get("title")
+        or f"post_{post_id}"
+    ).strip()
 
-        seen = set()
-        img_urls = [u for u in img_urls if u and (u not in seen and not seen.add(u))]
+    raw_content = post_obj.get("content") or base_post.get("content") or ""
+    if isinstance(raw_content, list):
+        raw_content = "\n".join(str(x) for x in raw_content)
+    raw_content = str(raw_content)
 
-        body_html = ""
-        try:
-            body_html = content.first.inner_html(timeout=10000)
-        except Exception:
-            pass
-        content_text = _html_to_text_basic(body_html)
+    content_text = _html_to_text_basic(raw_content)
 
-        browser.close()
-        return {"title": title, "content_text": content_text, "image_urls": img_urls}
+    images = _dedupe_urls(
+        _extract_images_from_node(post_wrap)
+        + _extract_images_from_node(post_obj)
+        + _extract_inline_images(raw_content)
+    )
+
+    return {
+        "title": title,
+        "content_text": content_text,
+        "image_urls": images,
+    }

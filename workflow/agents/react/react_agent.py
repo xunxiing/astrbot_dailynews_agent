@@ -231,11 +231,17 @@ class ReActAgent:
 
             round_progress = False
             for idx, tool_name in enumerate(tool_names):
-                args = (
-                    tool_args_list[idx]
-                    if idx < len(tool_args_list) and isinstance(tool_args_list[idx], dict)
-                    else {}
-                )
+                raw_args = tool_args_list[idx] if idx < len(tool_args_list) else {}
+                if isinstance(raw_args, dict):
+                    args = raw_args
+                elif isinstance(raw_args, str):
+                    try:
+                        parsed = json.loads(raw_args)
+                        args = parsed if isinstance(parsed, dict) else {}
+                    except Exception:
+                        args = {}
+                else:
+                    args = {}
                 tool_call_id = tool_ids[idx] if idx < len(tool_ids) else f"call_{idx}"
                 action_fp = (
                     f"{tool_name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}"

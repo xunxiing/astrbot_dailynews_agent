@@ -100,6 +100,7 @@ class ToolRegistry:
         *,
         prefer_existing: bool = True,
         include_inactive: bool = False,
+        whitelist: list[str] | None = None,
     ) -> int:
         """
         Merge globally-registered AstrBot tools into this local registry.
@@ -138,10 +139,20 @@ class ToolRegistry:
                     if isinstance(tool, FunctionTool):
                         candidates.append(tool)
 
+        allowed_names: set[str] | None = None
+        if whitelist is not None:
+            allowed_names = {
+                str(x).strip()
+                for x in whitelist
+                if isinstance(x, str) and str(x).strip()
+            }
+
         merged = 0
         for tool in candidates:
             name = str(getattr(tool, "name", "") or "").strip()
             if not name:
+                continue
+            if allowed_names is not None and name not in allowed_names:
                 continue
             if (
                 (not include_inactive)
@@ -164,7 +175,40 @@ class ToolRegistry:
         if not isinstance(props, dict) or not props:
             return args
         allowed = set(props.keys())
-        return {k: v for k, v in args.items() if k in allowed}
+        normalized = dict(args)
+
+        def _pick_first_str(*keys: str) -> str:
+            for key in keys:
+                value = normalized.get(key)
+                if isinstance(value, str):
+                    text = value.strip()
+                    if text:
+                        return text
+            return ""
+
+        url_value = _pick_first_str(
+            "url",
+            "profile_url",
+            "album_url",
+            "source_url",
+            "link",
+        )
+        if url_value:
+            for key in ("url", "profile_url", "album_url", "source_url"):
+                if key in allowed and not _pick_first_str(key):
+                    normalized[key] = url_value
+
+        uid_value = _pick_first_str("uid", "id", "user_id")
+        if uid_value:
+            for key in ("uid", "id"):
+                if key in allowed and not _pick_first_str(key):
+                    normalized[key] = uid_value
+
+        keyword_value = _pick_first_str("keyword", "query", "focus", "topic")
+        if keyword_value and "keyword" in allowed and not _pick_first_str("keyword"):
+            normalized["keyword"] = keyword_value
+
+        return {k: v for k, v in normalized.items() if k in allowed}
 
     @staticmethod
     def _result_to_text(resp: mcp.types.CallToolResult) -> str:

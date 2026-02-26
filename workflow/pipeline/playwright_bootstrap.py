@@ -149,7 +149,7 @@ def config_needs_playwright(cfg: Mapping[str, Any]) -> bool:
                 if not isinstance(s, dict):
                     continue
                 t = str(s.get("type") or "").strip().lower()
-                if t in {"wechat", "miyoushe", "twitter"}:
+                if t in {"wechat", "twitter"}:
                     return True
 
         # Legacy: separate lists.
@@ -157,11 +157,6 @@ def config_needs_playwright(cfg: Mapping[str, Any]) -> bool:
             cfg.get("wechat_sources") or []
         ) > 0:  # type: ignore[arg-type]
             return True
-        if (cfg.get("miyoushe_sources") or []) and len(
-            cfg.get("miyoushe_sources") or []
-        ) > 0:  # type: ignore[arg-type]
-            return True
-
         # Twitter/X.
         if bool(cfg.get("twitter_enabled", False)) and bool(
             cfg.get("twitter_targets", []) or []
