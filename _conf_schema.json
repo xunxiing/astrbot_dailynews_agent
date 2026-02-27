@@ -295,6 +295,12 @@
             "type": "string",
             "description": "专辑关键词（可选）",
             "default": ""
+          },
+          "latest_scope": {
+            "type": "string",
+            "description": "最新文章来源范围（auto/account/album）",
+            "default": "auto",
+            "hint": "auto：优先账号主页，失败回落合集；account：只走账号主页；album：只走合集 API"
           }
         }
       },
@@ -801,6 +807,12 @@
     "type": "list",
     "description": "错误通知目标会话 unified_msg_origin 列表",
     "default": []
+  },
+  "wechat_latest_scope": {
+    "type": "string",
+    "description": "微信公众号最新列表抓取范围（auto/account/album）",
+    "default": "auto",
+    "hint": "建议保持 auto。react 模式下也会复用此默认值（可被单个 news_sources.wechat.latest_scope 覆盖）。"
   },
   "wechat_sources": {
     "type": "list",

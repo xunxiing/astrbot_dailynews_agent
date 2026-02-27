@@ -394,6 +394,7 @@ class DailyNewsScheduler:
         cfg.setdefault("render_img_narrow_max_width", style.narrow_max_width)
 
         cfg.setdefault("preferred_source_types", ["wechat"])
+        cfg.setdefault("wechat_latest_scope", "auto")
         cfg.setdefault("github_enabled", False)
         cfg.setdefault("github_repos", [])
         cfg.setdefault("github_token", "")
@@ -482,6 +483,11 @@ class DailyNewsScheduler:
             cfg["admin_sessions"] = []
         if not isinstance(cfg.get("preferred_source_types"), list):
             cfg["preferred_source_types"] = ["wechat"]
+        scope = str(cfg.get("wechat_latest_scope") or "").strip().lower()
+        if scope not in {"auto", "account", "album"}:
+            cfg["wechat_latest_scope"] = "auto"
+        else:
+            cfg["wechat_latest_scope"] = scope
         if not isinstance(cfg.get("image_layout_sources"), list):
             cfg["image_layout_sources"] = []
         if not isinstance(cfg.get("github_repos"), list):

@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import json
 from datetime import datetime
 from typing import Any
@@ -10,6 +11,21 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
+def _fallback_fetch_latest_articles(
+    article_url: str,
+    limit: int = 5,
+    latest_scope: str = "auto",
+) -> tuple[list[dict[str, str]], dict[str, str]]:
+    from analysis.wechatanalysis.latest_articles import get_album_articles  # type: ignore
+
+    rows = get_album_articles(
+        article_url=article_url,
+        limit=max(1, int(limit or 1)),
+        latest_scope=latest_scope,
+    )
+    return rows, {"scope": latest_scope, "article_url": article_url}
+
+
 try:
     import sys
     from pathlib import Path
@@ -17,15 +33,22 @@ try:
     root = str(Path(__file__).resolve().parents[3])
     if root not in sys.path:
         sys.path.append(root)
-    from analysis.wechatanalysis.analysis import fetch_wechat_article
-    from analysis.wechatanalysis.latest_articles import (
-        get_album_articles_chasing_latest_with_seed,
+    _wechat_analysis = importlib.import_module("analysis.wechatanalysis.analysis")
+    fetch_wechat_article = getattr(_wechat_analysis, "fetch_wechat_article")
+    fetch_wechat_latest_articles = getattr(
+        _wechat_analysis, "fetch_latest_articles", None
     )
+    if not callable(fetch_wechat_latest_articles):
+        fetch_wechat_latest_articles = _fallback_fetch_latest_articles
 except Exception:  # pragma: no cover
     from analysis.wechatanalysis.analysis import fetch_wechat_article  # type: ignore
-    from analysis.wechatanalysis.latest_articles import (  # type: ignore
-        get_album_articles_chasing_latest_with_seed,
-    )
+
+    try:
+        from analysis.wechatanalysis.analysis import (  # type: ignore
+            fetch_latest_articles as fetch_wechat_latest_articles,
+        )
+    except Exception:
+        fetch_wechat_latest_articles = _fallback_fetch_latest_articles
 
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
@@ -40,12 +63,19 @@ class WechatSubAgent:
         self, source: NewsSourceConfig, user_config: dict[str, Any]
     ) -> tuple[str, list[dict[str, str]]]:
         limit = max(int(source.max_articles), 5)
-        max_hops = int(user_config.get("wechat_chase_max_hops", 6))
         persist_seed = bool(user_config.get("wechat_seed_persist", True))
-        chase_timeout_s = 150.0
+        fetch_timeout_s = 90.0
 
         album_keyword = source.album_keyword
-        key = f"{source.url}||{album_keyword or ''}"
+        source_scope = ""
+        if isinstance(source.meta, dict):
+            source_scope = str(source.meta.get("latest_scope") or "").strip().lower()
+        cfg_scope = str(user_config.get("wechat_latest_scope") or "").strip().lower()
+        latest_scope = source_scope or cfg_scope or "auto"
+        if latest_scope not in {"auto", "account", "album"}:
+            latest_scope = "auto"
+
+        key = f"{source.url}||{album_keyword or ''}||{latest_scope}"
 
         state = await _get_seed_state() if persist_seed else {}
         entry = state.get(key) if isinstance(state, dict) else None
@@ -86,20 +116,28 @@ class WechatSubAgent:
         for start_url in candidates[: max(1, len(candidates))]:
             for attempt in range(1, 3):
                 try:
-                    seed_url, articles = await asyncio.wait_for(
+                    rows, meta = await asyncio.wait_for(
                         _run_sync(
-                            get_album_articles_chasing_latest_with_seed,
+                            fetch_wechat_latest_articles,
                             start_url,
                             limit,
-                            album_keyword=album_keyword,
-                            max_hops=max_hops,
+                            latest_scope=latest_scope,
                         ),
-                        timeout=float(chase_timeout_s),
+                        timeout=float(fetch_timeout_s),
                     )
+                    articles = [
+                        {
+                            "title": str((x or {}).get("title", "")),
+                            "url": str((x or {}).get("url", "")),
+                        }
+                        for x in (rows or [])
+                        if isinstance(x, dict) and str((x or {}).get("url", "")).strip()
+                    ]
+                    seed_url = str((meta or {}).get("article_url") or start_url).strip()
                 except asyncio.TimeoutError:
-                    last_err = f"timeout>{int(chase_timeout_s)}s"
+                    last_err = f"timeout>{int(fetch_timeout_s)}s"
                     astrbot_logger.warning(
-                        "[dailynews] chasing latest timeout for %s (start=%s, attempt %s/2): %s",
+                        "[dailynews] latest fetch timeout for %s (start=%s, attempt %s/2): %s",
                         source.name,
                         start_url,
                         attempt,
@@ -110,7 +148,7 @@ class WechatSubAgent:
                 except Exception as e:
                     last_err = str(e) or type(e).__name__
                     astrbot_logger.warning(
-                        "[dailynews] chasing latest failed for %s (start=%s, attempt %s/2): %s",
+                        "[dailynews] latest fetch failed for %s (start=%s, attempt %s/2): %s",
                         source.name,
                         start_url,
                         attempt,
@@ -140,6 +178,7 @@ class WechatSubAgent:
                             "last_good_seed_url": seed_url,
                             "source_url": source.url,
                             "album_keyword": album_keyword or "",
+                            "latest_scope": latest_scope,
                             "updated_at": datetime.now().isoformat(),
                         },
                     )
@@ -148,8 +187,9 @@ class WechatSubAgent:
         if not articles:
             fallback_url = last_good_seed_url or source.url
             astrbot_logger.warning(
-                "[dailynews] %s has no album articles after retries; fallback to single url: %s (last_err=%s)",
+                "[dailynews] %s has no latest wechat articles after retries (scope=%s); fallback to single url: %s (last_err=%s)",
                 source.name,
+                latest_scope,
                 fallback_url,
                 last_err or "unknown",
             )

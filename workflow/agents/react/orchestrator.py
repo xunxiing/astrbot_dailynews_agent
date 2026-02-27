@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -160,6 +161,60 @@ def _format_vertical_tool_output(payload: Any, *, max_chars: int = 5200) -> str:
     return text
 
 
+def _build_vertical_fallback_payload(
+    *,
+    source: NewsSourceConfig,
+    articles: list[dict[str, Any]],
+    keyword: str,
+    reason: str,
+    analysis_report: Any = None,
+) -> dict[str, Any]:
+    chosen = articles[: max(1, int(getattr(source, "max_articles", 3) or 3))]
+    lines = [f"## {source.name}", "", f"（子分析超时，已回退为链接摘要：{reason}）", ""]
+    key_points: list[str] = []
+    images: list[str] = []
+    seen_img: set[str] = set()
+    for a in chosen:
+        if not isinstance(a, dict):
+            continue
+        t = str(a.get("title") or a.get("name") or "").strip()
+        u = str(a.get("url") or a.get("link") or "").strip()
+        if t and u:
+            lines.append(f"- {t} ( [阅读原文]({u}) )")
+            key_points.append(t)
+        elif u:
+            lines.append(f"- [阅读原文]({u})")
+        elif t:
+            lines.append(f"- {t}")
+            key_points.append(t)
+
+        for k in ("image_urls", "images", "image_list"):
+            vals = a.get(k)
+            if isinstance(vals, list):
+                for x in vals:
+                    s = str(x or "").strip()
+                    if s.startswith(("http://", "https://")) and s not in seen_img:
+                        seen_img.add(s)
+                        images.append(s)
+                        if len(images) >= 20:
+                            break
+            if len(images) >= 20:
+                break
+
+    summary = f"Fetched {len(articles)} items from source `{source.name}`."
+    if keyword:
+        summary += f" Keyword: {keyword}."
+    return {
+        "source_name": source.name,
+        "summary": summary,
+        "key_points": key_points[:8],
+        "content": "\n".join(lines).strip(),
+        "images": images,
+        "error": reason,
+        "analysis_report": analysis_report,
+    }
+
+
 async def _search_web(query: str, *, max_results: int = 6) -> list[dict[str, str]]:
     q = str(query or "").strip()
     if not q:
@@ -259,7 +314,8 @@ def _build_target_source_snapshot(
     max_titles_per_source = 4
 
     rows: list[dict[str, Any]] = []
-    all_urls: list[str] = []
+    all_seed_urls: list[str] = []
+    all_candidate_urls: list[str] = []
     all_hosts: list[str] = []
 
     for src in (sources or [])[:max_sources]:
@@ -269,6 +325,11 @@ def _build_target_source_snapshot(
         src_url = str(src.url or "").strip()
         if src_url and src_url not in source_urls:
             source_urls.append(src_url)
+            if src_url not in all_seed_urls:
+                all_seed_urls.append(src_url)
+            h0 = _host_from_url(src_url)
+            if h0 and h0 not in all_hosts:
+                all_hosts.append(h0)
 
         items = fetched.get(src.name, []) or []
         sample_titles: list[str] = []
@@ -299,19 +360,22 @@ def _build_target_source_snapshot(
             }
         )
         for u in source_urls:
-            if u not in all_urls:
-                all_urls.append(u)
+            if u not in all_candidate_urls:
+                all_candidate_urls.append(u)
             h = _host_from_url(u)
             if h and h not in all_hosts:
                 all_hosts.append(h)
-            if len(all_urls) >= max_total_urls:
+            if len(all_candidate_urls) >= max_total_urls:
                 break
-        if len(all_urls) >= max_total_urls:
+        if len(all_candidate_urls) >= max_total_urls:
             break
 
     return {
         "sources": rows,
-        "target_urls": all_urls[:max_total_urls],
+        # Keep tool-call boundary stable: pass only configured seed URLs.
+        "target_urls": all_seed_urls[:max_total_urls],
+        # Candidate URLs are still available for diagnostics.
+        "candidate_urls": all_candidate_urls[:max_total_urls],
         "target_hosts": all_hosts[:20],
     }
 
@@ -487,6 +551,18 @@ class ReActDailyNewsOrchestrator:
     ) -> str:
         dep_ids = dependency_ids if isinstance(dependency_ids, list) else []
         kw = str(keyword or "").strip().lower()
+        analyze_timeout_s = _safe_int(
+            user_config.get("react_vertical_analyze_timeout_s", 20),
+            20,
+            minimum=5,
+            maximum=90,
+        )
+        process_timeout_s = _safe_int(
+            user_config.get("react_vertical_process_timeout_s", 65),
+            65,
+            minimum=10,
+            maximum=180,
+        )
 
         async def _runner(injected_prompt: str) -> Any:
             agent = agent_cls()
@@ -505,8 +581,16 @@ class ReActDailyNewsOrchestrator:
 
             report = None
             try:
-                report = await agent.analyze_source(source, articles, llm_write)
-            except Exception:
+                report = await asyncio.wait_for(
+                    agent.analyze_source(source, articles, llm_write),
+                    timeout=float(analyze_timeout_s),
+                )
+            except Exception as e:
+                astrbot_logger.warning(
+                    "[dailynews][react] analyze_source fallback source=%s err=%s",
+                    source.name,
+                    e,
+                )
                 report = None
 
             full_instruction = instruction
@@ -514,20 +598,49 @@ class ReActDailyNewsOrchestrator:
                 full_instruction = (
                     f"{instruction}\n\nDependency context:\n{injected_prompt}"
                 )
+
+            async def _call_process() -> Any:
+                try:
+                    return await agent.process_source(
+                        source,
+                        full_instruction,
+                        articles,
+                        llm_write,
+                        user_config=user_config,
+                    )
+                except TypeError:
+                    return await agent.process_source(
+                        source,
+                        full_instruction,
+                        articles,
+                        llm_write,
+                    )
+
             try:
-                result = await agent.process_source(
-                    source,
-                    full_instruction,
-                    articles,
-                    llm_write,
-                    user_config=user_config,
+                result = await asyncio.wait_for(
+                    _call_process(),
+                    timeout=float(process_timeout_s),
                 )
-            except TypeError:
-                result = await agent.process_source(
-                    source,
-                    full_instruction,
-                    articles,
-                    llm_write,
+            except asyncio.TimeoutError:
+                return _build_vertical_fallback_payload(
+                    source=source,
+                    articles=articles,
+                    keyword=kw,
+                    reason=f"process_timeout>{process_timeout_s}s",
+                    analysis_report=report,
+                )
+            except Exception as e:
+                astrbot_logger.warning(
+                    "[dailynews][react] process_source fallback source=%s err=%s",
+                    source.name,
+                    e,
+                )
+                return _build_vertical_fallback_payload(
+                    source=source,
+                    articles=articles,
+                    keyword=kw,
+                    reason=f"process_error:{type(e).__name__}",
+                    analysis_report=report,
                 )
 
             if isinstance(result, SubAgentResult):
@@ -579,6 +692,21 @@ class ReActDailyNewsOrchestrator:
                     return u
             return ""
 
+        def _pick_miyoushe_post_list_url() -> str:
+            for u in target_url_pool:
+                lu = u.lower()
+                if (
+                    "miyoushe.com" in lu
+                    and "accountcenter/postlist" in lu
+                    and ("id=" in lu or "uid=" in lu)
+                ):
+                    return u
+            for u in target_url_pool:
+                lu = u.lower()
+                if "miyoushe.com" in lu and "accountcenter/postlist" in lu:
+                    return u
+            return ""
+
         # Dynamic registration from sub_agent_classes
         for source_type, agent_cls in self._sub_agent_classes.items():
             st = str(source_type or "").strip().lower()
@@ -599,12 +727,26 @@ class ReActDailyNewsOrchestrator:
                     kw = str(keyword or "").strip()
                     uid_s = str(uid or "").strip()
                     chosen_url = _pick_first_url_arg(url, profile_url)
+                    if chosen_url and "/article/" in chosen_url.lower():
+                        list_url = _pick_miyoushe_post_list_url()
+                        if list_url:
+                            chosen_url = list_url
+                    elif (
+                        chosen_url
+                        and "miyoushe.com" in chosen_url.lower()
+                        and "accountcenter/postlist" not in chosen_url.lower()
+                    ):
+                        list_url = _pick_miyoushe_post_list_url()
+                        if list_url:
+                            chosen_url = list_url
                     if not chosen_url and uid_s:
                         chosen_url = (
                             f"https://www.miyoushe.com/ys/accountCenter/postList?id={uid_s}"
                         )
                     if not chosen_url:
-                        chosen_url = _pick_target_url("miyoushe.com")
+                        chosen_url = _pick_miyoushe_post_list_url() or _pick_target_url(
+                            "miyoushe.com"
+                        )
                     if not chosen_url:
                         if not kw:
                             return "error: provide uid/url/profile_url or keyword."
@@ -661,7 +803,7 @@ class ReActDailyNewsOrchestrator:
                 async def _tool_analyze_twitter(
                     *,
                     context,
-                    keyword: str,
+                    keyword: str = "",
                     username: str = "",
                     url: str = "",
                     profile_url: str = "",
@@ -680,6 +822,8 @@ class ReActDailyNewsOrchestrator:
                     if not chosen_url:
                         chosen_url = _pick_target_url("x.com", "twitter.com")
                     if not chosen_url:
+                        if not kw:
+                            return "error: provide username/url/profile_url or keyword."
                         return await self._vertical_web_fallback(
                             platform="twitter",
                             keyword=kw,
@@ -725,7 +869,6 @@ class ReActDailyNewsOrchestrator:
                                 "items": {"type": "string"},
                             },
                         },
-                        "required": ["keyword"],
                     },
                     handler=_tool_analyze_twitter,
                 )
@@ -734,20 +877,26 @@ class ReActDailyNewsOrchestrator:
                 async def _tool_analyze_wechat(
                     *,
                     context,
-                    keyword: str,
+                    keyword: str = "",
                     url: str = "",
                     album_url: str = "",
                     album_keyword: str = "",
+                    latest_scope: str = "",
                     max_articles: int = 5,
                     dependency_ids: list[str] | None = None,
                     _agent_cls=agent_cls,
                 ):
                     _ = context
                     kw = str(keyword or "").strip()
+                    scope = str(latest_scope or "").strip().lower()
+                    if scope not in {"auto", "account", "album"}:
+                        scope = ""
                     chosen_url = _pick_first_url_arg(url, album_url)
                     if not chosen_url:
                         chosen_url = _pick_target_url("mp.weixin.qq.com")
                     if not chosen_url:
+                        if not kw:
+                            return "error: provide url/album_url or keyword."
                         return await self._vertical_web_fallback(
                             platform="wechat",
                             keyword=kw,
@@ -761,10 +910,12 @@ class ReActDailyNewsOrchestrator:
                         priority=1,
                         max_articles=_safe_int(max_articles, 5, minimum=1, maximum=12),
                         album_keyword=str(album_keyword or "").strip() or None,
+                        meta={"latest_scope": scope} if scope else None,
                     )
                     instruction = (
                         f"User goal: {user_goal}\nFocus keyword: {kw}\n"
-                        "Extract key updates from WeChat album articles."
+                        f"Fetch scope: {scope or 'auto'}\n"
+                        "Extract key updates from latest WeChat articles."
                     )
                     return await self._run_vertical_subagent(
                         agent_cls=_agent_cls,
@@ -780,7 +931,7 @@ class ReActDailyNewsOrchestrator:
 
                 registry.register_callable(
                     name="tool_analyze_wechat",
-                    description="Analyze WeChat updates by keyword/url.",
+                    description="Analyze WeChat updates by keyword/url (supports account/album scope).",
                     parameters={
                         "type": "object",
                         "properties": {
@@ -788,13 +939,16 @@ class ReActDailyNewsOrchestrator:
                             "url": {"type": "string"},
                             "album_url": {"type": "string"},
                             "album_keyword": {"type": "string"},
+                            "latest_scope": {
+                                "type": "string",
+                                "description": "auto/account/album",
+                            },
                             "max_articles": {"type": "integer"},
                             "dependency_ids": {
                                 "type": "array",
                                 "items": {"type": "string"},
                             },
                         },
-                        "required": ["keyword"],
                     },
                     handler=_tool_analyze_wechat,
                 )

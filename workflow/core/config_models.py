@@ -293,6 +293,10 @@ class NewsSourcesConfig:
                 priority = _to_int(item.get("priority"), 1)
                 max_articles = _to_int(item.get("max_articles"), 3)
                 album_keyword = _to_optional_str(item.get("album_keyword"))
+                latest_scope = _to_str(item.get("latest_scope"), "").strip().lower()
+                meta: dict[str, Any] = {}
+                if latest_scope in {"auto", "account", "album"}:
+                    meta["latest_scope"] = latest_scope
                 src = NewsSourceConfig(
                     name=name or f"公众号{len(out) + 1}",
                     url=url,
@@ -300,6 +304,7 @@ class NewsSourcesConfig:
                     priority=max(1, priority),
                     max_articles=max(1, max_articles),
                     album_keyword=album_keyword,
+                    meta=meta or None,
                 )
             elif tkey == "miyoushe":
                 url = _to_str(item.get("url"), "").strip()

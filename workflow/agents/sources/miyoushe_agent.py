@@ -45,6 +45,10 @@ class MiyousheSubAgent:
         if not url:
             return source.name, []
 
+        # Single-article mode: URL points to a specific post.
+        if "/article/" in url:
+            return source.name, [{"title": "", "url": url}]
+
         if "accountCenter/postList" in url:
             last_err: str | None = None
             for attempt in range(1, 4):
