@@ -1,7 +1,5 @@
 import asyncio
 import json
-import os
-import sys
 import textwrap
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +11,7 @@ from astrbot.api.star import Context, Star, register
 
 from .tools import (
     ImageUrlDownloadTool,
+    ImageUrlsDownloadBatchTool,
     ImageUrlsPreviewTool,
     MarkdownDocApplyEditsTool,
     MarkdownDocCreateTool,
@@ -27,17 +26,11 @@ from .workflow import (
     RenderImageStyleConfig,
     RenderPipelineConfig,
     SubAgentResult,
-    ensure_playwright_chromium_installed,
     get_plugin_data_dir,
     load_template,
     merge_images_vertical,
     render_daily_news_pages,
     split_pages,
-)
-from .workflow.pipeline.playwright_bootstrap import (
-    check_playwright_chromium_ready,
-    config_needs_playwright,
-    detect_windows_bootstrap_download_root,
 )
 
 try:
@@ -87,14 +80,13 @@ class DailyNewsPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        self._sent_playwright_setup_hint = False
-        self._sent_playwright_preflight_hint = False
 
         tools = [
             WechatArticleMarkdownTool(),
             WechatAlbumLatestArticlesTool(),
             ImageUrlsPreviewTool(),
             ImageUrlDownloadTool(),
+            ImageUrlsDownloadBatchTool(),
             MarkdownDocCreateTool(),
             MarkdownDocReadTool(),
             MarkdownDocApplyEditsTool(),
@@ -109,7 +101,6 @@ class DailyNewsPlugin(Star):
 
         self.scheduler = DailyNewsScheduler(self.context, self.config)
         self._scheduler_task = None
-        self._playwright_bootstrap_task = None
         try:
             self._scheduler_task = self.context.loop.create_task(self.scheduler.start())
         except Exception:
@@ -122,75 +113,11 @@ class DailyNewsPlugin(Star):
                     "[dailynews] failed to start scheduler", exc_info=True
                 )
 
-        # Warn users if they still have the Windows-only bootstrap browser in plugin data.
-        # This commonly happens when migrating AstrBot data from Windows -> Linux.
-        try:
-            bootstrap_root = detect_windows_bootstrap_download_root()
-            if bootstrap_root is not None:
-                if sys.platform.startswith("win"):
-                    astrbot_logger.warning(
-                        "[dailynews] Detected plugin bootstrap Chromium: %s (Windows-only). "
-                        "If you run AstrBot on Linux/macOS, delete this folder and use: playwright install --with-deps chromium",
-                        bootstrap_root,
-                    )
-                else:
-                    astrbot_logger.warning(
-                        "[dailynews] Detected Windows-only bootstrap Chromium under non-Windows system: %s. "
-                        "Please delete it and use: playwright install --with-deps chromium",
-                        bootstrap_root,
-                    )
-        except Exception:
-            pass
-
-        # Non-Windows: do NOT auto-download browsers. Guide users to official Playwright install.
-        try:
-            pipeline_cfg = RenderPipelineConfig.from_mapping(self.config)
-            if (
-                not sys.platform.startswith("win")
-            ) and pipeline_cfg.playwright_fallback:
-                pw_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
-                if pw_path and "playwright_browsers" in pw_path.replace("\\", "/"):
-                    astrbot_logger.warning(
-                        "[dailynews] PLAYWRIGHT_BROWSERS_PATH=%s seems to point to plugin directory; "
-                        "this may break Linux rendering. Consider unsetting it and restart AstrBot.",
-                        pw_path,
-                    )
-                astrbot_logger.warning(
-                    "[dailynews] Linux/macOS detected: this plugin will NOT auto-install Playwright browsers. "
-                    "Run: playwright install --with-deps chromium",
-                )
-        except Exception:
-            pass
-
-        # Warm up Playwright browser install in background (best-effort, non-blocking).
-        # Windows only: we bootstrap a local headless-shell zip for better out-of-box behavior.
-        if sys.platform.startswith("win"):
-            try:
-                self._playwright_bootstrap_task = self.context.loop.create_task(
-                    ensure_playwright_chromium_installed()
-                )
-            except Exception:
-                try:
-                    import asyncio
-
-                    self._playwright_bootstrap_task = asyncio.create_task(
-                        ensure_playwright_chromium_installed()
-                    )
-                except Exception:
-                    self._playwright_bootstrap_task = None
-
     async def terminate(self):
         # Best-effort: cancel any in-flight workflow & background tasks to avoid leaking across reloads.
         if getattr(self, "scheduler", None) is not None:
             try:
                 await self.scheduler.stop()
-            except Exception:
-                pass
-
-        t = getattr(self, "_playwright_bootstrap_task", None)
-        if t is not None and hasattr(t, "cancel"):
-            try:
-                t.cancel()
             except Exception:
                 pass
 
@@ -201,91 +128,11 @@ class DailyNewsPlugin(Star):
             except Exception:
                 pass
 
-    async def _maybe_send_playwright_setup_hint(
-        self, event: AstrMessageEvent, pipeline_cfg: RenderPipelineConfig
-    ):
-        """
-        Linux/macOS: explicitly tell users to run official Playwright install when Chromium is missing.
-
-        We intentionally rely on Playwright's default browser cache path (e.g. ~/.cache/ms-playwright),
-        instead of downloading Windows-only zips into plugin directories.
-        """
-        if self._sent_playwright_setup_hint:
-            return
-        if sys.platform.startswith("win"):
-            return
-        if not pipeline_cfg.playwright_fallback:
-            return
-
-        custom_path = (pipeline_cfg.custom_browser_path or "").strip()
-        if custom_path:
-            if Path(custom_path).expanduser().exists():
-                # Still warn once: not recommended to modify unless you know what you're doing.
-                self._sent_playwright_setup_hint = True
-                yield event.plain_result(
-                    f"提示：检测到已配置 custom_browser_path={custom_path}（不建议修改；一般留空即可）。"
-                )
-                return
-            self._sent_playwright_setup_hint = True
-            yield event.plain_result(
-                "Playwright 配置问题：custom_browser_path 指向的文件不存在。\n"
-                f"当前：{custom_path}\n"
-                "建议留空，并在 AstrBot 安装依赖后执行：playwright install --with-deps chromium"
-            )
-            return
-
-        # Auto-detect: rely on official Playwright browser cache (e.g. ~/.cache/ms-playwright).
-        try:
-            from playwright.async_api import async_playwright  # type: ignore
-        except Exception:
-            self._sent_playwright_setup_hint = True
-            yield event.plain_result(
-                "Playwright 未安装或不可用。请先安装依赖后再执行：playwright install --with-deps chromium"
-            )
-            return
-
-        ready = False
-        try:
-            async with async_playwright() as p:
-                exe = Path(str(p.chromium.executable_path)).expanduser()
-                ready = exe.exists()
-        except Exception:
-            ready = False
-
-        if not ready:
-            self._sent_playwright_setup_hint = True
-            yield event.plain_result(
-                "Linux/macOS 需要先安装 Playwright Chromium 浏览器（本插件不再下载 zip）：\n"
-                "playwright install --with-deps chromium\n"
-                "（如命令不可用，可用：python -m playwright install --with-deps chromium）\n"
-                "安装完成后重启 AstrBot/插件。"
-            )
-
-    async def _playwright_preflight_error(self, cfg: dict) -> str | None:
-        if sys.platform.startswith("win"):
-            return None
-        if not config_needs_playwright(cfg):
-            return None
-        pipeline_cfg = RenderPipelineConfig.from_mapping(cfg)
-        ok, msg = await check_playwright_chromium_ready(
-            custom_browser_path=pipeline_cfg.custom_browser_path
-        )
-        if ok:
-            return None
-        # Don't spam the same session repeatedly, but always stop execution.
-        if self._sent_playwright_preflight_hint:
-            return "Playwright Chromium 未安装/不可用，已停止执行；请运行：playwright install --with-deps chromium"
-        self._sent_playwright_preflight_hint = True
-        return msg
-
     # ====== commands ======
 
     async def _send_as_html_images(self, event: AstrMessageEvent, content: str):
         pipeline_cfg = RenderPipelineConfig.from_mapping(self.config)
         style_cfg = RenderImageStyleConfig.from_mapping(self.config)
-
-        async for rr in self._maybe_send_playwright_setup_hint(event, pipeline_cfg):
-            yield rr
 
         pages = split_pages(
             content,
@@ -343,6 +190,7 @@ class DailyNewsPlugin(Star):
             render_t2i=_render_t2i,
             pipeline=pipeline_cfg,
             style=style_cfg,
+            chenyu_font_files=self.config.get("chenyu_font_files", []),
             title="每日资讯日报",
             subtitle_fmt="第 {idx}/{total} 页",
         )
@@ -367,10 +215,6 @@ class DailyNewsPlugin(Star):
     @filter.command("daily_news")
     async def daily_news(self, event: AstrMessageEvent):
         """手动生成一次日报（并回发到当前会话）"""
-        err = await self._playwright_preflight_error(dict(self.config or {}))
-        if err:
-            yield event.plain_result(err)
-            return
         yield event.plain_result("正在生成日报，请稍候...")
         content = await self.scheduler.generate_once()
         if not (content or "").strip():
@@ -429,51 +273,96 @@ class DailyNewsPlugin(Star):
         测试用 Markdown（用于检查渲染/分页/发送链路与日志排版）
         用法：/news_test_md [plain|html] [long]
         """
-        parts = (args or "").strip().split()
-        force_mode = parts[0].strip().lower() if parts else ""
-        long_mode = any(p.strip().lower() == "long" for p in parts[1:]) or (
-            parts and parts[0].strip().lower() == "long"
-        )
+        parts = [p.strip().lower() for p in (args or "").strip().split() if p.strip()]
+        selected_modes: list[str] = []
+        long_mode = False
+        unknown_parts: list[str] = []
+
+        for p in parts:
+            if p in {"plain", "text"}:
+                selected_modes.append("plain")
+            elif p in {"html", "img", "image"}:
+                selected_modes.append("html_image")
+            elif p == "long":
+                long_mode = True
+            else:
+                unknown_parts.append(p)
+
+        if len(set(selected_modes)) > 1 or unknown_parts:
+            yield event.plain_result(
+                "用法：/news_test_md [plain|html] [long]\n"
+                "示例：/news_test_md html long"
+            )
+            return
+
+        force_mode = selected_modes[-1] if selected_modes else ""
 
         test_md = textwrap.dedent(
             """
-            # 每日资讯日报（测试稿）
+            # 每日资讯日报（Markdown 测试）
 
-            *生成时间：{now}*
+            > 这个命令用于检查 Markdown 渲染、分页、发送链路与日志排版。
 
-            ## 1. 标题/列表/链接
-            - 要点 1：带链接 https://example.com
-            - 要点 2：带括号与中文标点（测试）
-            - 要点 3：长行测试：{long_line}
+            - 生成时间：{now}
+            - 输出模式：{mode}
+            - 长文模式：{long_mode}
 
-            ## 2. 代码块
+            ## 1. 标题 / 列表 / 链接
+            - 要点 1：普通链接 https://example.com
+            - 要点 2：[带标题链接](https://example.com/docs)
+            - 要点 3：超长行（用于测试换行）：
+              {long_line}
+
+            ## 2. 有序列表
+            1. 第一步：抓取内容
+            2. 第二步：生成摘要
+            3. 第三步：渲染并发送
+
+            ## 3. 引用块
+            > 引用段落 A
+            >
+            > - 引用内列表 1
+            > - 引用内列表 2
+
+            ## 4. 代码块
             ```python
             def hello(name: str) -> str:
                 return f"hello, {{name}}"
             ```
 
-            ## 3. 引用与分隔
-            > 这是一段引用（测试换行与缩进）。
-            >
-            > - 引用内列表 A
-            > - 引用内列表 B
+            ```json
+            {{"ok": true, "source": "news_test_md"}}
+            ```
+
+            ## 5. 表格
+            | 字段 | 值 |
+            | --- | --- |
+            | page_chars | `render_page_chars` |
+            | max_pages | `render_max_pages` |
+
+            ## 6. 任务列表
+            - [x] 标题渲染
+            - [x] 列表渲染
+            - [x] 代码块渲染
+            - [x] 表格渲染
+            - [ ] 跨客户端一致性核验
 
             ---
 
-            ## 4. 结尾
-            - 支持分页/多图渲染：`render_page_chars`、`render_max_pages`
+            ## 7. 结尾
+            如果你看到本段，说明基础 Markdown 结构已完整输出。
             """
         ).strip()
 
         if long_mode:
-            filler = "\n".join(
-                [f"- filler line {i}: {('内容' * 40)}" for i in range(1, 120)]
-            )
-            test_md = f"{test_md}\n\n## 5. 长内容（分页测试）\n{filler}\n"
+            filler = "\n".join([f"- filler line {i}: {('内容' * 36)}" for i in range(1, 180)])
+            test_md = f"{test_md}\n\n## 8. 长文分页测试\n{filler}\n"
 
         content = test_md.format(
             now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            long_line=("A" * 180),
+            mode=force_mode or "(config)",
+            long_mode=long_mode,
+            long_line=("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" * 5),
         )
 
         astrbot_logger.info(
@@ -484,19 +373,12 @@ class DailyNewsPlugin(Star):
         )
         astrbot_logger.debug(
             "[dailynews] /news_test_md preview=%s",
-            (
-                content[:260].replace("\n", "\\n")
-                + ("..." if len(content) > 260 else "")
-            ),
+            (content[:260].replace("\n", "\\n") + ("..." if len(content) > 260 else "")),
         )
 
-        delivery_mode = str(
-            self.config.get("delivery_mode", "html_image") or "html_image"
-        )
-        if force_mode in {"plain", "text"}:
-            delivery_mode = "plain"
-        elif force_mode in {"html", "img", "image"}:
-            delivery_mode = "html_image"
+        delivery_mode = str(self.config.get("delivery_mode", "html_image") or "html_image")
+        if force_mode:
+            delivery_mode = force_mode
 
         if delivery_mode == "html_image":
             async for r in self._send_as_html_images(event, content):
@@ -559,10 +441,6 @@ class DailyNewsPlugin(Star):
                 break
 
         cfg = self.scheduler.get_config_snapshot()
-        err = await self._playwright_preflight_error(cfg)
-        if err:
-            yield event.plain_result(err)
-            return
         await self.scheduler.update_workflow_sources_from_config(cfg)
         sources = list(self.scheduler.workflow_manager.news_sources)
         if not sources:
@@ -702,11 +580,6 @@ class DailyNewsPlugin(Star):
         cfg["image_layout_enabled"] = True
         if force_preview:
             cfg["image_layout_preview_enabled"] = True
-
-        err = await self._playwright_preflight_error(cfg)
-        if err:
-            yield event.plain_result(err)
-            return
         await self.scheduler.update_workflow_sources_from_config(cfg)
         sources = list(self.scheduler.workflow_manager.news_sources)
         if not sources:
@@ -1008,3 +881,4 @@ class DailyNewsPlugin(Star):
         if hasattr(self.config, "save_config"):
             self.config.save_config()
         yield event.plain_result("已删除来源（兼容模式：仅从 wechat_sources 移除）")
+

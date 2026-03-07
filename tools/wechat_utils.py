@@ -30,7 +30,7 @@ def _wechat_output_dir() -> Path:
 
 async def async_wechat_to_markdown(url: str) -> str:
     """
-    在异步环境里安全地调用你原来的 wechat_to_markdown()，
+    在异步环境里安全地调用 wechat_to_markdown()，
     避免在已有 event loop 里直接 asyncio.run() 报错。
     """
     out_dir = _wechat_output_dir()
@@ -39,11 +39,10 @@ async def async_wechat_to_markdown(url: str) -> str:
     loop = asyncio.get_running_loop()
 
     def _run():
-        # 这里复用你原始的逻辑，只是把输出目录指定为 WECHAT_OUTPUT_DIR
+        # 复用公众号 HTTP 解析逻辑，并把输出目录固定到 WECHAT_OUTPUT_DIR。
         return _wechat_to_markdown(
             url,
             output_dir=str(out_dir),
-            max_concurrency=10,
         )
 
     md_path = await loop.run_in_executor(None, _run)
@@ -54,8 +53,14 @@ def get_latest_wechat_articles(
     article_url: str,
     limit: int = 5,
     album_keyword: str | None = None,
+    latest_scope: str = "auto",
 ) -> list[dict[str, str]]:
     """
-    使用你写的 get_album_articles() 从『AI 早报』专辑弹窗里拿最近几篇文章。
+    使用 HTTP API 获取公众号最近文章（账号/合集，取决于 latest_scope）。
     """
-    return _get_album_articles(article_url, limit=limit, album_keyword=album_keyword)
+    return _get_album_articles(
+        article_url,
+        limit=limit,
+        album_keyword=album_keyword,
+        latest_scope=latest_scope,
+    )

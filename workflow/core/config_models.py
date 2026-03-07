@@ -8,6 +8,21 @@ from .astrbook_client import ASTRBOOK_API_BASE
 from .models import NewsSourceConfig
 
 
+IMAGE_LABEL_ENABLED = True
+IMAGE_LABEL_PROVIDER_ID = "modelscope_source/Qwen/Qwen3-VL-235B-A22B-Instruct"
+IMAGE_LABEL_MAX_IMAGES_TOTAL = 24
+
+IMAGE_LAYOUT_ENABLED = True
+IMAGE_LAYOUT_PROVIDER_ID = "modelscope_source/Qwen/Qwen3-VL-235B-A22B-Instruct"
+IMAGE_LAYOUT_MAX_IMAGES_TOTAL = 6
+IMAGE_LAYOUT_MAX_IMAGES_PER_SOURCE = 3
+IMAGE_LAYOUT_SOURCES: tuple[str, ...] = ()
+IMAGE_LAYOUT_PASS_IMAGES_TO_MODEL = True
+IMAGE_LAYOUT_MAX_IMAGES_TO_MODEL = 6
+IMAGE_LAYOUT_REQUEST_MAX_REQUESTS = 1
+IMAGE_LAYOUT_REQUEST_MAX_IMAGES = 6
+
+
 def _to_int(value: Any, default: int) -> int:
     try:
         if value is None:
@@ -85,9 +100,6 @@ class RenderPipelineConfig:
     retries: int = 2
     poll_timeout_s: float = 6.0
     poll_interval_ms: int = 200
-    playwright_fallback: bool = True
-    playwright_timeout_ms: int = 20000
-    custom_browser_path: str = ""
 
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> RenderPipelineConfig:
@@ -97,28 +109,23 @@ class RenderPipelineConfig:
             retries=max(0, _to_int(cfg.get("render_retries"), 2)),
             poll_timeout_s=max(0.5, _to_float(cfg.get("render_poll_timeout_s"), 6.0)),
             poll_interval_ms=max(50, _to_int(cfg.get("render_poll_interval_ms"), 200)),
-            playwright_fallback=_to_bool(cfg.get("render_playwright_fallback"), True),
-            playwright_timeout_ms=max(
-                1000, _to_int(cfg.get("render_playwright_timeout_ms"), 20000)
-            ),
-            custom_browser_path=_to_str(cfg.get("custom_browser_path"), ""),
         )
 
 
 @dataclass(frozen=True)
 class ImageLayoutConfig:
-    enabled: bool = False
-    provider_id: str = ""
-    max_images_total: int = 6
-    max_images_per_source: int = 3
-    pass_images_to_model: bool = True
-    max_images_to_model: int = 6
+    enabled: bool = IMAGE_LAYOUT_ENABLED
+    provider_id: str = IMAGE_LAYOUT_PROVIDER_ID
+    max_images_total: int = IMAGE_LAYOUT_MAX_IMAGES_TOTAL
+    max_images_per_source: int = IMAGE_LAYOUT_MAX_IMAGES_PER_SOURCE
+    pass_images_to_model: bool = IMAGE_LAYOUT_PASS_IMAGES_TO_MODEL
+    max_images_to_model: int = IMAGE_LAYOUT_MAX_IMAGES_TO_MODEL
     preview_enabled: bool = False
     preview_max_images: int = 6
     preview_max_width: int = 1080
     preview_gap: int = 8
-    request_max_requests: int = 1
-    request_max_images: int = 6
+    request_max_requests: int = IMAGE_LAYOUT_REQUEST_MAX_REQUESTS
+    request_max_images: int = IMAGE_LAYOUT_REQUEST_MAX_IMAGES
     tool_enabled: bool = True
     tool_rounds: int = 2
     tool_max_steps: int = 25
@@ -128,20 +135,12 @@ class ImageLayoutConfig:
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> ImageLayoutConfig:
         return cls(
-            enabled=_to_bool(cfg.get("image_layout_enabled"), False),
-            provider_id=_to_str(cfg.get("image_layout_provider_id"), "").strip(),
-            max_images_total=max(
-                0, _to_int(cfg.get("image_layout_max_images_total"), 6)
-            ),
-            max_images_per_source=max(
-                1, _to_int(cfg.get("image_layout_max_images_per_source"), 3)
-            ),
-            pass_images_to_model=_to_bool(
-                cfg.get("image_layout_pass_images_to_model"), True
-            ),
-            max_images_to_model=max(
-                1, _to_int(cfg.get("image_layout_max_images_to_model"), 6)
-            ),
+            enabled=IMAGE_LAYOUT_ENABLED,
+            provider_id=IMAGE_LAYOUT_PROVIDER_ID,
+            max_images_total=IMAGE_LAYOUT_MAX_IMAGES_TOTAL,
+            max_images_per_source=IMAGE_LAYOUT_MAX_IMAGES_PER_SOURCE,
+            pass_images_to_model=IMAGE_LAYOUT_PASS_IMAGES_TO_MODEL,
+            max_images_to_model=IMAGE_LAYOUT_MAX_IMAGES_TO_MODEL,
             preview_enabled=_to_bool(cfg.get("image_layout_preview_enabled"), False),
             preview_max_images=max(
                 1, _to_int(cfg.get("image_layout_preview_max_images"), 6)
@@ -150,12 +149,8 @@ class ImageLayoutConfig:
                 200, _to_int(cfg.get("image_layout_preview_max_width"), 1080)
             ),
             preview_gap=max(0, _to_int(cfg.get("image_layout_preview_gap"), 8)),
-            request_max_requests=max(
-                0, _to_int(cfg.get("image_layout_request_max_requests"), 1)
-            ),
-            request_max_images=max(
-                1, _to_int(cfg.get("image_layout_request_max_images"), 6)
-            ),
+            request_max_requests=IMAGE_LAYOUT_REQUEST_MAX_REQUESTS,
+            request_max_images=IMAGE_LAYOUT_REQUEST_MAX_IMAGES,
             tool_enabled=_to_bool(cfg.get("image_layout_tool_enabled"), True),
             tool_rounds=max(1, _to_int(cfg.get("image_layout_tool_rounds"), 2)),
             tool_max_steps=max(5, _to_int(cfg.get("image_layout_tool_max_steps"), 25)),
@@ -168,9 +163,9 @@ class ImageLayoutConfig:
 
 @dataclass(frozen=True)
 class ImageLabelConfig:
-    enabled: bool = False
-    provider_id: str = ""
-    max_images_total: int = 24
+    enabled: bool = IMAGE_LABEL_ENABLED
+    provider_id: str = IMAGE_LABEL_PROVIDER_ID
+    max_images_total: int = IMAGE_LABEL_MAX_IMAGES_TOTAL
     batch_size: int = 2
     concurrency: int = 4
     force_refresh: bool = False
@@ -181,11 +176,9 @@ class ImageLabelConfig:
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> ImageLabelConfig:
         return cls(
-            enabled=_to_bool(cfg.get("image_label_enabled"), False),
-            provider_id=_to_str(cfg.get("image_label_provider_id"), "").strip(),
-            max_images_total=max(
-                0, _to_int(cfg.get("image_label_max_images_total"), 24)
-            ),
+            enabled=IMAGE_LABEL_ENABLED,
+            provider_id=IMAGE_LABEL_PROVIDER_ID,
+            max_images_total=IMAGE_LABEL_MAX_IMAGES_TOTAL,
             batch_size=max(1, min(2, _to_int(cfg.get("image_label_batch_size"), 2))),
             concurrency=max(1, _to_int(cfg.get("image_label_concurrency"), 4)),
             force_refresh=_to_bool(cfg.get("image_label_force_refresh"), False),
@@ -300,6 +293,7 @@ class NewsSourcesConfig:
                     priority=max(1, priority),
                     max_articles=max(1, max_articles),
                     album_keyword=album_keyword,
+                    meta=None,
                 )
             elif tkey == "miyoushe":
                 url = _to_str(item.get("url"), "").strip()
@@ -459,6 +453,7 @@ class NewsWorkflowModeConfig:
     Workflow mode switch.
     - multi: existing multi-agent pipeline (default)
     - single: single-agent mode (no image insertion)
+    - react: goal-oriented react mode with native function-calling loop
     """
 
     mode: str = "multi"
@@ -468,6 +463,8 @@ class NewsWorkflowModeConfig:
         raw = _to_str(cfg.get("news_workflow_mode"), "multi").strip().lower()
         if raw in {"single", "single_agent", "single-agent"}:
             return cls(mode="single")
+        if raw in {"react", "react_agent", "react-agent"}:
+            return cls(mode="react")
         return cls(mode="multi")
 
 
@@ -487,4 +484,35 @@ class SingleAgentConfig:
             max_steps=max(5, _to_int(cfg.get("single_agent_max_steps"), 18)),
             min_chars=min_chars,
             max_chars=max_chars,
+        )
+
+
+@dataclass(frozen=True)
+class ReactAgentConfig:
+    provider_id: str = ""
+    max_steps: int = 18
+    max_tool_failures: int = 6
+    max_no_progress_rounds: int = 3
+    max_repeat_action: int = 2
+    tool_call_timeout_s: int = 90
+    enable_trace: bool = True
+
+    @classmethod
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> ReactAgentConfig:
+        return cls(
+            provider_id=_to_str(cfg.get("react_agent_provider_id"), "").strip(),
+            max_steps=max(3, _to_int(cfg.get("react_agent_max_steps"), 18)),
+            max_tool_failures=max(
+                1, _to_int(cfg.get("react_agent_max_tool_failures"), 6)
+            ),
+            max_no_progress_rounds=max(
+                1, _to_int(cfg.get("react_agent_max_no_progress_rounds"), 3)
+            ),
+            max_repeat_action=max(
+                1, _to_int(cfg.get("react_agent_max_repeat_action"), 2)
+            ),
+            tool_call_timeout_s=max(
+                5, _to_int(cfg.get("react_agent_tool_call_timeout_s"), 90)
+            ),
+            enable_trace=_to_bool(cfg.get("react_agent_enable_trace"), True),
         )

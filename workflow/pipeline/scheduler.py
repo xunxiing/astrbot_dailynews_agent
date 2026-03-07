@@ -1,6 +1,5 @@
 import asyncio
 import re
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,10 +35,6 @@ from ..core.config_models import (
     SingleAgentConfig,
 )
 from ..core.models import NewsSourceConfig
-from .playwright_bootstrap import (
-    check_playwright_chromium_ready,
-    config_needs_playwright,
-)
 from .render_pipeline import render_daily_news_pages, split_pages
 from .rendering import load_template
 from .workflow_manager import NewsWorkflowManager
@@ -364,6 +359,19 @@ class DailyNewsScheduler:
         cfg.setdefault("single_agent_max_steps", single_cfg.max_steps)
         cfg.setdefault("single_agent_min_chars", single_cfg.min_chars)
         cfg.setdefault("single_agent_max_chars", single_cfg.max_chars)
+        cfg.setdefault("react_user_goal", "")
+        cfg.setdefault("react_agent_provider_id", "")
+        cfg.setdefault("react_agent_max_steps", 18)
+        cfg.setdefault("react_agent_max_tool_failures", 6)
+        cfg.setdefault("react_agent_max_no_progress_rounds", 3)
+        cfg.setdefault("react_agent_max_repeat_action", 2)
+        cfg.setdefault("react_agent_tool_call_timeout_s", 90)
+        cfg.setdefault("react_agent_enable_trace", True)
+        cfg.setdefault("react_vertical_llm_timeout_s", 45)
+        cfg.setdefault("react_vertical_llm_max_retries", 0)
+        cfg.setdefault("react_vertical_analyze_timeout_s", 60)
+        cfg.setdefault("react_vertical_process_timeout_s", 120)
+        cfg.setdefault("react_vertical_tool_timeout_floor_s", 200)
         cfg.setdefault("max_sources_per_day", 3)
         cfg.setdefault("news_group_mode", "source")
         cfg.setdefault("news_group_router_provider_id", "")
@@ -377,8 +385,6 @@ class DailyNewsScheduler:
         cfg.setdefault("render_retries", pipeline.retries)
         cfg.setdefault("render_poll_timeout_s", pipeline.poll_timeout_s)
         cfg.setdefault("render_poll_interval_ms", pipeline.poll_interval_ms)
-        cfg.setdefault("render_playwright_fallback", pipeline.playwright_fallback)
-        cfg.setdefault("render_playwright_timeout_ms", pipeline.playwright_timeout_ms)
         cfg.setdefault("render_img_float_enabled", style.float_enabled)
         cfg.setdefault("render_img_float_threshold", style.float_threshold)
         cfg.setdefault("render_img_full_max_width", style.full_max_width)
@@ -886,18 +892,6 @@ class DailyNewsScheduler:
     ) -> str:
         config = cfg or self._normalized_config()
 
-        # Linux/macOS: fail fast when Playwright browsers are missing, to avoid noisy retries and wasted LLM calls.
-        try:
-            if (not sys.platform.startswith("win")) and config_needs_playwright(config):
-                pipeline_cfg = RenderPipelineConfig.from_mapping(config)
-                ok, msg = await check_playwright_chromium_ready(
-                    custom_browser_path=pipeline_cfg.custom_browser_path
-                )
-                if not ok:
-                    return msg
-        except Exception:
-            pass
-
         await self.update_workflow_sources_from_config(config)
         self._workflow_task = asyncio.create_task(
             self.workflow_manager.run_workflow(
@@ -995,6 +989,7 @@ class DailyNewsScheduler:
             render_t2i=_render_t2i,
             pipeline=pipeline_cfg,
             style=style_cfg,
+            chenyu_font_files=config.get("chenyu_font_files", []),
             title="每日资讯日报",
             subtitle_fmt="第 {idx}/{total} 页",
         )

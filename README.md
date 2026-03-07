@@ -1,34 +1,57 @@
-# AI日报插件 - 多Agent工作流版
+# AI日报插件 - React多Agent架构版
 
 ## 🎯 功能概述
 
-这是一个基于AstrBot的AI日报插件，采用多Agent工作流架构，实现每日自动新闻汇总功能。 加入qq群：1054962131鞭策我开发和改进
+这是一个基于AstrBot的AI日报插件，采用React多Agent架构，实现每日自动新闻汇总功能。加入QQ群：1054962131交流反馈
 
 ### ✨ 核心特性
 
-- **多Agent工作流**: 主Agent调度 + 子Agent并行处理
+- **React多Agent架构**: 基于ReAct范式的智能编排系统，支持多子Agent协作
+- **多信息源支持**: 微信公众号、米游社、Twitter、AstrBook、GitHub、Grok搜索、Tavily搜索等
+- **智能图像处理**: 自动图像标注与布局优化
 - **自动日报**: 定时生成并发送日报
-- **微信公众号支持**: 解析公众号文章并提取关键信息
 - **灵活配置**: 支持自定义新闻源和调度时间
-- **Markdown输出**: 美观的日报格式
-  效果展示：
+- **美观渲染**: 基于模板的高质量日报输出
+- **🚀 零依赖部署**: 无需安装Playwright等浏览器组件，大幅简化部署流程
 
-  ![1768105537398](images/README/1768105537398.png)
+效果展示：
 
-## 信息源推荐：
+![1768105537398](images/README/1768105537398.png)
+
+
+### 信息源Agent
+
+| Agent | 功能 |
+|-------|------|
+| wechat_agent | 微信公众号文章采集 |
+| miyoushe_agent | 米游社帖子获取 |
+| twitter_agent | Twitter信息抓取 |
+| astrbook_agent | AstrBook内容获取 |
+| github_agent | GitHub动态追踪 |
+| xiuxiu_ai_agent | 秀秀AI内容获取 |
+
+## 📰 信息源推荐
 
 <details>
 <summary>科技类</summary>
 
-- https://mp.weixin.qq.com/s/QAVCOnnA5M8olmy7peBqsQ   *每日ai日报*
--
+- https://mp.weixin.qq.com/s/QAVCOnnA5M8olmy7peBqsQ *每日AI日报*
 
 </details>
+
+### 🔍 搜索增强插件（推荐安装）
+
+为获得更好的信息搜索体验，建议安装以下插件：
+
+| 插件 | 功能 | 链接 |
+|------|------|------|
+| astrbot_plugin_grok_web_search | Grok网络搜索 | [GitHub](https://github.com/piexian/astrbot_plugin_grok_web_search) |
+
+> 💡 **特别致谢**: 感谢 **@piexian** 开发的Grok搜索插件，为本项目提供了强大的网络搜索能力支持！
 
 ## 🚀 使用指南
 
 ### 基本命令
-
 
 | 命令                      | 描述                                                                    |
 | ------------------------- | ----------------------------------------------------------------------- |
@@ -44,19 +67,18 @@
 ### 常见问题
 
 1. **日报生成失败**
-
    - 检查网络连接
    - 验证新闻源URL有效性
    - 查看插件日志获取详细错误信息
-2. **定时任务不执行**
 
+2. **定时任务不执行**
    - 确认插件已启用
    - 检查配置文件格式
    - 验证系统时间设置
-3. **微信公众号解析失败**
 
+3. **微信公众号解析失败**
    - 确认公众号链接格式正确
-   - 检查 Playwright 依赖安装：Linux/macOS 需要执行 `playwright install --with-deps chromium`（本插件不会自动下载浏览器）
+   - 确认网络与渲染服务可用
    - 验证网络访问权限
 
 ### 日志查看
@@ -70,8 +92,8 @@
 ### 开发环境
 
 1. 安装依赖: `pip install -r requirements.txt`
-2. 安装 Playwright Chromium: `playwright install --with-deps chromium`
-3. 配置开发环境
+2. 配置开发环境
+3. 运行测试
 
 ### 提交规范
 
@@ -79,6 +101,20 @@
 - 添加必要的注释和文档
 - 测试所有功能变更
 - 更新相关文档
+
+<details>
+<summary>📝 更新日志</summary>
+
+### v1.0.0
+- 🎉 **重大更新**: 移除Playwright依赖，实现零浏览器组件部署
+- 实现React多Agent架构
+- 新增多信息源搜索平台支持（Grok、Tavily）
+- 重构微信公众号数据采集逻辑
+- 优化米游社数据提取模块
+- 新增图像处理工具(image_tools)
+- 优化渲染模板和配置系统
+
+</details>
 
 ## 📄 许可证
 

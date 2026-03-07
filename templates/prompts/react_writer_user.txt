@@ -1,0 +1,17 @@
+用户目标：
+{{USER_GOAL}}
+
+目标来源边界：
+{{TARGET_SOURCE_BOUNDARY}}
+
+已收集素材：
+{{COLLECTED_MATERIALS}}
+
+依赖上下文：
+{{DEPENDENCY_CONTEXT}}
+
+风格提示：
+{{STYLE_HINT}}
+
+请据此直接写出最终日报 Markdown。
+若素材中包含可靠图片 URL，可在合适位置使用 `![说明](url)` 插图；否则不要强行插图。

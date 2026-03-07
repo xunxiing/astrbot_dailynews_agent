@@ -114,6 +114,7 @@ def markdown_to_html(md: str) -> str:
                 "fenced_code",
                 "sane_lists",
                 "nl2br",
+                "tables",
             ],
             output_format="html5",
         )

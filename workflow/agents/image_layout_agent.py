@@ -15,6 +15,7 @@ except Exception:  # pragma: no cover
 from ..core.config_models import (
     ImageLabelConfig,
     ImageLayoutConfig,
+    IMAGE_LAYOUT_SOURCES,
     LayoutPrompts,
     LayoutRefineConfig,
 )
@@ -418,7 +419,7 @@ class ImageLayoutAgent:
         )
 
         # 可选：只对指定来源做图（为空则对全部）
-        only_sources = user_config.get("image_layout_sources") or []
+        only_sources = list(IMAGE_LAYOUT_SOURCES)
         if isinstance(only_sources, list) and only_sources:
             only_set = {str(x).strip() for x in only_sources if str(x).strip()}
             if only_set:

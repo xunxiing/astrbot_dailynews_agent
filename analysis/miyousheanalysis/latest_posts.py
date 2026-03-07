@@ -1,7 +1,10 @@
-import time
+from __future__ import annotations
 
-from playwright.sync_api import TimeoutError as PWTimeoutError
-from playwright.sync_api import sync_playwright
+import re
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+import requests
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -11,51 +14,85 @@ except Exception:  # pragma: no cover
     astrbot_logger = logging.getLogger(__name__)
 
 
-def _try_close_popups(page) -> None:
-    candidates = [
-        "text=关闭",
-        "text=我知道了",
-        "text=知道了",
-        "text=取消",
-        ".mhy-dialog__close",
-        ".close",
-        "[aria-label='close']",
-    ]
-    for sel in candidates:
-        try:
-            loc = page.locator(sel)
-            if loc.count() > 0 and loc.first.is_visible():
-                loc.first.click(timeout=800)
-                time.sleep(0.2)
-        except Exception:
-            pass
+LIST_API = "https://bbs-api.miyoushe.com/painter/wapi/userPostList"
+DETAIL_API = "https://bbs-api.miyoushe.com/post/wapi/getPostFull"
+
+DEFAULT_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
+
+KNOWN_GAME_SLUG = {"ys", "sr", "zzz", "bh3", "bh2", "wd", "dby", "hna", "planet"}
+SLUG_TO_GID = {"ys": 2}
 
 
-def _find_post_subject_from_nuxt(
-    obj, depth: int = 0, max_depth: int = 10
-) -> str | None:
-    if depth > max_depth:
-        return None
+def _parse_uid_and_slug(account: str) -> tuple[str, str]:
+    raw = str(account or "").strip()
+    if not raw:
+        raise ValueError("empty account")
+    if raw.isdigit():
+        return raw, "ys"
 
+    parsed = urlparse(raw)
+    query = parse_qs(parsed.query)
+
+    uid = ""
+    for key in ("id", "uid"):
+        values = query.get(key)
+        if values and values[0].isdigit():
+            uid = values[0]
+            break
+
+    if not uid:
+        m = re.search(r"\b(\d{6,})\b", raw)
+        if m:
+            uid = m.group(1)
+    if not uid:
+        raise ValueError("cannot parse miyoushe uid from input")
+
+    slug = "ys"
+    for seg in parsed.path.split("/"):
+        if seg in KNOWN_GAME_SLUG:
+            slug = seg
+            break
+    return uid, slug
+
+
+def _build_post_url(slug: str, post_id: str) -> str:
+    return f"https://www.miyoushe.com/{slug}/article/{post_id}"
+
+
+def _request_json(
+    session: requests.Session, url: str, params: dict[str, Any], referer: str
+) -> dict[str, Any]:
+    headers = dict(DEFAULT_HEADERS)
+    headers["Referer"] = referer
+    resp = session.get(url, params=params, headers=headers, timeout=20)
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("retcode") != 0:
+        raise RuntimeError(f"retcode={data.get('retcode')} msg={data.get('message')}")
+    return data
+
+
+def _find_post_container(obj: Any) -> dict[str, Any] | None:
     if isinstance(obj, dict):
-        if (
-            isinstance(obj.get("subject"), str)
-            and obj.get("subject").strip()
-            and "content" in obj
-        ):
-            return obj.get("subject").strip()
+        if "subject" in obj and "content" in obj:
+            return obj
         for v in obj.values():
-            if isinstance(v, dict | list):
-                hit = _find_post_subject_from_nuxt(v, depth + 1, max_depth)
-                if hit:
-                    return hit
-
-    if isinstance(obj, list):
-        for it in obj:
-            hit = _find_post_subject_from_nuxt(it, depth + 1, max_depth)
-            if hit:
+            hit = _find_post_container(v)
+            if hit is not None:
                 return hit
-
+    elif isinstance(obj, list):
+        for item in obj:
+            hit = _find_post_container(item)
+            if hit is not None:
+                return hit
     return None
 
 
@@ -68,193 +105,65 @@ def get_user_latest_posts(
     max_scroll_rounds: int = 20,
 ) -> list[dict[str, str]]:
     """
-    访问米游社用户帖子列表页（accountCenter/postList），逐个点开卡片获取真实的文章 URL。
-    返回：[{title,url}, ...]（按列表出现顺序）
+    Fetch latest Miyoushe posts via official bbs-api.
+    Return: [{"title": "...", "url": "..."}, ...]
     """
-    out: list[dict[str, str]] = []
+    del headless, sleep_between, max_scroll_rounds
+    size = max(1, int(limit))
 
-    with sync_playwright() as p:
-        executable_path = None
-        try:
-            import sys
-            from pathlib import Path
+    uid, slug = _parse_uid_and_slug(user_post_list_url)
+    referer = (
+        user_post_list_url
+        if str(user_post_list_url or "").startswith("http")
+        else f"https://www.miyoushe.com/{slug}/accountCenter/postList?id={uid}"
+    )
 
-            # analysis/miyousheanalysis/latest_posts.py -> parents[2] is plugin root
-            root = str(Path(__file__).resolve().parents[2])
-            if root not in sys.path:
-                sys.path.append(root)
-            from workflow.pipeline.playwright_bootstrap import (
-                get_chromium_executable_path,
-            )
+    with requests.Session() as session:
+        list_data = _request_json(session, LIST_API, {"size": size, "uid": uid}, referer)
+        rows = list_data.get("data", {}).get("list", []) or []
 
-            exe = get_chromium_executable_path()
-            executable_path = str(exe) if exe else None
-        except Exception as e:
-            astrbot_logger.debug(
-                f"[dailynews] get_chromium_executable_path import failed: {e}"
-            )
-            executable_path = None
-
-        try:
-            if executable_path:
-                browser = p.chromium.launch(
-                    headless=headless, executable_path=executable_path
-                )
-            else:
-                astrbot_logger.warning(
-                    "[dailynews] playwright chromium not ready; falling back to default Playwright browser path (may fail)."
-                )
-                browser = p.chromium.launch(headless=headless)
-        except Exception as e:
-            astrbot_logger.error(
-                "[dailynews] failed to launch playwright browser: %s", e
-            )
-            return []
-
-        context = browser.new_context()
-        page = context.new_page()
-
-        astrbot_logger.info(
-            "[dailynews] opening miyoushe post list: %s", user_post_list_url
-        )
-        try:
-            page.goto(user_post_list_url, wait_until="domcontentloaded", timeout=90000)
-        except PWTimeoutError:
-            astrbot_logger.warning(
-                "[dailynews] miyoushe list goto timeout, attempting fallback to networkidle"
-            )
-            try:
-                page.goto(user_post_list_url, wait_until="networkidle", timeout=30000)
-            except Exception:
-                browser.close()
-                return []
-        except Exception as e:
-            astrbot_logger.error("[dailynews] miyoushe list goto failed: %s", e)
-            browser.close()
-            return []
-
-        try:
-            page.wait_for_selector(".mhy-article-card", timeout=20000)
-        except Exception:
-            browser.close()
-            return []
-
-        card_idx = 0
-        scroll_rounds = 0
-
-        while len(out) < max(1, int(limit)) and scroll_rounds <= max_scroll_rounds:
-            _try_close_popups(page)
-
-            cards = page.locator(".mhy-article-card")
-            count = cards.count()
-
-            if card_idx >= count:
-                page.mouse.wheel(0, 1600)
-                time.sleep(1.0)
-                new_count = page.locator(".mhy-article-card").count()
-                if new_count <= count:
-                    break
-                scroll_rounds += 1
+        out: list[dict[str, str]] = []
+        for item in rows[:size]:
+            base_post = item.get("post", {}) if isinstance(item, dict) else {}
+            post_id = str(base_post.get("post_id") or "").strip()
+            if not post_id:
                 continue
 
-            card = cards.nth(card_idx)
+            title = str(base_post.get("subject") or "").strip()
+            gid = int(base_post.get("game_id") or SLUG_TO_GID.get(slug, 2))
 
+            # Best effort: resolve the post title from detail API.
             try:
-                preview = (
-                    card.locator(".mhy-article-card__h3")
-                    .inner_text(timeout=2000)
-                    .strip()
+                detail = _request_json(
+                    session,
+                    DETAIL_API,
+                    {"gids": gid, "post_id": post_id, "read": 1},
+                    referer,
                 )
-            except Exception:
-                preview = ""
+                post_obj = _find_post_container(detail.get("data")) or {}
+                detail_title = str(post_obj.get("subject") or "").strip()
+                if detail_title:
+                    title = detail_title
+            except Exception as e:
+                astrbot_logger.debug(
+                    "[dailynews] miyoushe detail title fallback post_id=%s err=%s",
+                    post_id,
+                    e,
+                )
 
-            try:
-                card.scroll_into_view_if_needed(timeout=2000)
-            except Exception:
-                pass
+            out.append(
+                {
+                    "title": title or f"post_{post_id}",
+                    "url": _build_post_url(slug, post_id),
+                }
+            )
 
-            article_page = None
-            opened_popup = False
-
-            # Prefer opening a new tab by clicking the title (more stable on Nuxt pages).
-            try:
-                with context.expect_page(timeout=10000) as new_page_info:
-                    card.locator(".mhy-article-card__h3").click(timeout=8000)
-                article_page = new_page_info.value
-                opened_popup = True
-            except Exception:
-                try:
-                    with page.expect_popup(timeout=8000) as pop:
-                        card.click(timeout=8000)
-                    article_page = pop.value
-                    opened_popup = True
-                except PWTimeoutError:
-                    # Last resort: same-tab navigation
-                    try:
-                        card.locator(".mhy-article-card__h3").click(timeout=8000)
-                        page.wait_for_url("**/article/**", timeout=12000)
-                        article_page = page
-                        opened_popup = False
-                    except Exception:
-                        card_idx += 1
-                        continue
-
-            try:
-                # 避免 about:blank
-                try:
-                    article_page.wait_for_url("**/article/**", timeout=15000)
-                except Exception:
-                    pass
-                article_page.wait_for_load_state("domcontentloaded", timeout=15000)
-                time.sleep(0.6)
-
-                url = (article_page.url or "").strip()
-                if url and "/article/" in url:
-                    # Try to refine title via window.__NUXT__ (optional).
-                    try:
-                        article_page.wait_for_function(
-                            "() => window.__NUXT__ && Object.keys(window.__NUXT__).length > 0",
-                            timeout=5000,
-                        )
-                        nuxt = article_page.evaluate("() => window.__NUXT__")
-                        nuxt_title = _find_post_subject_from_nuxt(nuxt)
-                        if nuxt_title:
-                            preview = nuxt_title.strip()
-                    except Exception:
-                        pass
-                    out.append({"title": preview, "url": url})
-            except Exception:
-                pass
-            finally:
-                if opened_popup and article_page:
-                    try:
-                        article_page.close()
-                    except Exception:
-                        pass
-                else:
-                    # 回到列表页
-                    try:
-                        page.goto(
-                            user_post_list_url,
-                            wait_until="domcontentloaded",
-                            timeout=60000,
-                        )
-                        page.wait_for_selector(".mhy-article-card", timeout=20000)
-                    except Exception:
-                        break
-
-            time.sleep(float(sleep_between))
-            card_idx += 1
-
-        browser.close()
-
-    # 去重（按出现顺序）
-    seen = set()
     dedup: list[dict[str, str]] = []
-    for it in out:
-        u = (it.get("url") or "").strip()
+    seen: set[str] = set()
+    for item in out:
+        u = str(item.get("url") or "").strip()
         if not u or u in seen:
             continue
         seen.add(u)
-        dedup.append({"title": (it.get("title") or "").strip(), "url": u})
-    return dedup[: max(1, int(limit))]
+        dedup.append({"title": str(item.get("title") or "").strip(), "url": u})
+    return dedup[:size]

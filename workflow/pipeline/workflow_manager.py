@@ -14,7 +14,9 @@ except Exception:  # pragma: no cover
 from ..agents.image_layout_agent import ImageLayoutAgent
 from ..agents.main_agent import MainNewsAgent
 from ..agents.message_groups.group_manager import MessageGroupManager
+from ..agents.react.orchestrator import ReActDailyNewsOrchestrator
 from ..agents.single_agent.single_agent_writer import SingleAgentNewsWriter
+from ..core.config_models import ImageLayoutConfig
 from ..core.llm import LLMRunner
 from ..core.markdown_sanitizer import sanitize_markdown_for_publish
 from ..core.models import NewsSourceConfig, SubAgentResult
@@ -286,6 +288,60 @@ class NewsWorkflowManager:
                     .strip()
                     .lower()
                 )
+                if workflow_mode in {"react", "react_agent", "react-agent"}:
+                    astrbot_logger.info("[dailynews] [workflow] react mode enabled")
+                    user_goal = str(
+                        user_config.get("react_user_goal")
+                        or user_config.get("user_goal")
+                        or ""
+                    ).strip()
+                    if not user_goal:
+                        user_goal = (
+                            "Generate a daily report that covers today's important updates "
+                            "from all configured sources, with concrete details and links."
+                        )
+                    react_result = await ReActDailyNewsOrchestrator(
+                        sub_agent_classes=self.sub_agents
+                    ).run(
+                        user_goal=user_goal,
+                        user_config=user_config,
+                        astrbot_context=astrbot_context,
+                        sources=sources,
+                        fetched=fetched,
+                    )
+                    final_md = sanitize_markdown_for_publish(
+                        str(react_result.final_markdown or "")
+                    )
+                    if not final_md:
+                        return {
+                            "status": "error",
+                            "error": "react mode produced empty final summary",
+                            "mode": "react",
+                            "react_meta": {
+                                "steps": react_result.steps,
+                                "termination_reason": react_result.termination_reason,
+                                "tool_calls": len(react_result.tool_trace),
+                                "status": react_result.status,
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    return {
+                        "status": "success",
+                        "mode": "react",
+                        "decision": None,
+                        "sub_reports": [],
+                        "sub_results": [],
+                        "image_plan": None,
+                        "react_meta": {
+                            "steps": react_result.steps,
+                            "termination_reason": react_result.termination_reason,
+                            "tool_calls": len(react_result.tool_trace),
+                            "status": react_result.status,
+                        },
+                        "final_summary": final_md,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+
                 if workflow_mode in {"single", "single_agent", "single-agent"}:
                     astrbot_logger.info(
                         "[dailynews] [workflow] single-agent mode enabled"
@@ -318,6 +374,7 @@ class NewsWorkflowManager:
                     )
                     return {
                         "status": "success",
+                        "mode": "single",
                         "decision": None,
                         "sub_reports": [],
                         "sub_results": [],
@@ -559,8 +616,9 @@ class NewsWorkflowManager:
                     "[dailynews] [workflow] stage 4: finished writing content"
                 )
 
+                layout_cfg = ImageLayoutConfig.from_mapping(user_config)
                 image_plan = None
-                if bool(user_config.get("image_layout_enabled", False)):
+                if layout_cfg.enabled:
                     try:
                         img_counts = {
                             r.source_name: len(r.images or [])
@@ -637,10 +695,7 @@ class NewsWorkflowManager:
                 final_summary = sanitize_markdown_for_publish(final_summary)
 
                 # 5) 图片排版 Agent（可选）
-                if (
-                    bool(user_config.get("image_layout_enabled", False))
-                    and (final_summary or "").strip()
-                ):
+                if layout_cfg.enabled and (final_summary or "").strip():
                     try:
                         # IMPORTANT: avoid sending large passthrough sections (e.g. plugin registry "recently active")
                         # into any LLM-based layout/refine steps. Those sections are appended back verbatim after layout.
@@ -687,8 +742,8 @@ class NewsWorkflowManager:
 
                         astrbot_logger.info(
                             "[dailynews] image_layout start enabled=%s provider=%s",
-                            bool(user_config.get("image_layout_enabled", False)),
-                            str(user_config.get("image_layout_provider_id") or ""),
+                            layout_cfg.enabled,
+                            layout_cfg.provider_id,
                         )
                         final_summary = await ImageLayoutAgent().enhance_markdown(
                             draft_markdown=layout_markdown,
@@ -723,6 +778,7 @@ class NewsWorkflowManager:
                 )
                 return {
                     "status": "success",
+                    "mode": "multi",
                     "decision": decision,
                     "sub_reports": reports,
                     "sub_results": sub_results,
