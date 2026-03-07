@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import base64
@@ -26,6 +26,11 @@ from .rendering import markdown_to_html, safe_text
 
 def _plugin_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+_CHENYU_BG_TOP_PATH = "image/\u4e0a\u534a\u80cc\u666f.png"
+_CHENYU_BG_MIDDLE_PATH = "image/\u8fc7\u6e21\u56fe\u7247.png"
+_CHENYU_BG_BOTTOM_PATH = "image/\u4e0b\u534a\u56fe\u7247.jpg"
 
 
 def _asset_b64(filename: str) -> str:
@@ -107,7 +112,9 @@ def _plugin_data_asset_data_uri(rel_path: str) -> tuple[str, str]:
         return "", ""
 
 
-def _resolve_chenyu_font_asset(font_files: Sequence[str] | str | None) -> tuple[str, str]:
+def _resolve_chenyu_font_asset(
+    font_files: Sequence[str] | str | None,
+) -> tuple[str, str]:
     if isinstance(font_files, str):
         candidates = [font_files]
     else:
@@ -238,7 +245,7 @@ def _looks_like_chenyu_template(template_str: str) -> bool:
 def _promote_headings_for_chenyu(md: str) -> str:
     """
     chenyu-style.html 瀵广€屼竴绾ф爣棰樸€?h1) 鏈夌壒娈婃牱寮忥紝浣嗘棩鎶ユ鏂囬€氬父鍙湪鏈€椤堕儴鏈変竴涓?`#`銆?    杩欓噷鍋氫竴涓粎鍦ㄦ覆鏌撻樁娈电殑鈥滄爣棰樺眰绾ц皟鏁粹€濓細
-    - 鍘绘帀绗竴琛屾枃妗ｆ爣棰?`# ...`锛堥伩鍏嶄笌 Hero 閲嶅锛?    - 灏?`##` 鎻愬崌涓?`#`锛宍###` 鎻愬崌涓?`##`锛堣烦杩?fenced code block锛?    """
+    - 鍘绘帀绗竴琛屾枃妗ｆ爣棰?`# ...`锛堥伩鍏嶄笌 Hero 閲嶅锛?    - 灏?`##` 鎻愬崌涓?`#`锛宍###` 鎻愬崌涓?`##`锛堣烦杩?fenced code block锛?"""
     text = (md or "").strip("\n")
     if not text:
         return ""
@@ -397,16 +404,16 @@ async def render_single_page_to_image(
     chenyu_font_files: Sequence[str] | str | None = None,
 ) -> tuple[Path | None, str]:
     """
-    娓叉煋鍗曢〉 Markdown 涓哄浘鐗囥€?    """
+    娓叉煋鍗曢〉 Markdown 涓哄浘鐗囥€?"""
     bg_img = _asset_b64("sunsetbackground.jpg")
     char_img = _asset_b64("transparent_output.png")
     base_href = _templates_base_href()
 
     # chenyu-style assets
     chenyu_font, chenyu_font_format = _resolve_chenyu_font_asset(chenyu_font_files)
-    chenyu_bg_top = _root_asset_data_uri("image/涓婂崐鑳屾櫙.png", "image/png")
-    chenyu_bg_middle = _root_asset_data_uri("image/杩囨浮鍥剧墖.png", "image/png")
-    chenyu_bg_bottom = _root_asset_data_uri("image/涓嬪崐鍥剧墖.jpg", "image/jpeg")
+    chenyu_bg_top = _root_asset_data_uri(_CHENYU_BG_TOP_PATH, "image/png")
+    chenyu_bg_middle = _root_asset_data_uri(_CHENYU_BG_MIDDLE_PATH, "image/png")
+    chenyu_bg_bottom = _root_asset_data_uri(_CHENYU_BG_BOTTOM_PATH, "image/jpeg")
     chenyu_tower = _root_asset_data_uri("image/tower_no_bg.png", "image/png")
 
     is_chenyu = _looks_like_chenyu_template(template_str)

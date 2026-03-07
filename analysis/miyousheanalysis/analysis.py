@@ -130,7 +130,9 @@ def _extract_inline_images(raw_html: str) -> list[str]:
     return out
 
 
-def _extract_images_from_node(node: Any, *, depth: int = 0, max_depth: int = 6) -> list[str]:
+def _extract_images_from_node(
+    node: Any, *, depth: int = 0, max_depth: int = 6
+) -> list[str]:
     if depth > max_depth:
         return []
 
@@ -144,16 +146,22 @@ def _extract_images_from_node(node: Any, *, depth: int = 0, max_depth: int = 6) 
         for key in ("cover", "covers", "image_list", "images", "img_list", "pics"):
             if key in node:
                 out.extend(
-                    _extract_images_from_node(node.get(key), depth=depth + 1, max_depth=max_depth)
+                    _extract_images_from_node(
+                        node.get(key), depth=depth + 1, max_depth=max_depth
+                    )
                 )
 
         for v in node.values():
             if isinstance(v, (dict, list)):
-                out.extend(_extract_images_from_node(v, depth=depth + 1, max_depth=max_depth))
+                out.extend(
+                    _extract_images_from_node(v, depth=depth + 1, max_depth=max_depth)
+                )
 
     elif isinstance(node, list):
         for item in node:
-            out.extend(_extract_images_from_node(item, depth=depth + 1, max_depth=max_depth))
+            out.extend(
+                _extract_images_from_node(item, depth=depth + 1, max_depth=max_depth)
+            )
 
     return out
 

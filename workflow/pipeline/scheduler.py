@@ -1165,7 +1165,9 @@ class DailyNewsScheduler:
 
         s = (content or "").strip()
         if not s:
-            astrbot_logger.warning("[dailynews] astrbook publish skipped: empty content")
+            astrbot_logger.warning(
+                "[dailynews] astrbook publish skipped: empty content"
+            )
             return {"ok": False, "error": "empty_content"}
         if s.startswith("生成失败"):
             astrbot_logger.warning(
@@ -1175,14 +1177,18 @@ class DailyNewsScheduler:
 
         token = str(cfg.get("astrbook_token") or "").strip()
         if not token:
-            astrbot_logger.warning("[dailynews] astrbook publish skipped: token missing")
+            astrbot_logger.warning(
+                "[dailynews] astrbook publish skipped: token missing"
+            )
             return {"ok": False, "error": "token_missing"}
 
         category = str(cfg.get("astrbook_publish_category") or "tech").strip().lower()
         if category not in {"chat", "deals", "misc", "tech", "help", "intro", "acg"}:
             category = "tech"
 
-        title_prefix = str(cfg.get("astrbook_publish_title_prefix") or "每日资讯日报").strip()
+        title_prefix = str(
+            cfg.get("astrbook_publish_title_prefix") or "每日资讯日报"
+        ).strip()
         today = datetime.now().strftime("%Y-%m-%d")
         title = f"{title_prefix} {today}".strip()
 
@@ -1198,7 +1204,9 @@ class DailyNewsScheduler:
                 post_md = (post_md.rstrip() + "\n" + "\n".join(lines)).strip()
 
         client = AstrBookClient(token=token)
-        resp = await client.create_thread(title=title, content=post_md, category=category)
+        resp = await client.create_thread(
+            title=title, content=post_md, category=category
+        )
         if resp.get("error"):
             astrbot_logger.warning(
                 "[dailynews] astrbook create_thread failed: %s (%s)",
@@ -1221,7 +1229,9 @@ class DailyNewsScheduler:
         return {
             "ok": True,
             "id": tid,
-            "api_url": f"{ASTRBOOK_API_BASE.rstrip('/')}/api/threads/{tid}" if tid else "",
+            "api_url": f"{ASTRBOOK_API_BASE.rstrip('/')}/api/threads/{tid}"
+            if tid
+            else "",
         }
 
     async def notify_admin(self, text: str):

@@ -100,11 +100,14 @@ class AstrBookClient:
             "page": max(1, int(page)),
             "page_size": max(1, int(page_size)),
         }
-        return await self._request_json("GET", f"/api/threads/{int(thread_id)}", params=params)
+        return await self._request_json(
+            "GET", f"/api/threads/{int(thread_id)}", params=params
+        )
 
     async def create_thread(
         self, *, title: str, content: str, category: str = "tech"
     ) -> dict[str, Any]:
         payload = {"title": title, "content": content, "category": category}
-        return await self._request_json("POST", "/api/threads", json_data=payload, timeout_s=25.0)
-
+        return await self._request_json(
+            "POST", "/api/threads", json_data=payload, timeout_s=25.0
+        )

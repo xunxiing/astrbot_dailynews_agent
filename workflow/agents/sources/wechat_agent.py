@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import importlib
 import json
 from datetime import datetime
@@ -40,6 +40,7 @@ def _article_create_ts(item: dict[str, Any]) -> int:
     except Exception:
         pass
     return 0
+
 
 def _fallback_fetch_latest_articles(
     article_url: str,
@@ -104,9 +105,7 @@ class WechatSubAgent:
         latest_scope = str(WECHAT_LATEST_SCOPE)
         effective_max_age_hours = int(latest_max_age_hours)
         latest_max_age_seconds = (
-            int(effective_max_age_hours) * 3600
-            if effective_max_age_hours > 0
-            else 0
+            int(effective_max_age_hours) * 3600 if effective_max_age_hours > 0 else 0
         )
 
         key = f"{source.url}||{album_keyword or ''}||{latest_scope}"
@@ -201,9 +200,7 @@ class WechatSubAgent:
                         articles = filtered_articles
                         if not articles:
                             stale_only_result = True
-                            last_err = (
-                                f"all articles older than {effective_max_age_hours} hours"
-                            )
+                            last_err = f"all articles older than {effective_max_age_hours} hours"
                     if len(articles) > limit:
                         articles = articles[:limit]
                     meta_scope = str((meta or {}).get("scope") or latest_scope).strip()
@@ -402,6 +399,7 @@ class WechatSubAgent:
             "sample_articles": sample_articles,
             "error": None,
         }
+
     async def process_source(
         self,
         source: NewsSourceConfig,
@@ -559,7 +557,7 @@ class WechatSubAgent:
                 err_text,
                 len(prompt_article_details),
                 sum(
-                    len(d.get('image_urls') or [])
+                    len(d.get("image_urls") or [])
                     for d in prompt_article_details
                     if isinstance(d, dict)
                 ),
@@ -613,4 +611,3 @@ class WechatSubAgent:
             images=images or None,
             error=None,
         )
-

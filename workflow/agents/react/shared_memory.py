@@ -56,4 +56,3 @@ class SharedMemory:
         _ = run_id
         with self._lock:
             self._store.clear()
-

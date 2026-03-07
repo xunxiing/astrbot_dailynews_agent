@@ -131,9 +131,7 @@ def _guess_referer(url: str) -> str | None:
     return None
 
 
-async def _fetch_http_image(
-    session: aiohttp.ClientSession, url: str
-) -> bytes | None:
+async def _fetch_http_image(session: aiohttp.ClientSession, url: str) -> bytes | None:
     headers = {"User-Agent": "AstrBotDailyNews/1.0"}
     referer = _guess_referer(url)
     if referer:

@@ -281,6 +281,7 @@ async def _search_web(query: str, *, max_results: int = 6) -> list[dict[str, str
     if abstract and abstract_url:
         seen.add(abstract_url)
         out.append({"title": abstract, "url": abstract_url})
+
     def _walk(items: list[Any]):
         for it in items:
             if len(out) >= max(1, int(max_results)):
@@ -295,13 +296,16 @@ async def _search_web(query: str, *, max_results: int = 6) -> list[dict[str, str
             if text and first and first not in seen:
                 seen.add(first)
                 out.append({"title": text, "url": first})
+
     related = data.get("RelatedTopics")
     if isinstance(related, list):
         _walk(related)
     return out[: max(1, int(max_results))]
 
 
-def _format_web_results(query: str, rows: list[dict[str, str]]) -> tuple[str, dict[str, Any]]:
+def _format_web_results(
+    query: str, rows: list[dict[str, str]]
+) -> tuple[str, dict[str, Any]]:
     lines = [f"Query: {query}", "Top Results:"]
     for r in rows:
         t = str(r.get("title") or "").strip()
@@ -603,7 +607,9 @@ class ReActDailyNewsOrchestrator:
         )
         analyze_timeout_default = max(10, llm_timeout_s + 8)
         analyze_timeout_s = _safe_int(
-            user_config.get("react_vertical_analyze_timeout_s", analyze_timeout_default),
+            user_config.get(
+                "react_vertical_analyze_timeout_s", analyze_timeout_default
+            ),
             analyze_timeout_default,
             minimum=5,
             maximum=300,
@@ -842,6 +848,7 @@ class ReActDailyNewsOrchestrator:
             st = str(source_type or "").strip().lower()
 
             if st == "miyoushe":
+
                 async def _tool_analyze_miyoushe(
                     *,
                     context,
@@ -870,9 +877,7 @@ class ReActDailyNewsOrchestrator:
                         if list_url:
                             chosen_url = list_url
                     if not chosen_url and uid_s:
-                        chosen_url = (
-                            f"https://www.miyoushe.com/ys/accountCenter/postList?id={uid_s}"
-                        )
+                        chosen_url = f"https://www.miyoushe.com/ys/accountCenter/postList?id={uid_s}"
                     if not chosen_url:
                         chosen_url = _pick_miyoushe_post_list_url() or _pick_target_url(
                             "miyoushe.com"
@@ -930,6 +935,7 @@ class ReActDailyNewsOrchestrator:
                 )
 
             elif st == "twitter":
+
                 async def _tool_analyze_twitter(
                     *,
                     context,
@@ -1004,6 +1010,7 @@ class ReActDailyNewsOrchestrator:
                 )
 
             elif st == "wechat":
+
                 async def _tool_analyze_wechat(
                     *,
                     context,
@@ -1051,14 +1058,17 @@ class ReActDailyNewsOrchestrator:
                     parse_limit = _safe_int(max_articles, 5, minimum=1, maximum=12)
                     max_age_hours = 36
                     cutoff_ts = (
-                        int(datetime.now(timezone.utc).timestamp()) - int(max_age_hours) * 3600
+                        int(datetime.now(timezone.utc).timestamp())
+                        - int(max_age_hours) * 3600
                         if max_age_hours > 0
                         else 0
                     )
                     preferred_scope = scope or "auto"
                     # For react preprocess we strongly prefer account-first;
                     # only use album when explicitly requested.
-                    pre_scope = "account" if preferred_scope in {"auto", "account"} else "album"
+                    pre_scope = (
+                        "account" if preferred_scope in {"auto", "account"} else "album"
+                    )
                     resolved_url = chosen_url
                     resolved_scope = pre_scope
                     meta: dict[str, Any] = {}
@@ -1138,7 +1148,9 @@ class ReActDailyNewsOrchestrator:
                         / "output"
                     )
                     try:
-                        markdown_scope = "account" if pre_scope == "account" else preferred_scope
+                        markdown_scope = (
+                            "account" if pre_scope == "account" else preferred_scope
+                        )
                         md_path = await _run_sync(
                             to_markdown,
                             resolved_url,
@@ -1194,6 +1206,7 @@ class ReActDailyNewsOrchestrator:
                 )
 
             elif st in {"xiuxiu_ai", "xiuxiu-ai"}:
+
                 async def _tool_analyze_xiuxiu(
                     *,
                     context,
@@ -1281,11 +1294,15 @@ class ReActDailyNewsOrchestrator:
         fetched: dict[str, list[dict[str, Any]]],
     ) -> ReactRunResult:
         react_cfg = ReactAgentConfig.from_mapping(user_config)
-        provider_id = self._pick_provider_id(user_config=user_config, react_cfg=react_cfg)
+        provider_id = self._pick_provider_id(
+            user_config=user_config, react_cfg=react_cfg
+        )
         memory = SharedMemory.instance()
         memory.reset()
         registry = ToolRegistry()
-        source_snapshot = _build_target_source_snapshot(sources=sources, fetched=fetched)
+        source_snapshot = _build_target_source_snapshot(
+            sources=sources, fetched=fetched
+        )
         target_hosts = source_snapshot.get("target_hosts") or []
         if not isinstance(target_hosts, list):
             target_hosts = []
@@ -1333,7 +1350,9 @@ class ReActDailyNewsOrchestrator:
         )
         if int(react_cfg.tool_call_timeout_s) < int(vertical_tool_timeout_floor_s):
             old_timeout = int(react_cfg.tool_call_timeout_s)
-            react_cfg = replace(react_cfg, tool_call_timeout_s=vertical_tool_timeout_floor_s)
+            react_cfg = replace(
+                react_cfg, tool_call_timeout_s=vertical_tool_timeout_floor_s
+            )
             astrbot_logger.warning(
                 "[dailynews][react] tool timeout auto-raised: react_agent_tool_call_timeout_s %s -> %s (vertical_analyze=%s, vertical_process=%s, vertical_llm=%s)",
                 old_timeout,
@@ -1369,7 +1388,9 @@ class ReActDailyNewsOrchestrator:
             focus_text = str(focus or "").strip()
             if not repo_input or not focus_text:
                 return "error: repo_name and focus are required."
-            repo = parse_repo(repo_input) or parse_repo(f"https://github.com/{repo_input}")
+            repo = parse_repo(repo_input) or parse_repo(
+                f"https://github.com/{repo_input}"
+            )
             if not repo:
                 return f"error: invalid repo_name: `{repo_input}`"
             owner, name = repo
@@ -1484,9 +1505,7 @@ class ReActDailyNewsOrchestrator:
                         str(initial_context or "(none)"),
                     )
                     .replace("{{COLLECTED_MATERIALS}}", str(materials or "(none)"))
-                    .replace(
-                        "{{DEPENDENCY_CONTEXT}}", str(injected_prompt or "(none)")
-                    )
+                    .replace("{{DEPENDENCY_CONTEXT}}", str(injected_prompt or "(none)"))
                     .replace("{{STYLE_HINT}}", style or "(none)")
                 )
                 text = await llm_writer.ask(system_prompt=system_prompt, prompt=prompt)
@@ -1537,9 +1556,7 @@ class ReActDailyNewsOrchestrator:
             whitelist=preferred_global_tools,
         )
         available_global_tools = [
-            name
-            for name in preferred_global_tools
-            if registry.get(name) is not None
+            name for name in preferred_global_tools if registry.get(name) is not None
         ]
         astrbot_logger.info(
             "[dailynews][react] merged global AstrBot tools: count=%s names=%s",

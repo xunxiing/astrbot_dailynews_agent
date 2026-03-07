@@ -119,7 +119,9 @@ def get_user_latest_posts(
     )
 
     with requests.Session() as session:
-        list_data = _request_json(session, LIST_API, {"size": size, "uid": uid}, referer)
+        list_data = _request_json(
+            session, LIST_API, {"size": size, "uid": uid}, referer
+        )
         rows = list_data.get("data", {}).get("list", []) or []
 
         out: list[dict[str, str]] = []

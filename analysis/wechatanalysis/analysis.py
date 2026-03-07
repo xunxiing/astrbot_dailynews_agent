@@ -107,7 +107,9 @@ def sort_latest_articles_desc(articles: list[LatestArticle]) -> list[LatestArtic
     return sorted(articles, key=lambda x: _safe_int_ts(x.create_time), reverse=True)
 
 
-def mobile_headers(user_agent: str, referer: str = "https://mp.weixin.qq.com/", ajax: bool = False) -> dict[str, str]:
+def mobile_headers(
+    user_agent: str, referer: str = "https://mp.weixin.qq.com/", ajax: bool = False
+) -> dict[str, str]:
     h = {
         "User-Agent": user_agent,
         "Referer": referer,
@@ -196,13 +198,28 @@ def _looks_like_wechat_client_only(page_html: str) -> bool:
 
 
 class RequestClient:
-    def __init__(self, timeout: int, max_retries: int, user_agent: str, session: requests.Session | None = None):
+    def __init__(
+        self,
+        timeout: int,
+        max_retries: int,
+        user_agent: str,
+        session: requests.Session | None = None,
+    ):
         self.timeout = timeout
         self.max_retries = max_retries
         self.user_agent = user_agent
         self.session = session or requests.Session()
 
-    def request(self, method: str, url: str, *, referer: str, params: dict[str, Any] | None = None, data: Any = None, ajax: bool = False) -> requests.Response:
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        referer: str,
+        params: dict[str, Any] | None = None,
+        data: Any = None,
+        ajax: bool = False,
+    ) -> requests.Response:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
@@ -215,7 +232,9 @@ class RequestClient:
                     timeout=self.timeout,
                 )
                 if resp.status_code >= 500:
-                    raise requests.HTTPError(f"server_error_{resp.status_code}", response=resp)
+                    raise requests.HTTPError(
+                        f"server_error_{resp.status_code}", response=resp
+                    )
                 resp.raise_for_status()
                 return resp
             except (requests.RequestException, requests.HTTPError) as exc:
@@ -225,19 +244,42 @@ class RequestClient:
                 time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
         raise WechatCrawlerError(f"request_failed: {method} {url} ({last_error})")
 
-    def get_text(self, url: str, *, referer: str, params: dict[str, Any] | None = None, ajax: bool = False) -> tuple[str, str]:
+    def get_text(
+        self,
+        url: str,
+        *,
+        referer: str,
+        params: dict[str, Any] | None = None,
+        ajax: bool = False,
+    ) -> tuple[str, str]:
         r = self.request("GET", url, referer=referer, params=params, ajax=ajax)
         return r.text, r.url
 
-    def get_json(self, url: str, *, referer: str, params: dict[str, Any] | None = None, ajax: bool = False) -> dict[str, Any]:
+    def get_json(
+        self,
+        url: str,
+        *,
+        referer: str,
+        params: dict[str, Any] | None = None,
+        ajax: bool = False,
+    ) -> dict[str, Any]:
         r = self.request("GET", url, referer=referer, params=params, ajax=ajax)
         try:
             return r.json()
         except Exception as exc:
             raise WechatCrawlerError(f"invalid_json_response: GET {url}") from exc
 
-    def post_json(self, url: str, *, referer: str, params: dict[str, Any] | None = None, data: dict[str, Any] | None = None) -> dict[str, Any]:
-        r = self.request("POST", url, referer=referer, params=params, data=data, ajax=True)
+    def post_json(
+        self,
+        url: str,
+        *,
+        referer: str,
+        params: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        r = self.request(
+            "POST", url, referer=referer, params=params, data=data, ajax=True
+        )
         try:
             return r.json()
         except Exception as exc:
@@ -250,13 +292,19 @@ class RequestClient:
 class WechatCrawler:
     def __init__(self, options: CrawlOptions):
         self.options = options
-        self.client = RequestClient(options.timeout, options.max_retries, options.user_agent, options.session)
+        self.client = RequestClient(
+            options.timeout, options.max_retries, options.user_agent, options.session
+        )
 
     def fetch_article_context(self) -> ArticleContext:
         article_url = ensure_mobile_article_url(self.options.article_url)
-        page_html, final_url = self.client.get_text(article_url, referer="https://mp.weixin.qq.com/")
+        page_html, final_url = self.client.get_text(
+            article_url, referer="https://mp.weixin.qq.com/"
+        )
         if "wappoc_appmsgcaptcha" in final_url:
-            raise WechatCaptchaError("hit wechat captcha page; retry later or use different network/session")
+            raise WechatCaptchaError(
+                "hit wechat captcha page; retry later or use different network/session"
+            )
         soup = BeautifulSoup(page_html, "html.parser")
         content_node = soup.select_one("#js_content")
         image_urls: list[str] = []
@@ -268,10 +316,16 @@ class WechatCrawler:
                 if src and src not in image_urls:
                     image_urls.append(src)
         ct = extract_js_var(page_html, "ct")
-        publish_time = datetime.fromtimestamp(int(ct)).strftime("%Y-%m-%d %H:%M:%S") if ct.isdigit() else first_text(soup, ["#publish_time", "#js_publish_time"])
+        publish_time = (
+            datetime.fromtimestamp(int(ct)).strftime("%Y-%m-%d %H:%M:%S")
+            if ct.isdigit()
+            else first_text(soup, ["#publish_time", "#js_publish_time"])
+        )
         return ArticleContext(
             title=first_text(soup, ["#activity-name", ".rich_media_title", "h1"]),
-            author=first_text(soup, ["#js_name", ".rich_media_meta.rich_media_meta_text"]),
+            author=first_text(
+                soup, ["#js_name", ".rich_media_meta.rich_media_meta_text"]
+            ),
             publish_time=publish_time,
             content_text=content_text,
             image_urls=image_urls,
@@ -305,9 +359,17 @@ class WechatCrawler:
             "segment_comment_id": context.segment_comment_id,
             "cur_album_id": context.album_id,
         }
-        return self.client.post_json(api, referer=context.url, params=params, data=payload)
+        return self.client.post_json(
+            api, referer=context.url, params=params, data=payload
+        )
 
-    def _extract_articles_from_general_msg_list(self, msg_obj: dict[str, Any], seen_urls: set[str], out: list[LatestArticle], limit: int) -> None:
+    def _extract_articles_from_general_msg_list(
+        self,
+        msg_obj: dict[str, Any],
+        seen_urls: set[str],
+        out: list[LatestArticle],
+        limit: int,
+    ) -> None:
         for item in msg_obj.get("list", []):
             ext = item.get("app_msg_ext_info") or {}
             comm = item.get("comm_msg_info") or {}
@@ -316,18 +378,28 @@ class WechatCrawler:
                 url = normalize_url(ext.get("content_url", ""))
                 if url and url not in seen_urls:
                     seen_urls.add(url)
-                    out.append(LatestArticle(title=ext.get("title", ""), url=url, create_time=create_time))
+                    out.append(
+                        LatestArticle(
+                            title=ext.get("title", ""), url=url, create_time=create_time
+                        )
+                    )
                     if len(out) >= limit:
                         return
             for sub in ext.get("multi_app_msg_item_list", []) or []:
                 url = normalize_url(sub.get("content_url", ""))
                 if url and url not in seen_urls:
                     seen_urls.add(url)
-                    out.append(LatestArticle(title=sub.get("title", ""), url=url, create_time=create_time))
+                    out.append(
+                        LatestArticle(
+                            title=sub.get("title", ""), url=url, create_time=create_time
+                        )
+                    )
                     if len(out) >= limit:
                         return
 
-    def fetch_account_latest_articles(self, context: ArticleContext, limit: int) -> tuple[list[LatestArticle], dict[str, str]]:
+    def fetch_account_latest_articles(
+        self, context: ArticleContext, limit: int
+    ) -> tuple[list[LatestArticle], dict[str, str]]:
         if not context.biz:
             return [], {"error": "missing_biz"}
         profile_url = f"https://mp.weixin.qq.com/mp/profile_ext?action=home&__biz={context.biz}&scene=124#wechat_redirect"
@@ -446,18 +518,31 @@ class WechatCrawler:
         err = "no_session" if getmsg_ret == -3 else "no_articles"
         return [], {"error": err, "profile_url": profile_url}
 
-    def fetch_album_latest_articles(self, context: ArticleContext, limit: int) -> list[LatestArticle]:
+    def fetch_album_latest_articles(
+        self, context: ArticleContext, limit: int
+    ) -> list[LatestArticle]:
         if not context.biz or not context.album_id:
             return []
         results: list[LatestArticle] = []
         seen_urls: set[str] = set()
         begin_msgid, begin_itemidx = "", ""
         for _ in range(120):
-            params = {"action": "getalbum", "__biz": context.biz, "album_id": context.album_id, "count": "10", "f": "json"}
+            params = {
+                "action": "getalbum",
+                "__biz": context.biz,
+                "album_id": context.album_id,
+                "count": "10",
+                "f": "json",
+            }
             if begin_msgid:
                 params["begin_msgid"] = begin_msgid
                 params["begin_itemidx"] = begin_itemidx or "1"
-            data = self.client.get_json("https://mp.weixin.qq.com/mp/appmsgalbum", referer=context.url, params=params, ajax=True)
+            data = self.client.get_json(
+                "https://mp.weixin.qq.com/mp/appmsgalbum",
+                referer=context.url,
+                params=params,
+                ajax=True,
+            )
             album_resp = data.get("getalbum_resp", {})
             articles = album_resp.get("article_list", [])
             if not articles:
@@ -467,7 +552,15 @@ class WechatCrawler:
                 if not url or url in seen_urls:
                     continue
                 seen_urls.add(url)
-                results.append(LatestArticle(title=a.get("title", ""), url=url, msgid=str(a.get("msgid", "")), itemidx=str(a.get("itemidx", "")), create_time=str(a.get("create_time", ""))))
+                results.append(
+                    LatestArticle(
+                        title=a.get("title", ""),
+                        url=url,
+                        msgid=str(a.get("msgid", "")),
+                        itemidx=str(a.get("itemidx", "")),
+                        create_time=str(a.get("create_time", "")),
+                    )
+                )
             if str(album_resp.get("continue_flag", "0")) != "1":
                 break
             last = articles[-1]
@@ -477,7 +570,9 @@ class WechatCrawler:
                 break
         return sort_latest_articles_desc(results)[:limit]
 
-    def download_images(self, image_urls: list[str], referer_url: str, images_dir: str) -> list[str]:
+    def download_images(
+        self, image_urls: list[str], referer_url: str, images_dir: str
+    ) -> list[str]:
         if not self.options.download_images or not image_urls:
             return []
         os.makedirs(images_dir, exist_ok=True)
@@ -502,20 +597,38 @@ class WechatCrawler:
         return out
 
     @staticmethod
-    def build_markdown(article: ArticleContext, local_images: list[str], latest_articles: list[LatestArticle], latest_label: str) -> str:
+    def build_markdown(
+        article: ArticleContext,
+        local_images: list[str],
+        latest_articles: list[LatestArticle],
+        latest_label: str,
+    ) -> str:
         lines = [f"# {article.title}", ""]
         if article.author:
             lines.append(f"- Author: {article.author}")
         if article.publish_time:
             lines.append(f"- Publish Time: {article.publish_time}")
-        lines.extend([f"- Source: {article.url}", "", "---", "", "## Content", "", article.content_text, ""])
+        lines.extend(
+            [
+                f"- Source: {article.url}",
+                "",
+                "---",
+                "",
+                "## Content",
+                "",
+                article.content_text,
+                "",
+            ]
+        )
         if local_images:
             lines.extend(["## Images", ""])
             lines.extend([f"![image_{i}]({p})" for i, p in enumerate(local_images)])
             lines.append("")
         if latest_articles:
             lines.extend([f"## {latest_label}", ""])
-            lines.extend([f"{i}. [{a.title}]({a.url})" for i, a in enumerate(latest_articles, 1)])
+            lines.extend(
+                [f"{i}. [{a.title}]({a.url})" for i, a in enumerate(latest_articles, 1)]
+            )
             lines.append("")
         return "\n".join(lines)
 
@@ -532,48 +645,124 @@ class WechatCrawler:
         account_error = ""
         if self.options.latest_scope in ("auto", "account"):
             latest_label = "Latest Account Articles"
-            latest_articles, account_meta = self.fetch_account_latest_articles(context, self.options.limit)
+            latest_articles, account_meta = self.fetch_account_latest_articles(
+                context, self.options.limit
+            )
             if not latest_articles and self.options.latest_scope == "account":
                 account_error = account_meta.get("error", "account_fetch_failed")
         if not latest_articles and self.options.latest_scope in ("auto", "album"):
-            latest_articles = self.fetch_album_latest_articles(context, self.options.limit)
+            latest_articles = self.fetch_album_latest_articles(
+                context, self.options.limit
+            )
             latest_label = "Latest Album Articles"
-        latest_articles = sort_latest_articles_desc(latest_articles)[: self.options.limit]
-        local_images = self.download_images(context.image_urls, context.url, os.path.join(self.options.output_dir, "images"))
+        latest_articles = sort_latest_articles_desc(latest_articles)[
+            : self.options.limit
+        ]
+        local_images = self.download_images(
+            context.image_urls,
+            context.url,
+            os.path.join(self.options.output_dir, "images"),
+        )
         safe_title = sanitize_filename(context.title or "wechat_article")
         md_path = os.path.join(self.options.output_dir, safe_title + ".md")
         with open(md_path, "w", encoding="utf-8") as f:
-            f.write(self.build_markdown(context, local_images, latest_articles, latest_label))
-        latest_json_path = os.path.join(self.options.output_dir, safe_title + "_latest_articles.json")
+            f.write(
+                self.build_markdown(
+                    context, local_images, latest_articles, latest_label
+                )
+            )
+        latest_json_path = os.path.join(
+            self.options.output_dir, safe_title + "_latest_articles.json"
+        )
         with open(latest_json_path, "w", encoding="utf-8") as f:
-            json.dump([asdict(i) for i in latest_articles], f, ensure_ascii=False, indent=2)
-        api_debug_path = os.path.join(self.options.output_dir, safe_title + "_api_debug.json")
+            json.dump(
+                [asdict(i) for i in latest_articles], f, ensure_ascii=False, indent=2
+            )
+        api_debug_path = os.path.join(
+            self.options.output_dir, safe_title + "_api_debug.json"
+        )
         with open(api_debug_path, "w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "runtime": {"latest_scope": self.options.latest_scope, "timeout": self.options.timeout, "max_retries": self.options.max_retries},
+                    "runtime": {
+                        "latest_scope": self.options.latest_scope,
+                        "timeout": self.options.timeout,
+                        "max_retries": self.options.max_retries,
+                    },
                     "article_context": asdict(context),
-                    "account_fetch": {"mode": self.options.latest_scope, "profile_url": account_meta.get("profile_url", ""), "error": account_error or account_meta.get("error", "")},
-                    "ext_response_keys": list(ext_data.keys()) if isinstance(ext_data, dict) else [],
+                    "account_fetch": {
+                        "mode": self.options.latest_scope,
+                        "profile_url": account_meta.get("profile_url", ""),
+                        "error": account_error or account_meta.get("error", ""),
+                    },
+                    "ext_response_keys": list(ext_data.keys())
+                    if isinstance(ext_data, dict)
+                    else [],
                 },
                 f,
                 ensure_ascii=False,
                 indent=2,
             )
-        return CrawlResult(context, latest_articles, latest_label, account_error or account_meta.get("error", ""), ext_data if isinstance(ext_data, dict) else {}, local_images, md_path, latest_json_path, api_debug_path)
+        return CrawlResult(
+            context,
+            latest_articles,
+            latest_label,
+            account_error or account_meta.get("error", ""),
+            ext_data if isinstance(ext_data, dict) else {},
+            local_images,
+            md_path,
+            latest_json_path,
+            api_debug_path,
+        )
 
 
-def fetch_wechat_article(article_url: str, *, timeout: int = DEFAULT_TIMEOUT, max_retries: int = DEFAULT_MAX_RETRIES, user_agent: str = DEFAULT_WECHAT_MOBILE_UA, session: requests.Session | None = None) -> dict[str, Any]:
-    opts = CrawlOptions(article_url=article_url, limit=1, download_images=False, timeout=max(5, int(timeout or DEFAULT_TIMEOUT)), max_retries=max(0, int(max_retries or DEFAULT_MAX_RETRIES)), user_agent=user_agent or DEFAULT_WECHAT_MOBILE_UA, session=session)
+def fetch_wechat_article(
+    article_url: str,
+    *,
+    timeout: int = DEFAULT_TIMEOUT,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    user_agent: str = DEFAULT_WECHAT_MOBILE_UA,
+    session: requests.Session | None = None,
+) -> dict[str, Any]:
+    opts = CrawlOptions(
+        article_url=article_url,
+        limit=1,
+        download_images=False,
+        timeout=max(5, int(timeout or DEFAULT_TIMEOUT)),
+        max_retries=max(0, int(max_retries or DEFAULT_MAX_RETRIES)),
+        user_agent=user_agent or DEFAULT_WECHAT_MOBILE_UA,
+        session=session,
+    )
     return asdict(WechatCrawler(opts).fetch_article_context())
 
 
-def fetch_latest_articles(article_url: str, limit: int = 5, latest_scope: str = "auto", *, timeout: int = DEFAULT_TIMEOUT, max_retries: int = DEFAULT_MAX_RETRIES, user_agent: str = DEFAULT_WECHAT_MOBILE_UA, session: requests.Session | None = None) -> tuple[list[dict[str, str]], dict[str, str]]:
-    opts = CrawlOptions(article_url=article_url, limit=max(1, int(limit or 1)), latest_scope=_normalize_scope(latest_scope), download_images=False, timeout=max(5, int(timeout or DEFAULT_TIMEOUT)), max_retries=max(0, int(max_retries or DEFAULT_MAX_RETRIES)), user_agent=user_agent or DEFAULT_WECHAT_MOBILE_UA, session=session)
+def fetch_latest_articles(
+    article_url: str,
+    limit: int = 5,
+    latest_scope: str = "auto",
+    *,
+    timeout: int = DEFAULT_TIMEOUT,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    user_agent: str = DEFAULT_WECHAT_MOBILE_UA,
+    session: requests.Session | None = None,
+) -> tuple[list[dict[str, str]], dict[str, str]]:
+    opts = CrawlOptions(
+        article_url=article_url,
+        limit=max(1, int(limit or 1)),
+        latest_scope=_normalize_scope(latest_scope),
+        download_images=False,
+        timeout=max(5, int(timeout or DEFAULT_TIMEOUT)),
+        max_retries=max(0, int(max_retries or DEFAULT_MAX_RETRIES)),
+        user_agent=user_agent or DEFAULT_WECHAT_MOBILE_UA,
+        session=session,
+    )
     crawler = WechatCrawler(opts)
     context = crawler.fetch_article_context()
     rows: list[LatestArticle] = []
-    meta: dict[str, str] = {"scope": opts.latest_scope, "article_url": context.url or article_url}
+    meta: dict[str, str] = {
+        "scope": opts.latest_scope,
+        "article_url": context.url or article_url,
+    }
     if opts.latest_scope in ("auto", "account"):
         rows, account_meta = crawler.fetch_account_latest_articles(context, opts.limit)
         meta.update({k: str(v) for k, v in account_meta.items()})
@@ -584,10 +773,31 @@ def fetch_latest_articles(article_url: str, limit: int = 5, latest_scope: str = 
         if rows:
             meta["scope"] = "album"
     rows = sort_latest_articles_desc(rows)[: opts.limit]
-    return [{"title": r.title, "url": r.url, "create_time": r.create_time, "msgid": r.msgid, "itemidx": r.itemidx} for r in rows if r.url], meta
+    return [
+        {
+            "title": r.title,
+            "url": r.url,
+            "create_time": r.create_time,
+            "msgid": r.msgid,
+            "itemidx": r.itemidx,
+        }
+        for r in rows
+        if r.url
+    ], meta
 
 
-def wechat_to_markdown(article_url: str, output_dir: str = "output", *, limit: int = 5, latest_scope: str = "auto", download_images: bool = True, timeout: int = DEFAULT_TIMEOUT, max_retries: int = DEFAULT_MAX_RETRIES, user_agent: str = DEFAULT_WECHAT_MOBILE_UA, session: requests.Session | None = None) -> str:
+def wechat_to_markdown(
+    article_url: str,
+    output_dir: str = "output",
+    *,
+    limit: int = 5,
+    latest_scope: str = "auto",
+    download_images: bool = True,
+    timeout: int = DEFAULT_TIMEOUT,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    user_agent: str = DEFAULT_WECHAT_MOBILE_UA,
+    session: requests.Session | None = None,
+) -> str:
     opts = CrawlOptions(
         article_url=article_url,
         output_dir=output_dir or "output",
@@ -602,7 +812,18 @@ def wechat_to_markdown(article_url: str, output_dir: str = "output", *, limit: i
     return WechatCrawler(opts).crawl().md_path
 
 
-def run(article_url: str, output_dir: str = "output", *, limit: int = 5, latest_scope: str = "auto", download_images: bool = True, timeout: int = DEFAULT_TIMEOUT, max_retries: int = DEFAULT_MAX_RETRIES, user_agent: str = DEFAULT_WECHAT_MOBILE_UA, session: requests.Session | None = None) -> dict[str, Any]:
+def run(
+    article_url: str,
+    output_dir: str = "output",
+    *,
+    limit: int = 5,
+    latest_scope: str = "auto",
+    download_images: bool = True,
+    timeout: int = DEFAULT_TIMEOUT,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    user_agent: str = DEFAULT_WECHAT_MOBILE_UA,
+    session: requests.Session | None = None,
+) -> dict[str, Any]:
     opts = CrawlOptions(
         article_url=article_url,
         output_dir=output_dir or "output",
@@ -650,15 +871,38 @@ def print_summary(result: CrawlResult, options: CrawlOptions) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="WeChat public-account crawler without Playwright (article + account/album APIs).")
+    parser = argparse.ArgumentParser(
+        description="WeChat public-account crawler without Playwright (article + account/album APIs)."
+    )
     parser.add_argument("article_url", help="WeChat article URL")
     parser.add_argument("--output-dir", default="output", help="output directory")
     parser.add_argument("--limit", type=int, default=5, help="latest articles count")
-    parser.add_argument("--latest-scope", choices=["auto", "account", "album"], default="auto", help="latest article source")
-    parser.add_argument("--no-download-images", action="store_true", help="do not download content images")
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="request timeout in seconds")
-    parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="request retry count")
-    parser.add_argument("--user-agent", default=DEFAULT_WECHAT_MOBILE_UA, help="custom user-agent")
+    parser.add_argument(
+        "--latest-scope",
+        choices=["auto", "account", "album"],
+        default="auto",
+        help="latest article source",
+    )
+    parser.add_argument(
+        "--no-download-images",
+        action="store_true",
+        help="do not download content images",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        help="request timeout in seconds",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=DEFAULT_MAX_RETRIES,
+        help="request retry count",
+    )
+    parser.add_argument(
+        "--user-agent", default=DEFAULT_WECHAT_MOBILE_UA, help="custom user-agent"
+    )
     return parser
 
 

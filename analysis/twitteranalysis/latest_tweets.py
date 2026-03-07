@@ -196,11 +196,7 @@ def _activate_guest_token(
 
 
 def _extract_query_id(script_text: str, operation_name: str) -> str:
-    pattern = (
-        r'queryId:"([^"]+)",operationName:"'
-        + re.escape(operation_name)
-        + r'"'
-    )
+    pattern = r'queryId:"([^"]+)",operationName:"' + re.escape(operation_name) + r'"'
     m = re.search(pattern, script_text)
     return (m.group(1) if m else "").strip()
 
@@ -284,7 +280,9 @@ def _unwrap_tweet_result(raw: Any) -> dict[str, Any] | None:
 
 
 def _tweet_text(tweet_obj: dict[str, Any]) -> str:
-    legacy = tweet_obj.get("legacy") if isinstance(tweet_obj.get("legacy"), dict) else {}
+    legacy = (
+        tweet_obj.get("legacy") if isinstance(tweet_obj.get("legacy"), dict) else {}
+    )
     note_text = _dig_first(
         tweet_obj, "note_tweet", "note_tweet_results", "result", "text"
     )
@@ -296,7 +294,9 @@ def _tweet_text(tweet_obj: dict[str, Any]) -> str:
 def _tweet_images(tweet_obj: dict[str, Any]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
-    legacy = tweet_obj.get("legacy") if isinstance(tweet_obj.get("legacy"), dict) else {}
+    legacy = (
+        tweet_obj.get("legacy") if isinstance(tweet_obj.get("legacy"), dict) else {}
+    )
 
     for key in ("extended_entities", "entities"):
         bucket = legacy.get(key)
@@ -337,7 +337,9 @@ def _extract_tweets_from_timeline(
         if not tweet_obj:
             continue
 
-        legacy = tweet_obj.get("legacy") if isinstance(tweet_obj.get("legacy"), dict) else {}
+        legacy = (
+            tweet_obj.get("legacy") if isinstance(tweet_obj.get("legacy"), dict) else {}
+        )
         tid = str(legacy.get("id_str") or tweet_obj.get("rest_id") or "").strip()
         if not tid or tid in seen_ids:
             continue

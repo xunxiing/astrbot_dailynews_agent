@@ -290,8 +290,7 @@ class DailyNewsPlugin(Star):
 
         if len(set(selected_modes)) > 1 or unknown_parts:
             yield event.plain_result(
-                "用法：/news_test_md [plain|html] [long]\n"
-                "示例：/news_test_md html long"
+                "用法：/news_test_md [plain|html] [long]\n示例：/news_test_md html long"
             )
             return
 
@@ -355,7 +354,9 @@ class DailyNewsPlugin(Star):
         ).strip()
 
         if long_mode:
-            filler = "\n".join([f"- filler line {i}: {('内容' * 36)}" for i in range(1, 180)])
+            filler = "\n".join(
+                [f"- filler line {i}: {('内容' * 36)}" for i in range(1, 180)]
+            )
             test_md = f"{test_md}\n\n## 8. 长文分页测试\n{filler}\n"
 
         content = test_md.format(
@@ -373,10 +374,15 @@ class DailyNewsPlugin(Star):
         )
         astrbot_logger.debug(
             "[dailynews] /news_test_md preview=%s",
-            (content[:260].replace("\n", "\\n") + ("..." if len(content) > 260 else "")),
+            (
+                content[:260].replace("\n", "\\n")
+                + ("..." if len(content) > 260 else "")
+            ),
         )
 
-        delivery_mode = str(self.config.get("delivery_mode", "html_image") or "html_image")
+        delivery_mode = str(
+            self.config.get("delivery_mode", "html_image") or "html_image"
+        )
         if force_mode:
             delivery_mode = force_mode
 
@@ -881,4 +887,3 @@ class DailyNewsPlugin(Star):
         if hasattr(self.config, "save_config"):
             self.config.save_config()
         yield event.plain_result("已删除来源（兼容模式：仅从 wechat_sources 移除）")
-

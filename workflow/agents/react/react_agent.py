@@ -12,7 +12,11 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from astrbot.core.agent.message import AssistantMessageSegment, Message, ToolCallMessageSegment
+from astrbot.core.agent.message import (
+    AssistantMessageSegment,
+    Message,
+    ToolCallMessageSegment,
+)
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.provider.provider import Provider
@@ -64,7 +68,9 @@ class ReActAgent:
 
     async def _resolve_provider(self) -> Provider:
         if self._provider_id:
-            prov = await self._ctx.provider_manager.get_provider_by_id(self._provider_id)
+            prov = await self._ctx.provider_manager.get_provider_by_id(
+                self._provider_id
+            )
             if prov is not None:
                 return prov
             astrbot_logger.warning(
@@ -275,9 +281,7 @@ class ReActAgent:
                 else:
                     args = {}
                 tool_call_id = tool_ids[idx] if idx < len(tool_ids) else f"call_{idx}"
-                action_fp = (
-                    f"{tool_name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}"
-                )
+                action_fp = f"{tool_name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}"
                 if action_fp == last_action_fp:
                     repeat_count += 1
                 else:
@@ -285,9 +289,7 @@ class ReActAgent:
                     last_action_fp = action_fp
 
                 if repeat_count > int(self._config.max_repeat_action):
-                    termination_reason = (
-                        f"repeat_action_limit_exceeded: {tool_name} repeated {repeat_count} times"
-                    )
+                    termination_reason = f"repeat_action_limit_exceeded: {tool_name} repeated {repeat_count} times"
                     break
 
                 exec_res: ToolExecution = await self._registry.execute(

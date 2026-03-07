@@ -97,4 +97,3 @@ class SubAgentWrapper:
                 composed_system_prompt=composed_prompt,
                 error=str(e),
             )
-

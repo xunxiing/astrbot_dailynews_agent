@@ -110,9 +110,8 @@ class ToolRegistry:
         try:
             if hasattr(astrbot_context, "get_llm_tool_manager"):
                 tmgr = astrbot_context.get_llm_tool_manager()
-            elif (
-                hasattr(astrbot_context, "provider_manager")
-                and hasattr(astrbot_context.provider_manager, "llm_tools")
+            elif hasattr(astrbot_context, "provider_manager") and hasattr(
+                astrbot_context.provider_manager, "llm_tools"
             ):
                 tmgr = astrbot_context.provider_manager.llm_tools
         except Exception:

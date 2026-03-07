@@ -296,4 +296,3 @@ class AstrBookSubAgent:
             images=uniq_images or None,
             error=None,
         )
-
