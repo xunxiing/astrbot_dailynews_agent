@@ -7,7 +7,6 @@ from typing import Any
 from .astrbook_client import ASTRBOOK_API_BASE
 from .models import NewsSourceConfig
 
-
 IMAGE_LABEL_ENABLED = True
 IMAGE_LABEL_PROVIDER_ID = "modelscope_source/Qwen/Qwen3-VL-235B-A22B-Instruct"
 IMAGE_LABEL_MAX_IMAGES_TOTAL = 24
@@ -135,8 +134,10 @@ class ImageLayoutConfig:
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> ImageLayoutConfig:
         return cls(
-            enabled=IMAGE_LAYOUT_ENABLED,
-            provider_id=IMAGE_LAYOUT_PROVIDER_ID,
+            enabled=_to_bool(cfg.get("image_layout_enabled"), IMAGE_LAYOUT_ENABLED),
+            provider_id=_to_str(
+                cfg.get("image_layout_provider_id"), IMAGE_LAYOUT_PROVIDER_ID
+            ).strip(),
             max_images_total=IMAGE_LAYOUT_MAX_IMAGES_TOTAL,
             max_images_per_source=IMAGE_LAYOUT_MAX_IMAGES_PER_SOURCE,
             pass_images_to_model=IMAGE_LAYOUT_PASS_IMAGES_TO_MODEL,
@@ -176,8 +177,10 @@ class ImageLabelConfig:
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> ImageLabelConfig:
         return cls(
-            enabled=IMAGE_LABEL_ENABLED,
-            provider_id=IMAGE_LABEL_PROVIDER_ID,
+            enabled=_to_bool(cfg.get("image_label_enabled"), IMAGE_LABEL_ENABLED),
+            provider_id=_to_str(
+                cfg.get("image_label_provider_id"), IMAGE_LABEL_PROVIDER_ID
+            ).strip(),
             max_images_total=IMAGE_LABEL_MAX_IMAGES_TOTAL,
             batch_size=max(1, min(2, _to_int(cfg.get("image_label_batch_size"), 2))),
             concurrency=max(1, _to_int(cfg.get("image_label_concurrency"), 4)),

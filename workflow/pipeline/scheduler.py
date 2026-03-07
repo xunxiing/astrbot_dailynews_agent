@@ -16,16 +16,17 @@ try:
 except Exception:  # pragma: no cover
     MessageChain = None  # type: ignore
 
+from ..agents.sources.astrbook_agent import AstrBookSubAgent
 from ..agents.sources.github_agent import GitHubSubAgent
 from ..agents.sources.github_source import build_github_sources_from_config
 from ..agents.sources.miyoushe_agent import MiyousheSubAgent
 from ..agents.sources.plugin_registry_agent import PluginRegistrySubAgent
 from ..agents.sources.twitter_agent import TwitterSubAgent
-from ..agents.sources.astrbook_agent import AstrBookSubAgent
 from ..agents.sources.wechat_agent import WechatSubAgent
 from ..agents.sources.xiuxiu_ai_agent import XiuxiuAISubAgent
 from ..core.astrbook_client import ASTRBOOK_API_BASE, AstrBookClient
 from ..core.config_models import (
+    ImageLabelConfig,
     ImageLayoutConfig,
     LayoutRefineConfig,
     NewsSourcesConfig,
@@ -441,6 +442,10 @@ class DailyNewsScheduler:
         cfg.setdefault("image_layout_preview_gap", layout.preview_gap)
         cfg.setdefault("image_layout_shuffle_candidates", layout.shuffle_candidates)
         cfg.setdefault("image_layout_shuffle_seed", layout.shuffle_seed)
+
+        label = ImageLabelConfig.from_mapping(cfg)
+        cfg.setdefault("image_label_enabled", label.enabled)
+        cfg.setdefault("image_label_provider_id", label.provider_id)
 
         refine = LayoutRefineConfig.from_mapping(cfg)
         cfg.setdefault("image_layout_refine_enabled", refine.enabled)

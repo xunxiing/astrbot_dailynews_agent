@@ -584,6 +584,17 @@
     "description": "启用主 Agent 图片数量规划（为图片排版 Agent 提供优先约束）",
     "default": true
   },
+  "image_label_enabled": {
+    "type": "bool",
+    "description": "启用图片打标，辅助图片排版理解图片内容",
+    "default": true
+  },
+  "image_label_provider_id": {
+    "type": "string",
+    "description": "图片打标使用的 Provider",
+    "_special": "select_provider",
+    "default": "modelscope_source/Qwen/Qwen3-VL-235B-A22B-Instruct"
+  },
   "image_label_batch_size": {
     "type": "int",
     "description": "每次 VLM 调用同时打标的图片数量（建议 2）",
@@ -619,6 +630,17 @@
     "description": "图片打标 LLM 单次退避最大秒数",
     "invisible": true,
     "default": 12.0
+  },
+  "image_layout_enabled": {
+    "type": "bool",
+    "description": "启用智能图片排版",
+    "default": true
+  },
+  "image_layout_provider_id": {
+    "type": "string",
+    "description": "图片排版使用的 Provider",
+    "_special": "select_provider",
+    "default": "modelscope_source/Qwen/Qwen3-VL-235B-A22B-Instruct"
   },
   "image_layout_preview_enabled": {
     "type": "bool",

@@ -130,7 +130,13 @@ class DailyNewsPlugin(Star):
 
     # ====== commands ======
 
-    async def _send_as_html_images(self, event: AstrMessageEvent, content: str):
+    async def _send_as_html_images(
+        self,
+        event: AstrMessageEvent,
+        content: str,
+        *,
+        force_pillow: bool = False,
+    ):
         pipeline_cfg = RenderPipelineConfig.from_mapping(self.config)
         style_cfg = RenderImageStyleConfig.from_mapping(self.config)
 
@@ -159,6 +165,8 @@ class DailyNewsPlugin(Star):
                 yield event.image_result(p)
 
         async def _render_html(ctx: dict) -> Path | None:
+            if force_pillow:
+                return None
             try:
                 p = await self.html_render(
                     _select_render_template(self.config), ctx, return_url=False
@@ -169,6 +177,8 @@ class DailyNewsPlugin(Star):
                 return None
 
         async def _render_t2i(text: str) -> Path | None:
+            if force_pillow:
+                return None
             try:
                 if renderer is None:
                     p = await self.text_to_image(text, return_url=False)
@@ -271,7 +281,7 @@ class DailyNewsPlugin(Star):
     async def news_test_md(self, event: AstrMessageEvent, args: str = ""):
         """
         测试用 Markdown（用于检查渲染/分页/发送链路与日志排版）
-        用法：/news_test_md [plain|html] [long]
+        用法：/news_test_md [plain|html|pillow] [long]
         """
         parts = [p.strip().lower() for p in (args or "").strip().split() if p.strip()]
         selected_modes: list[str] = []
@@ -283,6 +293,8 @@ class DailyNewsPlugin(Star):
                 selected_modes.append("plain")
             elif p in {"html", "img", "image"}:
                 selected_modes.append("html_image")
+            elif p in {"pillow", "pil"}:
+                selected_modes.append("pillow_image")
             elif p == "long":
                 long_mode = True
             else:
@@ -290,7 +302,7 @@ class DailyNewsPlugin(Star):
 
         if len(set(selected_modes)) > 1 or unknown_parts:
             yield event.plain_result(
-                "用法：/news_test_md [plain|html] [long]\n示例：/news_test_md html long"
+                "用法：/news_test_md [plain|html|pillow] [long]\n示例：/news_test_md pillow long"
             )
             return
 
@@ -386,8 +398,12 @@ class DailyNewsPlugin(Star):
         if force_mode:
             delivery_mode = force_mode
 
-        if delivery_mode == "html_image":
-            async for r in self._send_as_html_images(event, content):
+        if delivery_mode in {"html_image", "pillow_image"}:
+            async for r in self._send_as_html_images(
+                event,
+                content,
+                force_pillow=(delivery_mode == "pillow_image"),
+            ):
                 yield r
             return
 

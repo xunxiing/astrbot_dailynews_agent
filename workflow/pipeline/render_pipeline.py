@@ -21,6 +21,7 @@ from ..core.image_utils import (
     inline_html_remote_images,
 )
 from .local_render import wait_for_file_ready
+from .pillow_render import render_pillow_fallback_image
 from .rendering import markdown_to_html, safe_text
 
 
@@ -464,5 +465,21 @@ async def render_single_page_to_image(
             poll_interval_ms=pipeline.poll_interval_ms,
         )
         method = "t2i" if img is not None else ""
+
+    if img is None:
+        img = await render_pillow_fallback_image(
+            body_html=body_html,
+            title=title,
+            subtitle=subtitle,
+            style=style,
+            is_chenyu=is_chenyu,
+            bg_img_b64=bg_img,
+            char_img_b64=char_img,
+            chenyu_bg_top=chenyu_bg_top,
+            chenyu_bg_middle=chenyu_bg_middle,
+            chenyu_bg_bottom=chenyu_bg_bottom,
+            chenyu_tower=chenyu_tower,
+        )
+        method = "pillow" if img is not None else method
 
     return (Path(img).resolve() if img is not None else None, method)
