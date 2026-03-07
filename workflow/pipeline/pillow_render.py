@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from bs4 import BeautifulSoup, NavigableString, Tag
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 try:
     from astrbot.api import logger as astrbot_logger
@@ -99,7 +99,7 @@ def _theme(is_chenyu: bool) -> Theme:
             brand=28,
             code=18,
             page_bg=(240, 244, 240, 255),
-            paper_bg=(255, 255, 255, 180),
+            paper_bg=(255, 255, 255, 148),
             paper_border=(45, 90, 39, 120),
             text=(24, 40, 28, 255),
             muted=(31, 79, 36, 230),
@@ -124,7 +124,7 @@ def _theme(is_chenyu: bool) -> Theme:
         brand=12,
         code=16,
         page_bg=(255, 255, 255, 255),
-        paper_bg=(255, 255, 255, 245),
+        paper_bg=(255, 255, 255, 218),
         paper_border=(17, 24, 39, 26),
         text=(17, 24, 39, 255),
         muted=(75, 85, 99, 255),
@@ -184,6 +184,38 @@ def _fit_cover(
         alpha = img.getchannel("A").point(lambda x: int(x * opacity))
         img.putalpha(alpha)
     dst.alpha_composite(img, (x0, y0))
+
+
+def _rounded_mask(size: tuple[int, int], radius: int) -> Image.Image:
+    mask = Image.new("L", size, 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rounded_rectangle((0, 0, size[0], size[1]), radius=radius, fill=255)
+    return mask
+
+
+def _draw_glass_panel(
+    dst: Image.Image,
+    *,
+    box: tuple[int, int, int, int],
+    radius: int,
+    blur_radius: float,
+    overlay_fill: tuple[int, int, int, int],
+    outline: tuple[int, int, int, int],
+    outline_width: int,
+) -> None:
+    x0, y0, x1, y1 = box
+    width = max(1, x1 - x0)
+    height = max(1, y1 - y0)
+    region = dst.crop((x0, y0, x1, y1)).convert("RGBA")
+    blurred = region.filter(ImageFilter.GaussianBlur(radius=max(0.1, float(blur_radius))))
+    mask = _rounded_mask((width, height), int(radius))
+    dst.paste(blurred, (x0, y0), mask)
+
+    overlay = Image.new("RGBA", (width, height), overlay_fill)
+    dst.paste(overlay, (x0, y0), mask)
+
+    draw = ImageDraw.Draw(dst)
+    draw.rounded_rectangle(box, radius=radius, outline=outline, width=int(outline_width))
 
 
 class HtmlToPillow:
@@ -885,12 +917,14 @@ async def render_pillow_fallback_image(
             )
             y = theme.hero_h + 20
             for sec in section_imgs:
-                draw.rounded_rectangle(
-                    (40, y, theme.width - 40, y + sec.height + 24),
+                _draw_glass_panel(
+                    canvas,
+                    box=(40, y, theme.width - 40, y + sec.height + 24),
                     radius=14,
-                    fill=theme.paper_bg,
+                    blur_radius=10,
+                    overlay_fill=theme.paper_bg,
                     outline=theme.paper_border,
-                    width=2,
+                    outline_width=2,
                 )
                 canvas.alpha_composite(sec, (60, y + 12))
                 y += sec.height + 44
@@ -931,12 +965,14 @@ async def render_pillow_fallback_image(
             draw.text((54, 66), title, font=title_font, fill=(15, 23, 42, 255))
             draw.text((54, 128), subtitle, font=subtitle_font, fill=theme.muted)
             paper_y = theme.hero_h + 18
-            draw.rounded_rectangle(
-                (28, paper_y, theme.width - 28, paper_y + body.height + 40),
+            _draw_glass_panel(
+                canvas,
+                box=(28, paper_y, theme.width - 28, paper_y + body.height + 40),
                 radius=16,
-                fill=theme.paper_bg,
+                blur_radius=10,
+                overlay_fill=theme.paper_bg,
                 outline=theme.paper_border,
-                width=1,
+                outline_width=1,
             )
             canvas.alpha_composite(body, (50, paper_y + 20))
             out = canvas.crop(
