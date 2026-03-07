@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import textwrap
 from datetime import datetime
@@ -272,51 +272,96 @@ class DailyNewsPlugin(Star):
         测试用 Markdown（用于检查渲染/分页/发送链路与日志排版）
         用法：/news_test_md [plain|html] [long]
         """
-        parts = (args or "").strip().split()
-        force_mode = parts[0].strip().lower() if parts else ""
-        long_mode = any(p.strip().lower() == "long" for p in parts[1:]) or (
-            parts and parts[0].strip().lower() == "long"
-        )
+        parts = [p.strip().lower() for p in (args or "").strip().split() if p.strip()]
+        selected_modes: list[str] = []
+        long_mode = False
+        unknown_parts: list[str] = []
+
+        for p in parts:
+            if p in {"plain", "text"}:
+                selected_modes.append("plain")
+            elif p in {"html", "img", "image"}:
+                selected_modes.append("html_image")
+            elif p == "long":
+                long_mode = True
+            else:
+                unknown_parts.append(p)
+
+        if len(set(selected_modes)) > 1 or unknown_parts:
+            yield event.plain_result(
+                "用法：/news_test_md [plain|html] [long]\n"
+                "示例：/news_test_md html long"
+            )
+            return
+
+        force_mode = selected_modes[-1] if selected_modes else ""
 
         test_md = textwrap.dedent(
             """
-            # 每日资讯日报（测试稿）
+            # 每日资讯日报（Markdown 测试）
 
-            *生成时间：{now}*
+            > 这个命令用于检查 Markdown 渲染、分页、发送链路与日志排版。
 
-            ## 1. 标题/列表/链接
-            - 要点 1：带链接 https://example.com
-            - 要点 2：带括号与中文标点（测试）
-            - 要点 3：长行测试：{long_line}
+            - 生成时间：{now}
+            - 输出模式：{mode}
+            - 长文模式：{long_mode}
 
-            ## 2. 代码块
+            ## 1. 标题 / 列表 / 链接
+            - 要点 1：普通链接 https://example.com
+            - 要点 2：[带标题链接](https://example.com/docs)
+            - 要点 3：超长行（用于测试换行）：
+              {long_line}
+
+            ## 2. 有序列表
+            1. 第一步：抓取内容
+            2. 第二步：生成摘要
+            3. 第三步：渲染并发送
+
+            ## 3. 引用块
+            > 引用段落 A
+            >
+            > - 引用内列表 1
+            > - 引用内列表 2
+
+            ## 4. 代码块
             ```python
             def hello(name: str) -> str:
                 return f"hello, {{name}}"
             ```
 
-            ## 3. 引用与分隔
-            > 这是一段引用（测试换行与缩进）。
-            >
-            > - 引用内列表 A
-            > - 引用内列表 B
+            ```json
+            {{"ok": true, "source": "news_test_md"}}
+            ```
+
+            ## 5. 表格
+            | 字段 | 值 |
+            | --- | --- |
+            | page_chars | `render_page_chars` |
+            | max_pages | `render_max_pages` |
+
+            ## 6. 任务列表
+            - [x] 标题渲染
+            - [x] 列表渲染
+            - [x] 代码块渲染
+            - [x] 表格渲染
+            - [ ] 跨客户端一致性核验
 
             ---
 
-            ## 4. 结尾
-            - 支持分页/多图渲染：`render_page_chars`、`render_max_pages`
+            ## 7. 结尾
+            如果你看到本段，说明基础 Markdown 结构已完整输出。
             """
         ).strip()
 
         if long_mode:
-            filler = "\n".join(
-                [f"- filler line {i}: {('内容' * 40)}" for i in range(1, 120)]
-            )
-            test_md = f"{test_md}\n\n## 5. 长内容（分页测试）\n{filler}\n"
+            filler = "\n".join([f"- filler line {i}: {('内容' * 36)}" for i in range(1, 180)])
+            test_md = f"{test_md}\n\n## 8. 长文分页测试\n{filler}\n"
 
         content = test_md.format(
             now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            long_line=("A" * 180),
+            mode=force_mode or "(config)",
+            long_mode=long_mode,
+            long_line=("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" * 5),
         )
 
         astrbot_logger.info(
@@ -327,19 +372,12 @@ class DailyNewsPlugin(Star):
         )
         astrbot_logger.debug(
             "[dailynews] /news_test_md preview=%s",
-            (
-                content[:260].replace("\n", "\\n")
-                + ("..." if len(content) > 260 else "")
-            ),
+            (content[:260].replace("\n", "\\n") + ("..." if len(content) > 260 else "")),
         )
 
-        delivery_mode = str(
-            self.config.get("delivery_mode", "html_image") or "html_image"
-        )
-        if force_mode in {"plain", "text"}:
-            delivery_mode = "plain"
-        elif force_mode in {"html", "img", "image"}:
-            delivery_mode = "html_image"
+        delivery_mode = str(self.config.get("delivery_mode", "html_image") or "html_image")
+        if force_mode:
+            delivery_mode = force_mode
 
         if delivery_mode == "html_image":
             async for r in self._send_as_html_images(event, content):
@@ -842,3 +880,4 @@ class DailyNewsPlugin(Star):
         if hasattr(self.config, "save_config"):
             self.config.save_config()
         yield event.plain_result("已删除来源（兼容模式：仅从 wechat_sources 移除）")
+
