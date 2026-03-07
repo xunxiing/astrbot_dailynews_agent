@@ -43,6 +43,41 @@ def _first_line(s: str) -> str:
     return (s or "").strip().splitlines()[0].strip() if (s or "").strip() else ""
 
 
+def _plugin_name(p: dict[str, Any]) -> str:
+    return str(p.get("display_name") or p.get("key") or "").strip() or "plugin"
+
+
+def _plugin_brief(p: dict[str, Any]) -> str:
+    name = _plugin_name(p)
+    version = str(p.get("version") or "").strip()
+    desc = _first_line(str(p.get("desc") or ""))
+    title = name
+    if version:
+        v = version if version.lower().startswith("v") else f"v{version}"
+        title = f"{title} {v}"
+    return f"{title}：{desc}" if desc else title
+
+
+def _summarize_plugin_names(rows: list[dict[str, Any]], *, limit: int = 5) -> str:
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        name = _plugin_name(item)
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+        if len(names) >= max(1, int(limit)):
+            break
+    if not names:
+        return ""
+    extra = max(0, len({str(_plugin_name(x)) for x in rows if isinstance(x, dict)}) - len(names))
+    text = "、".join(names)
+    return f"{text} 等 {len(names) + extra} 个" if extra > 0 else text
+
+
 def _default_official_registry_path() -> Path:
     # plugin path: .../AstrBot/data/plugins/<plugin>/workflow/agents/sources/plugin_registry_agent.py
     # official file: .../AstrBot/data/plugins.json
@@ -408,15 +443,38 @@ class PluginRegistrySubAgent:
             if isinstance(a, dict) and a.get("is_new_in_registry_snapshot"):
                 listed_cnt += 1
 
-        angle = f"近 {since_hours} 小时：新增上架 {listed_cnt} / 新仓库 {new_cnt}"
+        newly_listed = [
+            a
+            for a in (articles or [])
+            if isinstance(a, dict) and bool(a.get("is_new_in_registry_snapshot") or False)
+        ]
+        new_repos = [
+            a
+            for a in (articles or [])
+            if isinstance(a, dict) and bool(a.get("is_new_repo") or False)
+        ]
+        angle_parts = [f"近 {since_hours} 小时"]
+        if listed_cnt > 0:
+            listed_names = _summarize_plugin_names(newly_listed, limit=4)
+            angle_parts.append(
+                f"新增上架 {listed_cnt} 个" + (f"（{listed_names}）" if listed_names else "")
+            )
+        if new_cnt > 0:
+            repo_names = _summarize_plugin_names(new_repos, limit=4)
+            angle_parts.append(
+                f"新仓库 {new_cnt} 个" + (f"（{repo_names}）" if repo_names else "")
+            )
+        angle = "：".join(angle_parts[:1]) + ("；" + "；".join(angle_parts[1:]) if len(angle_parts) > 1 else "")
         sample: list[dict[str, Any]] = []
-        for a in (articles or [])[:3]:
+        for a in (articles or [])[:5]:
             if not isinstance(a, dict):
                 continue
             sample.append(
                 {
                     "display_name": a.get("display_name") or a.get("key"),
                     "repo": a.get("repo_html_url") or a.get("repo"),
+                    "version": a.get("version") or "",
+                    "desc": _first_line(str(a.get("desc") or "")),
                     "is_new_in_registry_snapshot": bool(
                         a.get("is_new_in_registry_snapshot") or False
                     ),
@@ -606,11 +664,35 @@ class PluginRegistrySubAgent:
                 lines.append(_line(p))
             lines.append("")
 
+        summary_parts = [f"近 {since_hours} 小时插件动态"]
+        if newly_listed:
+            summary_parts.append(
+                f"新增上架 {len(newly_listed)} 个（{_summarize_plugin_names(newly_listed, limit=5)}）"
+            )
+        if window_new_repo:
+            summary_parts.append(
+                f"新仓库 {len(window_new_repo)} 个（{_summarize_plugin_names(window_new_repo, limit=5)}）"
+            )
+        summary = "；".join([x for x in summary_parts if x]).strip("；")
+
+        key_points: list[str] = []
+        seen_keys: set[str] = set()
+        for p in newly_listed:
+            key = str(p.get("key") or _plugin_name(p)).strip()
+            if key and key not in seen_keys:
+                seen_keys.add(key)
+                key_points.append(f"新增上架：{_plugin_brief(p)}")
+        for p in window_new_repo:
+            key = str(p.get("key") or _plugin_name(p)).strip()
+            if key and key not in seen_keys:
+                seen_keys.add(key)
+                key_points.append(f"新仓库：{_plugin_brief(p)}")
+
         return SubAgentResult(
             source_name=source.name,
             content="\n".join(lines).strip(),
-            summary="",
-            key_points=[],
+            summary=summary,
+            key_points=key_points[:10],
             images=[],
             error=None,
             no_llm_merge=True,
