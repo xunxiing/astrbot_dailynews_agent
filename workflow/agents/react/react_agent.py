@@ -106,10 +106,38 @@ class ReActAgent:
             )
         return "\n".join(rows)
 
+    def _search_tool_strategy_block(self) -> str:
+        names = {
+            str(spec.get("name") or "").strip()
+            for spec in self._registry.list_specs_for_prompt()
+        }
+        rows = [
+            "Web investigation priority:",
+            "1) Prefer Tavily-class search when available: `web_search_tavily` for retrieval and `tavily_extract_web_page` for extracting the target page.",
+            "2) `grok_web_search` is the same priority tier as Tavily and can be used as a first-class search tool when available.",
+            "3) Use `web_search` only as the normal fallback when Tavily/Grok tools are unavailable or unsuitable.",
+            "4) If none of the above exist, use local `tool_search_web` only as the final safety fallback.",
+            "5) After searching, prefer opening/extracting the most relevant page instead of relying only on result snippets.",
+            "6) Avoid repeating near-identical searches once evidence is sufficient.",
+            "",
+            "Current search-tool availability:",
+        ]
+        for name in (
+            "web_search_tavily",
+            "tavily_extract_web_page",
+            "grok_web_search",
+            "web_search",
+            "tool_search_web",
+        ):
+            rows.append(f"- {name}: {'available' if name in names else 'unavailable'}")
+        return "\n".join(rows).strip()
+
     def _system_prompt(self) -> str:
         return (
             "You are a senior AI daily-news chief editor with strong planning and dispatch ability.\n"
             "You must use native function-calling tools whenever information is missing.\n"
+            "For web investigation, treat Tavily-based tools and `grok_web_search` as first-class search options.\n"
+            "Prefer Tavily when page extraction is needed, and use `web_search` only as the normal fallback.\n"
             "Do not output fake tool calls in plain text.\n"
             "When the collected evidence is enough, stop using tools and produce the final markdown report."
         )
@@ -131,10 +159,14 @@ class ReActAgent:
             f"{initial_context or '(none)'}\n\n"
             "Available Tools:\n"
             f"{self._tools_prompt_block()}\n\n"
+            "Search Strategy:\n"
+            f"{self._search_tool_strategy_block()}\n\n"
             "Execution Rules:\n"
             "1) If information for the goal is missing, call the right tool.\n"
             "2) If coverage is sufficient, stop tools and return final markdown directly.\n"
             "3) If some parts are unavailable, clearly mention missing parts in the final report.\n"
+            "4) Use web-search tools for recent facts, external background, and cross-source verification.\n"
+            "5) If a good page-extraction tool is available, extract the target page before summarizing it.\n"
             f"Current step: {step}/{max_steps}."
         )
 

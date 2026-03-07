@@ -1524,14 +1524,27 @@ class ReActDailyNewsOrchestrator:
             handler=_tool_write_report,
         )
 
+        preferred_global_tools = [
+            "web_search",
+            "web_search_tavily",
+            "tavily_extract_web_page",
+            "grok_web_search",
+        ]
         merged_global = registry.merge_global_tools(
             astrbot_context,
             prefer_existing=True,
             include_inactive=False,
-            whitelist=[],
+            whitelist=preferred_global_tools,
         )
+        available_global_tools = [
+            name
+            for name in preferred_global_tools
+            if registry.get(name) is not None
+        ]
         astrbot_logger.info(
-            "[dailynews][react] merged global AstrBot tools: %s", merged_global
+            "[dailynews][react] merged global AstrBot tools: count=%s names=%s",
+            merged_global,
+            available_global_tools,
         )
 
         agent = ReActAgent(
