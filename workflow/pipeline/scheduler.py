@@ -989,6 +989,7 @@ class DailyNewsScheduler:
             render_t2i=_render_t2i,
             pipeline=pipeline_cfg,
             style=style_cfg,
+            chenyu_font_files=config.get("chenyu_font_files", []),
             title="每日资讯日报",
             subtitle_fmt="第 {idx}/{total} 页",
         )

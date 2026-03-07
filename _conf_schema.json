@@ -94,6 +94,18 @@
     ],
     "hint": "html_image 使用网页渲染服务生成图片发送；html_image_with_links 会在图片后追加一条“合并转发”消息，包含本日报所有来源链接"
   },
+  "chenyu_font_files": {
+    "type": "file",
+    "description": "沉玉谷模板自定义字体文件",
+    "default": [],
+    "file_types": [
+      "ttf",
+      "otf",
+      "woff",
+      "woff2"
+    ],
+    "hint": "仅在 chenyu_style 模板下生效。可上传字体文件，渲染时优先使用列表中的第一个文件覆盖内置字体。"
+  },
   "render_template_name": {
     "type": "string",
     "description": "渲染模板",
@@ -572,24 +584,6 @@
     "description": "启用主 Agent 图片数量规划（为图片排版 Agent 提供优先约束）",
     "default": true
   },
-  "image_label_enabled": {
-    "type": "bool",
-    "description": "启用图片打标（先用 VLM 为每个图片 URL 生成<=30字标签，供排版模型选择）",
-    "default": false,
-    "hint": "开启后会优先使用 image_catalog（标签表）而不是把大量候选图片直接喂给排版模型",
-    "obvious_hint": true
-  },
-  "image_label_provider_id": {
-    "type": "string",
-    "description": "图片打标使用的 Provider（需要支持图片输入）",
-    "_special": "select_provider",
-    "default": ""
-  },
-  "image_label_max_images_total": {
-    "type": "int",
-    "description": "最多对多少张候选图进行打标（过多会显著增加耗时）",
-    "default": 24
-  },
   "image_label_batch_size": {
     "type": "int",
     "description": "每次 VLM 调用同时打标的图片数量（建议 2）",
@@ -626,45 +620,6 @@
     "invisible": true,
     "default": 12.0
   },
-  "image_layout_enabled": {
-    "type": "bool",
-    "description": "启用图片排版 Agent（从消息源提取的图片 URL 中选图并插入日报）",
-    "default": false,
-    "hint": "需要 AstrBot >= v4.0.0，并选择一个支持图片输入的 Provider",
-    "obvious_hint": true
-  },
-  "image_layout_provider_id": {
-    "type": "string",
-    "description": "图片排版 Agent 使用的 Provider",
-    "_special": "select_provider",
-    "default": ""
-  },
-  "image_layout_max_images_total": {
-    "type": "int",
-    "description": "图片排版 Agent 最多插入图片数（总计）",
-    "default": 6
-  },
-  "image_layout_max_images_per_source": {
-    "type": "int",
-    "description": "图片排版 Agent 单个来源最多插入图片数",
-    "default": 3
-  },
-  "image_layout_sources": {
-    "type": "list",
-    "description": "仅从指定来源选图（空列表=全部来源）",
-    "default": [],
-    "hint": "例如：[\"来源1\", \"来源2\"]"
-  },
-  "image_layout_pass_images_to_model": {
-    "type": "bool",
-    "description": "将候选图片作为 vision 输入传给模型（需要所选 Provider 支持图片）",
-    "default": true
-  },
-  "image_layout_max_images_to_model": {
-    "type": "int",
-    "description": "最多传给模型的图片数（vision 输入）",
-    "default": 6
-  },
   "image_layout_preview_enabled": {
     "type": "bool",
     "description": "为图片排版 Agent 生成一张纵向拼接预览图",
@@ -688,17 +643,6 @@
     "description": "预览图中图片之间的间距（像素）",
     "invisible": true,
     "default": 8
-  },
-  "image_layout_request_max_requests": {
-    "type": "int",
-    "description": "排版 Agent 最多允许请求“查看候选图细节”的次数（request_image_urls）",
-    "default": 1,
-    "hint": "增大可减少错位/错图，但会增加额外的 LLM 调用次数"
-  },
-  "image_layout_request_max_images": {
-    "type": "int",
-    "description": "每次 request_image_urls 最多合成多少张候选图预览",
-    "default": 6
   },
   "image_layout_tool_enabled": {
     "type": "bool",

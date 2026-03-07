@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import textwrap
 from datetime import datetime
@@ -190,6 +190,7 @@ class DailyNewsPlugin(Star):
             render_t2i=_render_t2i,
             pipeline=pipeline_cfg,
             style=style_cfg,
+            chenyu_font_files=self.config.get("chenyu_font_files", []),
             title="每日资讯日报",
             subtitle_fmt="第 {idx}/{total} 页",
         )

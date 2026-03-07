@@ -17,6 +17,7 @@ from astrbot.core.agent.tool import ToolSet
 from ....tools import MarkdownDocApplyEditsTool, MarkdownDocReadTool
 from ...core.config_models import SingleAgentConfig
 from ...core.internal_event import make_internal_event
+from ...core.config_models import ImageLayoutConfig
 from ...core.llm import LLMRunner
 from ...core.markdown_sanitizer import sanitize_markdown_for_publish
 from ...core.models import NewsSourceConfig
@@ -234,7 +235,7 @@ class SingleAgentNewsWriter:
         }
 
         # Ensure image features are not used even if user enabled image layout in config.
-        if bool(user_config.get("image_layout_enabled", False)):
+        if ImageLayoutConfig.from_mapping(user_config).enabled:
             astrbot_logger.info(
                 "[dailynews] [single_agent] ignore image_layout_enabled=true (single mode)"
             )

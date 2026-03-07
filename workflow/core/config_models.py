@@ -8,6 +8,21 @@ from .astrbook_client import ASTRBOOK_API_BASE
 from .models import NewsSourceConfig
 
 
+IMAGE_LABEL_ENABLED = True
+IMAGE_LABEL_PROVIDER_ID = "modelscope_source/Qwen/Qwen3-VL-235B-A22B-Instruct"
+IMAGE_LABEL_MAX_IMAGES_TOTAL = 24
+
+IMAGE_LAYOUT_ENABLED = True
+IMAGE_LAYOUT_PROVIDER_ID = "modelscope_source/Qwen/Qwen3-VL-235B-A22B-Instruct"
+IMAGE_LAYOUT_MAX_IMAGES_TOTAL = 6
+IMAGE_LAYOUT_MAX_IMAGES_PER_SOURCE = 3
+IMAGE_LAYOUT_SOURCES: tuple[str, ...] = ()
+IMAGE_LAYOUT_PASS_IMAGES_TO_MODEL = True
+IMAGE_LAYOUT_MAX_IMAGES_TO_MODEL = 6
+IMAGE_LAYOUT_REQUEST_MAX_REQUESTS = 1
+IMAGE_LAYOUT_REQUEST_MAX_IMAGES = 6
+
+
 def _to_int(value: Any, default: int) -> int:
     try:
         if value is None:
@@ -99,18 +114,18 @@ class RenderPipelineConfig:
 
 @dataclass(frozen=True)
 class ImageLayoutConfig:
-    enabled: bool = False
-    provider_id: str = ""
-    max_images_total: int = 6
-    max_images_per_source: int = 3
-    pass_images_to_model: bool = True
-    max_images_to_model: int = 6
+    enabled: bool = IMAGE_LAYOUT_ENABLED
+    provider_id: str = IMAGE_LAYOUT_PROVIDER_ID
+    max_images_total: int = IMAGE_LAYOUT_MAX_IMAGES_TOTAL
+    max_images_per_source: int = IMAGE_LAYOUT_MAX_IMAGES_PER_SOURCE
+    pass_images_to_model: bool = IMAGE_LAYOUT_PASS_IMAGES_TO_MODEL
+    max_images_to_model: int = IMAGE_LAYOUT_MAX_IMAGES_TO_MODEL
     preview_enabled: bool = False
     preview_max_images: int = 6
     preview_max_width: int = 1080
     preview_gap: int = 8
-    request_max_requests: int = 1
-    request_max_images: int = 6
+    request_max_requests: int = IMAGE_LAYOUT_REQUEST_MAX_REQUESTS
+    request_max_images: int = IMAGE_LAYOUT_REQUEST_MAX_IMAGES
     tool_enabled: bool = True
     tool_rounds: int = 2
     tool_max_steps: int = 25
@@ -120,20 +135,12 @@ class ImageLayoutConfig:
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> ImageLayoutConfig:
         return cls(
-            enabled=_to_bool(cfg.get("image_layout_enabled"), False),
-            provider_id=_to_str(cfg.get("image_layout_provider_id"), "").strip(),
-            max_images_total=max(
-                0, _to_int(cfg.get("image_layout_max_images_total"), 6)
-            ),
-            max_images_per_source=max(
-                1, _to_int(cfg.get("image_layout_max_images_per_source"), 3)
-            ),
-            pass_images_to_model=_to_bool(
-                cfg.get("image_layout_pass_images_to_model"), True
-            ),
-            max_images_to_model=max(
-                1, _to_int(cfg.get("image_layout_max_images_to_model"), 6)
-            ),
+            enabled=IMAGE_LAYOUT_ENABLED,
+            provider_id=IMAGE_LAYOUT_PROVIDER_ID,
+            max_images_total=IMAGE_LAYOUT_MAX_IMAGES_TOTAL,
+            max_images_per_source=IMAGE_LAYOUT_MAX_IMAGES_PER_SOURCE,
+            pass_images_to_model=IMAGE_LAYOUT_PASS_IMAGES_TO_MODEL,
+            max_images_to_model=IMAGE_LAYOUT_MAX_IMAGES_TO_MODEL,
             preview_enabled=_to_bool(cfg.get("image_layout_preview_enabled"), False),
             preview_max_images=max(
                 1, _to_int(cfg.get("image_layout_preview_max_images"), 6)
@@ -142,12 +149,8 @@ class ImageLayoutConfig:
                 200, _to_int(cfg.get("image_layout_preview_max_width"), 1080)
             ),
             preview_gap=max(0, _to_int(cfg.get("image_layout_preview_gap"), 8)),
-            request_max_requests=max(
-                0, _to_int(cfg.get("image_layout_request_max_requests"), 1)
-            ),
-            request_max_images=max(
-                1, _to_int(cfg.get("image_layout_request_max_images"), 6)
-            ),
+            request_max_requests=IMAGE_LAYOUT_REQUEST_MAX_REQUESTS,
+            request_max_images=IMAGE_LAYOUT_REQUEST_MAX_IMAGES,
             tool_enabled=_to_bool(cfg.get("image_layout_tool_enabled"), True),
             tool_rounds=max(1, _to_int(cfg.get("image_layout_tool_rounds"), 2)),
             tool_max_steps=max(5, _to_int(cfg.get("image_layout_tool_max_steps"), 25)),
@@ -160,9 +163,9 @@ class ImageLayoutConfig:
 
 @dataclass(frozen=True)
 class ImageLabelConfig:
-    enabled: bool = False
-    provider_id: str = ""
-    max_images_total: int = 24
+    enabled: bool = IMAGE_LABEL_ENABLED
+    provider_id: str = IMAGE_LABEL_PROVIDER_ID
+    max_images_total: int = IMAGE_LABEL_MAX_IMAGES_TOTAL
     batch_size: int = 2
     concurrency: int = 4
     force_refresh: bool = False
@@ -173,11 +176,9 @@ class ImageLabelConfig:
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> ImageLabelConfig:
         return cls(
-            enabled=_to_bool(cfg.get("image_label_enabled"), False),
-            provider_id=_to_str(cfg.get("image_label_provider_id"), "").strip(),
-            max_images_total=max(
-                0, _to_int(cfg.get("image_label_max_images_total"), 24)
-            ),
+            enabled=IMAGE_LABEL_ENABLED,
+            provider_id=IMAGE_LABEL_PROVIDER_ID,
+            max_images_total=IMAGE_LABEL_MAX_IMAGES_TOTAL,
             batch_size=max(1, min(2, _to_int(cfg.get("image_label_batch_size"), 2))),
             concurrency=max(1, _to_int(cfg.get("image_label_concurrency"), 4)),
             force_refresh=_to_bool(cfg.get("image_label_force_refresh"), False),

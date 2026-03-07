@@ -7,7 +7,7 @@
     <style>
       @font-face {
         font-family: 'CustomFont';
-        src: url('{{ chenyu_font }}') format('truetype');
+        src: url('{{ chenyu_font }}') format('{{ chenyu_font_format or "truetype" }}');
         font-weight: normal;
         font-style: normal;
         font-display: swap;
@@ -113,7 +113,7 @@
       .hero {
         position: relative;
         height: 280px; /* 减小 Hero 区域高度，因为钟离变小了 */
-        overflow: hidden;
+        overflow: visible;
         background: transparent;
         margin-bottom: 20px;
       }

@@ -16,6 +16,7 @@ from ..agents.main_agent import MainNewsAgent
 from ..agents.message_groups.group_manager import MessageGroupManager
 from ..agents.react.orchestrator import ReActDailyNewsOrchestrator
 from ..agents.single_agent.single_agent_writer import SingleAgentNewsWriter
+from ..core.config_models import ImageLayoutConfig
 from ..core.llm import LLMRunner
 from ..core.markdown_sanitizer import sanitize_markdown_for_publish
 from ..core.models import NewsSourceConfig, SubAgentResult
@@ -615,8 +616,9 @@ class NewsWorkflowManager:
                     "[dailynews] [workflow] stage 4: finished writing content"
                 )
 
+                layout_cfg = ImageLayoutConfig.from_mapping(user_config)
                 image_plan = None
-                if bool(user_config.get("image_layout_enabled", False)):
+                if layout_cfg.enabled:
                     try:
                         img_counts = {
                             r.source_name: len(r.images or [])
@@ -693,10 +695,7 @@ class NewsWorkflowManager:
                 final_summary = sanitize_markdown_for_publish(final_summary)
 
                 # 5) 图片排版 Agent（可选）
-                if (
-                    bool(user_config.get("image_layout_enabled", False))
-                    and (final_summary or "").strip()
-                ):
+                if layout_cfg.enabled and (final_summary or "").strip():
                     try:
                         # IMPORTANT: avoid sending large passthrough sections (e.g. plugin registry "recently active")
                         # into any LLM-based layout/refine steps. Those sections are appended back verbatim after layout.
@@ -743,8 +742,8 @@ class NewsWorkflowManager:
 
                         astrbot_logger.info(
                             "[dailynews] image_layout start enabled=%s provider=%s",
-                            bool(user_config.get("image_layout_enabled", False)),
-                            str(user_config.get("image_layout_provider_id") or ""),
+                            layout_cfg.enabled,
+                            layout_cfg.provider_id,
                         )
                         final_summary = await ImageLayoutAgent().enhance_markdown(
                             draft_markdown=layout_markdown,
