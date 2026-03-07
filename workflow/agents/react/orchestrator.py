@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib
 import json
 import re
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus, urlparse
 
@@ -20,6 +23,8 @@ except Exception:  # pragma: no cover
 from ...core.config_models import ReactAgentConfig
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
+from ...core.utils import _run_sync
+from ...pipeline.rendering import load_template
 from ..sources.github_source import GitHubClient, GitHubConfig, parse_repo
 from .react_agent import ReActAgent, ReactRunResult
 from .shared_memory import SharedMemory
@@ -49,6 +54,24 @@ def _safe_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
     except Exception:
         n = int(default)
     return max(minimum, min(maximum, n))
+
+
+def _safe_unix_ts(value: Any) -> int:
+    try:
+        n = int(str(value or "").strip())
+    except Exception:
+        return 0
+    return n // 1000 if n > 10_000_000_000 else n
+
+
+def _exception_text(exc: BaseException) -> str:
+    msg = str(exc).strip()
+    if msg:
+        return msg
+    rep = repr(exc).strip()
+    if rep:
+        return rep
+    return type(exc).__name__
 
 
 def _pick_first_url_arg(*values: Any) -> str:
@@ -132,8 +155,27 @@ def _format_vertical_tool_output(payload: Any, *, max_chars: int = 5200) -> str:
         else []
     )
     images = _extract_image_urls(payload, max_count=20)
+    analysis_report = payload.get("analysis_report")
+    analysis_warning = ""
+    if isinstance(analysis_report, dict):
+        ar_phase = str(analysis_report.get("phase") or "").strip()
+        ar_status = str(analysis_report.get("status") or "").strip()
+        ar_error = str(analysis_report.get("error") or "").strip()
+        if ar_error or (ar_status and ar_status not in {"ok", "success"}):
+            parts = [
+                f"phase={ar_phase or 'analyze_source'}",
+                f"status={ar_status or 'error'}",
+            ]
+            if ar_error:
+                parts.append(f"error={ar_error}")
+            tmo = analysis_report.get("timeout_s")
+            if tmo not in (None, ""):
+                parts.append(f"timeout_s={tmo}")
+            analysis_warning = " | ".join(parts)
 
     lines: list[str] = [f"Source: {source_name}"]
+    if analysis_warning:
+        lines.extend(["Tool Warning:", analysis_warning, ""])
     if summary:
         lines.extend(["Summary:", summary, ""])
     if key_points:
@@ -421,7 +463,9 @@ def _format_target_source_context(snapshot: dict[str, Any], *, user_goal: str) -
         "   Prefer explicit argument name `url` (legacy aliases may still exist per tool).\n"
         "2) Avoid generic args like 'daily news updates'. Use source-specific keywords, account IDs, or URLs.\n"
         "3) If using web search, query must include at least one target host/domain to keep search bounded.\n"
-        "4) If some target URLs are unreachable, report the gap explicitly in final output."
+        "4) If some target URLs are unreachable, report the gap explicitly in final output.\n"
+        "5) If image URLs are numerous, do not inline all of them in prompts. "
+        "Use tool `image_url_download` (or `image_urls_download_batch`) to fetch only key images first."
     )
 
 
@@ -551,18 +595,46 @@ class ReActDailyNewsOrchestrator:
     ) -> str:
         dep_ids = dependency_ids if isinstance(dependency_ids, list) else []
         kw = str(keyword or "").strip().lower()
-        analyze_timeout_s = _safe_int(
-            user_config.get("react_vertical_analyze_timeout_s", 20),
-            20,
+        llm_timeout_s = _safe_int(
+            getattr(llm_write, "_timeout_s", 45),
+            45,
             minimum=5,
-            maximum=90,
+            maximum=300,
+        )
+        analyze_timeout_default = max(10, llm_timeout_s + 8)
+        analyze_timeout_s = _safe_int(
+            user_config.get("react_vertical_analyze_timeout_s", analyze_timeout_default),
+            analyze_timeout_default,
+            minimum=5,
+            maximum=300,
         )
         process_timeout_s = _safe_int(
-            user_config.get("react_vertical_process_timeout_s", 65),
-            65,
+            user_config.get("react_vertical_process_timeout_s", 120),
+            120,
             minimum=10,
-            maximum=180,
+            maximum=600,
         )
+        min_analyze_timeout_s = max(10, llm_timeout_s + 5)
+        if analyze_timeout_s < min_analyze_timeout_s:
+            astrbot_logger.warning(
+                "[dailynews][react] analyze timeout auto-raised source=%s %s->%s (llm_timeout_s=%s)",
+                source.name,
+                analyze_timeout_s,
+                min_analyze_timeout_s,
+                llm_timeout_s,
+            )
+            analyze_timeout_s = min_analyze_timeout_s
+
+        min_process_timeout_s = max(15, llm_timeout_s + 20)
+        if process_timeout_s < min_process_timeout_s:
+            astrbot_logger.warning(
+                "[dailynews][react] process timeout auto-raised source=%s %s->%s (llm_timeout_s=%s)",
+                source.name,
+                process_timeout_s,
+                min_process_timeout_s,
+                llm_timeout_s,
+            )
+            process_timeout_s = min_process_timeout_s
 
         async def _runner(injected_prompt: str) -> Any:
             agent = agent_cls()
@@ -585,13 +657,55 @@ class ReActDailyNewsOrchestrator:
                     agent.analyze_source(source, articles, llm_write),
                     timeout=float(analyze_timeout_s),
                 )
-            except Exception as e:
+            except asyncio.TimeoutError as e:
+                err_text = _exception_text(e)
                 astrbot_logger.warning(
-                    "[dailynews][react] analyze_source fallback source=%s err=%s",
+                    "[dailynews][react] analyze_source timeout source=%s timeout_s=%s llm_timeout_s=%s article_count=%s keyword=%s err=%s",
                     source.name,
-                    e,
+                    analyze_timeout_s,
+                    llm_timeout_s,
+                    len(articles or []),
+                    kw or "",
+                    err_text,
+                    exc_info=True,
                 )
-                report = None
+                report = {
+                    "source_name": source.name,
+                    "phase": "analyze_source",
+                    "status": "timeout",
+                    "error": f"analyze_timeout>{analyze_timeout_s}s",
+                    "exception": err_text,
+                    "timeout_s": analyze_timeout_s,
+                    "llm_timeout_s": llm_timeout_s,
+                    "article_count": len(articles or []),
+                    "recoverable": True,
+                    "next_action": "continue_process_source",
+                }
+            except Exception as e:
+                err_text = _exception_text(e)
+                astrbot_logger.warning(
+                    "[dailynews][react] analyze_source fallback source=%s type=%s timeout_s=%s llm_timeout_s=%s article_count=%s keyword=%s err=%s",
+                    source.name,
+                    type(e).__name__,
+                    analyze_timeout_s,
+                    llm_timeout_s,
+                    len(articles or []),
+                    kw or "",
+                    err_text,
+                    exc_info=True,
+                )
+                report = {
+                    "source_name": source.name,
+                    "phase": "analyze_source",
+                    "status": "error",
+                    "error": f"analyze_error:{type(e).__name__}",
+                    "exception": err_text,
+                    "timeout_s": analyze_timeout_s,
+                    "llm_timeout_s": llm_timeout_s,
+                    "article_count": len(articles or []),
+                    "recoverable": True,
+                    "next_action": "continue_process_source",
+                }
 
             full_instruction = instruction
             if injected_prompt:
@@ -622,6 +736,15 @@ class ReActDailyNewsOrchestrator:
                     timeout=float(process_timeout_s),
                 )
             except asyncio.TimeoutError:
+                astrbot_logger.warning(
+                    "[dailynews][react] process_source timeout source=%s timeout_s=%s llm_timeout_s=%s article_count=%s keyword=%s",
+                    source.name,
+                    process_timeout_s,
+                    llm_timeout_s,
+                    len(articles or []),
+                    kw or "",
+                    exc_info=True,
+                )
                 return _build_vertical_fallback_payload(
                     source=source,
                     articles=articles,
@@ -630,10 +753,17 @@ class ReActDailyNewsOrchestrator:
                     analysis_report=report,
                 )
             except Exception as e:
+                err_text = _exception_text(e)
                 astrbot_logger.warning(
-                    "[dailynews][react] process_source fallback source=%s err=%s",
+                    "[dailynews][react] process_source fallback source=%s type=%s timeout_s=%s llm_timeout_s=%s article_count=%s keyword=%s err=%s",
                     source.name,
-                    e,
+                    type(e).__name__,
+                    process_timeout_s,
+                    llm_timeout_s,
+                    len(articles or []),
+                    kw or "",
+                    err_text,
+                    exc_info=True,
                 )
                 return _build_vertical_fallback_payload(
                     source=source,
@@ -903,35 +1033,149 @@ class ReActDailyNewsOrchestrator:
                             memory=memory,
                             site_filter="mp.weixin.qq.com",
                         )
-                    source = NewsSourceConfig(
-                        name="WeChat dynamic",
-                        url=chosen_url,
-                        type="wechat",
-                        priority=1,
-                        max_articles=_safe_int(max_articles, 5, minimum=1, maximum=12),
-                        album_keyword=str(album_keyword or "").strip() or None,
-                        meta={"latest_scope": scope} if scope else None,
+
+                    # React-phase WeChat tool: preprocess URL to a usable article seed,
+                    # then parse directly into markdown for downstream agent use.
+                    try:
+                        analysis_mod = importlib.import_module(
+                            "analysis.wechatanalysis.analysis"
+                        )
+                    except Exception as e:
+                        return f"error: import wechat analysis failed: {_exception_text(e)}"
+
+                    fetch_latest = getattr(analysis_mod, "fetch_latest_articles", None)
+                    to_markdown = getattr(analysis_mod, "wechat_to_markdown", None)
+                    if not callable(to_markdown):
+                        return "error: wechat_to_markdown is not available."
+
+                    parse_limit = _safe_int(max_articles, 5, minimum=1, maximum=12)
+                    max_age_hours = 36
+                    cutoff_ts = (
+                        int(datetime.now(timezone.utc).timestamp()) - int(max_age_hours) * 3600
+                        if max_age_hours > 0
+                        else 0
                     )
-                    instruction = (
-                        f"User goal: {user_goal}\nFocus keyword: {kw}\n"
-                        f"Fetch scope: {scope or 'auto'}\n"
-                        "Extract key updates from latest WeChat articles."
+                    preferred_scope = scope or "auto"
+                    # For react preprocess we strongly prefer account-first;
+                    # only use album when explicitly requested.
+                    pre_scope = "account" if preferred_scope in {"auto", "account"} else "album"
+                    resolved_url = chosen_url
+                    resolved_scope = pre_scope
+                    meta: dict[str, Any] = {}
+                    stale_only = False
+
+                    if callable(fetch_latest):
+                        try:
+                            rows, meta = await _run_sync(
+                                fetch_latest,
+                                chosen_url,
+                                parse_limit,
+                                latest_scope=pre_scope,
+                            )
+                            if max_age_hours > 0 and isinstance(rows, list) and rows:
+                                filtered_rows: list[dict[str, Any]] = []
+                                stale_count = 0
+                                for row in rows:
+                                    if not isinstance(row, dict):
+                                        continue
+                                    row_ts = _safe_unix_ts(row.get("create_time"))
+                                    if row_ts > 0 and row_ts < cutoff_ts:
+                                        stale_count += 1
+                                        continue
+                                    filtered_rows.append(row)
+                                if stale_count > 0:
+                                    astrbot_logger.info(
+                                        "[dailynews][react] wechat stale-filter dropped=%s kept=%s max_age_hours=%s url=%s",
+                                        stale_count,
+                                        len(filtered_rows),
+                                        max_age_hours,
+                                        chosen_url,
+                                    )
+                                stale_only = bool(rows) and not bool(filtered_rows)
+                                rows = filtered_rows
+                            if (
+                                isinstance(rows, list)
+                                and rows
+                                and isinstance(rows[0], dict)
+                                and str(rows[0].get("url") or "").strip()
+                            ):
+                                resolved_url = str(rows[0].get("url")).strip()
+                            resolved_scope = str((meta or {}).get("scope") or pre_scope)
+                        except Exception as e:
+                            astrbot_logger.warning(
+                                "[dailynews][react] wechat preprocess latest-list failed url=%s scope=%s err=%s",
+                                chosen_url,
+                                pre_scope,
+                                _exception_text(e),
+                                exc_info=True,
+                            )
+                    if stale_only:
+                        return (
+                            "error: latest wechat articles exceed freshness window "
+                            f"({max_age_hours}h), skip in react mode."
+                        )
+                    fetch_article = getattr(analysis_mod, "fetch_wechat_article", None)
+                    if cutoff_ts > 0 and callable(fetch_article):
+                        try:
+                            detail = await _run_sync(fetch_article, resolved_url)
+                            article_ts = _safe_unix_ts(
+                                (detail or {}).get("ct")
+                                or (detail or {}).get("create_time")
+                            )
+                            if article_ts > 0 and article_ts < cutoff_ts:
+                                return (
+                                    "error: wechat article is older than freshness window "
+                                    f"({max_age_hours}h), skip in react mode."
+                                )
+                        except Exception:
+                            # Don't block markdown parsing when detail probe fails.
+                            pass
+
+                    output_dir = (
+                        Path(__file__).resolve().parents[3]
+                        / "analysis"
+                        / "wechatanalysis"
+                        / "output"
                     )
-                    return await self._run_vertical_subagent(
-                        agent_cls=_agent_cls,
-                        source=source,
-                        instruction=instruction,
-                        llm_write=llm_write,
-                        user_config=user_config,
-                        memory=memory,
-                        agent_id="vertical::wechat::dynamic",
-                        dependency_ids=dependency_ids,
-                        keyword=kw,
-                    )
+                    try:
+                        markdown_scope = "account" if pre_scope == "account" else preferred_scope
+                        md_path = await _run_sync(
+                            to_markdown,
+                            resolved_url,
+                            str(output_dir),
+                            limit=parse_limit,
+                            latest_scope=markdown_scope,
+                            download_images=False,
+                        )
+                    except Exception as e:
+                        return (
+                            "error: wechat_to_markdown failed "
+                            f"(url={resolved_url}, scope={markdown_scope}): {_exception_text(e)}"
+                        )
+
+                    try:
+                        with open(str(md_path), "r", encoding="utf-8") as f:
+                            md_text = f.read().strip()
+                    except Exception as e:
+                        return f"error: read markdown failed ({md_path}): {_exception_text(e)}"
+
+                    if len(md_text) > 16000:
+                        md_text = md_text[:16000] + "\n\n...(truncated)"
+                    header = [
+                        f"- input_url: {chosen_url}",
+                        f"- resolved_url: {resolved_url}",
+                        f"- preprocess_scope: {pre_scope}",
+                        f"- resolved_scope: {resolved_scope or '-'}",
+                        f"- latest_meta_error: {str((meta or {}).get('error') or '-')}",
+                        f"- max_age_hours: {max_age_hours}",
+                        f"- markdown_path: {md_path}",
+                        "",
+                    ]
+                    return "\n".join(header) + md_text
 
                 registry.register_callable(
                     name="tool_analyze_wechat",
-                    description="Analyze WeChat updates by keyword/url (supports account/album scope).",
+                    description="Parse a WeChat link into markdown text (account-first preprocess).",
                     parameters={
                         "type": "object",
                         "properties": {
@@ -944,10 +1188,6 @@ class ReActDailyNewsOrchestrator:
                                 "description": "auto/account/album",
                             },
                             "max_articles": {"type": "integer"},
-                            "dependency_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            },
                         },
                     },
                     handler=_tool_analyze_wechat,
@@ -1056,7 +1296,67 @@ class ReActDailyNewsOrchestrator:
             source_snapshot, user_goal=user_goal
         )
 
-        llm_write = LLMRunner(
+        vertical_llm_timeout_s = _safe_int(
+            user_config.get("react_vertical_llm_timeout_s", 45),
+            45,
+            minimum=5,
+            maximum=300,
+        )
+        vertical_llm_max_retries = _safe_int(
+            user_config.get("react_vertical_llm_max_retries", 0),
+            0,
+            minimum=0,
+            maximum=3,
+        )
+        vertical_analyze_timeout_s = _safe_int(
+            user_config.get(
+                "react_vertical_analyze_timeout_s", max(10, vertical_llm_timeout_s + 8)
+            ),
+            max(10, vertical_llm_timeout_s + 8),
+            minimum=5,
+            maximum=300,
+        )
+        vertical_process_timeout_s = _safe_int(
+            user_config.get("react_vertical_process_timeout_s", 120),
+            120,
+            minimum=10,
+            maximum=600,
+        )
+        vertical_tool_timeout_floor_s = _safe_int(
+            user_config.get(
+                "react_vertical_tool_timeout_floor_s",
+                vertical_analyze_timeout_s + vertical_process_timeout_s + 20,
+            ),
+            vertical_analyze_timeout_s + vertical_process_timeout_s + 20,
+            minimum=30,
+            maximum=1200,
+        )
+        if int(react_cfg.tool_call_timeout_s) < int(vertical_tool_timeout_floor_s):
+            old_timeout = int(react_cfg.tool_call_timeout_s)
+            react_cfg = replace(react_cfg, tool_call_timeout_s=vertical_tool_timeout_floor_s)
+            astrbot_logger.warning(
+                "[dailynews][react] tool timeout auto-raised: react_agent_tool_call_timeout_s %s -> %s (vertical_analyze=%s, vertical_process=%s, vertical_llm=%s)",
+                old_timeout,
+                int(react_cfg.tool_call_timeout_s),
+                vertical_analyze_timeout_s,
+                vertical_process_timeout_s,
+                vertical_llm_timeout_s,
+            )
+        astrbot_logger.info(
+            "[dailynews][react] timeout budgets tool_call=%s vertical_llm=%s vertical_analyze=%s vertical_process=%s",
+            int(react_cfg.tool_call_timeout_s),
+            vertical_llm_timeout_s,
+            vertical_analyze_timeout_s,
+            vertical_process_timeout_s,
+        )
+        llm_vertical = LLMRunner(
+            astrbot_context,
+            timeout_s=vertical_llm_timeout_s,
+            max_retries=vertical_llm_max_retries,
+            provider_id=provider_id or None,
+        )
+
+        llm_writer = LLMRunner(
             astrbot_context,
             timeout_s=max(60, int(user_config.get("llm_write_timeout_s", 360) or 360)),
             max_retries=max(0, int(user_config.get("llm_max_retries", 1) or 1)),
@@ -1144,7 +1444,7 @@ class ReActDailyNewsOrchestrator:
 
         self._register_vertical_capability_tools(
             registry=registry,
-            llm_write=llm_write,
+            llm_write=llm_vertical,
             user_config=user_config,
             memory=memory,
             user_goal=user_goal,
@@ -1164,21 +1464,32 @@ class ReActDailyNewsOrchestrator:
             async def _runner(injected_prompt: str) -> Any:
                 snapshot = memory.read(dep_ids) if dep_ids else memory.read_all()
                 materials = _to_brief_text(snapshot, max_chars=22000)
-                system_prompt = (
-                    "You are a senior Chinese daily-news editor. "
-                    "Write concise markdown with concrete facts and links."
-                )
+                system_core = str(
+                    load_template("templates/prompts/react_writer_system.txt") or ""
+                ).strip()
+                editorial_rules = str(
+                    load_template("templates/prompts/daily_report_editorial_style.txt")
+                    or ""
+                ).strip()
+                system_prompt = "\n\n".join(
+                    [x for x in (system_core, editorial_rules) if x]
+                ).strip()
+                prompt_template = str(
+                    load_template("templates/prompts/react_writer_user.txt") or ""
+                ).strip()
                 prompt = (
-                    f"User goal:\n{user_goal}\n\n"
-                    f"Target source boundary:\n{initial_context}\n\n"
-                    f"Collected materials:\n{materials}\n\n"
-                    f"Dependency-injected context:\n{injected_prompt or '(none)'}\n\n"
-                    "Write the final markdown report. If key parts are missing, state them.\n"
-                    "If reliable image URLs are present in materials, include key ones with markdown image syntax: ![caption](url)."
+                    prompt_template.replace("{{USER_GOAL}}", str(user_goal or ""))
+                    .replace(
+                        "{{TARGET_SOURCE_BOUNDARY}}",
+                        str(initial_context or "(none)"),
+                    )
+                    .replace("{{COLLECTED_MATERIALS}}", str(materials or "(none)"))
+                    .replace(
+                        "{{DEPENDENCY_CONTEXT}}", str(injected_prompt or "(none)")
+                    )
+                    .replace("{{STYLE_HINT}}", style or "(none)")
                 )
-                if style:
-                    prompt += f"\nStyle hint: {style}"
-                text = await llm_write.ask(system_prompt=system_prompt, prompt=prompt)
+                text = await llm_writer.ask(system_prompt=system_prompt, prompt=prompt)
                 return {"markdown": text}
 
             wrapper = SubAgentWrapper(

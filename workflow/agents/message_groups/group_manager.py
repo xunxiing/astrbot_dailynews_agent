@@ -203,6 +203,11 @@ class MessageGroupManager:
         system_prompt = str(
             load_template("templates/prompts/message_group_writer_system.txt") or ""
         ).strip()
+        editorial_rules = str(
+            load_template("templates/prompts/daily_report_editorial_style.txt") or ""
+        ).strip()
+        if editorial_rules:
+            system_prompt = f"{system_prompt}\n\n{editorial_rules}".strip()
 
         prompt = {"now": now_str, "groups": payload_groups, "max_bullets_per_tag": 6}
 

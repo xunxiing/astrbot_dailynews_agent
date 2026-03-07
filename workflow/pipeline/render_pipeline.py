@@ -6,7 +6,6 @@ import re
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 try:
@@ -19,10 +18,9 @@ except Exception:  # pragma: no cover
 from ..core.config_models import RenderImageStyleConfig, RenderPipelineConfig
 from ..core.image_utils import (
     adaptive_layout_html_images,
-    get_plugin_data_dir,
     inline_html_remote_images,
 )
-from .local_render import render_template_to_image_playwright, wait_for_file_ready
+from .local_render import wait_for_file_ready
 from .rendering import markdown_to_html, safe_text
 
 
@@ -383,59 +381,16 @@ async def render_single_page_to_image(
         "img_panorama_max_h": int(panorama_max_h),
     }
 
-    # Prefer local rendering first when enabled (t2i endpoints can be unstable).
     img: Path | None = None
     method = ""
-    if pipeline.playwright_fallback:
-        try:
-            out_path = get_plugin_data_dir("render_fallback") / (
-                f"playwright_pre_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
-            )
-            img = await render_template_to_image_playwright(
-                template_str,
-                ctx,
-                out_path=out_path,
-                viewport=(1080, 720),
-                timeout_ms=pipeline.playwright_timeout_ms,
-                full_page=True,
-                browser_executable_path=pipeline.custom_browser_path,
-            )
-            img = Path(str(img)).resolve()
-            method = "playwright"
-        except Exception:
-            img = None
 
-    if img is None:
-        img = await _try_with_retries(
-            attempts=pipeline.retries,
-            call=lambda: render_html(ctx),
-            poll_timeout_s=pipeline.poll_timeout_s,
-            poll_interval_ms=pipeline.poll_interval_ms,
-            log_level="warning" if pipeline.playwright_fallback else "error",
-        )
-        method = "html" if img is not None else method
-
-    # Retry local render after remote HTML attempt, as Playwright browser may become available later.
-    if img is None and pipeline.playwright_fallback:
-        try:
-            # Avoid reusing the same filename to make debugging easier.
-            out_path = get_plugin_data_dir("render_fallback") / (
-                f"playwright_post_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}.jpg"
-            )
-            img = await render_template_to_image_playwright(
-                template_str,
-                ctx,
-                out_path=out_path,
-                viewport=(1080, 720),
-                timeout_ms=pipeline.playwright_timeout_ms,
-                full_page=True,
-                browser_executable_path=pipeline.custom_browser_path,
-            )
-            img = Path(str(img)).resolve()
-            method = "playwright"
-        except Exception:
-            astrbot_logger.error("[dailynews] playwright render failed", exc_info=True)
-            img = None
+    img = await _try_with_retries(
+        attempts=pipeline.retries,
+        call=lambda: render_html(ctx),
+        poll_timeout_s=pipeline.poll_timeout_s,
+        poll_interval_ms=pipeline.poll_interval_ms,
+    )
+    method = "html" if img is not None else method
 
     if img is None:
         img = await _try_with_retries(

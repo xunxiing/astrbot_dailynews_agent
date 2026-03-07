@@ -56,7 +56,7 @@
 3. **微信公众号解析失败**
 
    - 确认公众号链接格式正确
-   - 检查 Playwright 依赖安装：Linux/macOS 需要执行 `playwright install --with-deps chromium`（本插件不会自动下载浏览器）
+   - 确认网络与渲染服务可用（新版本不再依赖本地浏览器组件）
    - 验证网络访问权限
 
 ### 日志查看
@@ -70,7 +70,7 @@
 ### 开发环境
 
 1. 安装依赖: `pip install -r requirements.txt`
-2. 安装 Playwright Chromium: `playwright install --with-deps chromium`
+2. 安装依赖: `pip install -r requirements.txt`
 3. 配置开发环境
 
 ### 提交规范
@@ -83,3 +83,4 @@
 ## 📄 许可证
 
 MIT License - 详见LICENSE文件
+

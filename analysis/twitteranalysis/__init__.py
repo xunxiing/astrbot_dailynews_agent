@@ -1,1 +1,1 @@
-"""Twitter/X scraping utilities (Playwright-based)."""
+"""Twitter/X scraping utilities (GraphQL API-based)."""

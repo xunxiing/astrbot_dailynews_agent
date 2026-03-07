@@ -85,9 +85,6 @@ class RenderPipelineConfig:
     retries: int = 2
     poll_timeout_s: float = 6.0
     poll_interval_ms: int = 200
-    playwright_fallback: bool = True
-    playwright_timeout_ms: int = 20000
-    custom_browser_path: str = ""
 
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> RenderPipelineConfig:
@@ -97,11 +94,6 @@ class RenderPipelineConfig:
             retries=max(0, _to_int(cfg.get("render_retries"), 2)),
             poll_timeout_s=max(0.5, _to_float(cfg.get("render_poll_timeout_s"), 6.0)),
             poll_interval_ms=max(50, _to_int(cfg.get("render_poll_interval_ms"), 200)),
-            playwright_fallback=_to_bool(cfg.get("render_playwright_fallback"), True),
-            playwright_timeout_ms=max(
-                1000, _to_int(cfg.get("render_playwright_timeout_ms"), 20000)
-            ),
-            custom_browser_path=_to_str(cfg.get("custom_browser_path"), ""),
         )
 
 
@@ -293,10 +285,6 @@ class NewsSourcesConfig:
                 priority = _to_int(item.get("priority"), 1)
                 max_articles = _to_int(item.get("max_articles"), 3)
                 album_keyword = _to_optional_str(item.get("album_keyword"))
-                latest_scope = _to_str(item.get("latest_scope"), "").strip().lower()
-                meta: dict[str, Any] = {}
-                if latest_scope in {"auto", "account", "album"}:
-                    meta["latest_scope"] = latest_scope
                 src = NewsSourceConfig(
                     name=name or f"公众号{len(out) + 1}",
                     url=url,
@@ -304,7 +292,7 @@ class NewsSourcesConfig:
                     priority=max(1, priority),
                     max_articles=max(1, max_articles),
                     album_keyword=album_keyword,
-                    meta=meta or None,
+                    meta=None,
                 )
             elif tkey == "miyoushe":
                 url = _to_str(item.get("url"), "").strip()

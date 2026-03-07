@@ -26,7 +26,6 @@ except Exception:  # pragma: no cover
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
 from ...core.utils import _json_from_text
-from ...pipeline.playwright_bootstrap import get_chromium_executable_path
 
 
 class TwitterSubAgent:
@@ -42,13 +41,11 @@ class TwitterSubAgent:
         proxy = str(
             meta.get("proxy") or user_config.get("twitter_proxy", "") or ""
         ).strip()
-        exe = get_chromium_executable_path()
 
         tweets = await fetch_latest_tweets(
             source.url,
             limit=max(1, min(limit, 6)),
             proxy=proxy,
-            executable_path=str(exe) if exe else None,
         )
 
         articles: list[dict[str, str]] = []
@@ -108,21 +105,18 @@ class TwitterSubAgent:
             meta.get("proxy") or (user_config or {}).get("twitter_proxy", "") or ""
         ).strip()
 
-        exe = get_chromium_executable_path()
-
         tweets = []
         try:
             tweets = await fetch_latest_tweets(
                 source.url,
                 limit=min(limit, 6),
                 proxy=proxy,
-                executable_path=str(exe) if exe else None,
             )
         except Exception as e:
             msg = str(e) or type(e).__name__
             if "swap `twitter_targets` and `twitter_proxy`" in msg:
                 astrbot_logger.warning(
-                    "[dailynews] twitter fetch failed: %s. Fix config: set `twitter_targets` to https://x.com/<user> and `twitter_proxy` to socks5/http proxy.",
+                    "[dailynews] twitter fetch failed: %s. Fix config: set `twitter_targets` to https://x.com/<user> and `twitter_proxy` to http/https proxy.",
                     msg,
                 )
             else:

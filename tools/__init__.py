@@ -1,4 +1,8 @@
-from .image_tools import ImageUrlDownloadTool, ImageUrlsPreviewTool
+from .image_tools import (
+    ImageUrlDownloadTool,
+    ImageUrlsDownloadBatchTool,
+    ImageUrlsPreviewTool,
+)
 from .markdown_tools import (
     MarkdownDocApplyEditsTool,
     MarkdownDocCreateTool,
@@ -12,6 +16,7 @@ __all__ = [
     "WechatAlbumLatestArticlesTool",
     "ImageUrlsPreviewTool",
     "ImageUrlDownloadTool",
+    "ImageUrlsDownloadBatchTool",
     "MarkdownDocApplyEditsTool",
     "MarkdownDocCreateTool",
     "MarkdownDocMatchInsertImageTool",

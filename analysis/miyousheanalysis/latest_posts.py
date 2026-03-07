@@ -105,7 +105,7 @@ def get_user_latest_posts(
     max_scroll_rounds: int = 20,
 ) -> list[dict[str, str]]:
     """
-    Fetch latest Miyoushe posts via official bbs-api, no Playwright dependency.
+    Fetch latest Miyoushe posts via official bbs-api.
     Return: [{"title": "...", "url": "..."}, ...]
     """
     del headless, sleep_between, max_scroll_rounds
