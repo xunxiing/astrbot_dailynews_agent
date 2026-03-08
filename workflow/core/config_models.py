@@ -65,6 +65,22 @@ def _to_str(value: Any, default: str = "") -> str:
     return str(value)
 
 
+def _to_str_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                out.append(text)
+        return out
+    text = str(value).strip()
+    if not text:
+        return []
+    return [part.strip() for part in text.replace("\n", ",").split(",") if part.strip()]
+
+
 def _to_optional_str(value: Any) -> str | None:
     s = _to_str(value, "").strip()
     return s if s else None
@@ -357,6 +373,58 @@ class NewsSourcesConfig:
                     type="twitter",
                     priority=max(1, priority),
                     max_articles=max(1, max_articles),
+                    album_keyword=None,
+                    meta=meta or None,
+                )
+            elif tkey == "rss":
+                url = _to_str(item.get("url"), "").strip()
+                if not url:
+                    continue
+                name = _to_str(item.get("name"), "").strip()
+                priority = _to_int(item.get("priority"), 1)
+                max_articles = _to_int(item.get("max_articles"), 5)
+                timeout_s = _to_int(item.get("timeout_s"), 20)
+                include_content = _to_bool(item.get("include_content"), True)
+                src = NewsSourceConfig(
+                    name=name or f"RSS {len(out) + 1}",
+                    url=url,
+                    type="rss",
+                    priority=max(1, priority),
+                    max_articles=max(1, min(max_articles, 30)),
+                    album_keyword=None,
+                    meta={
+                        "timeout_s": max(5, min(timeout_s, 60)),
+                        "include_content": include_content,
+                    },
+                )
+            elif tkey == "skland_official":
+                name = _to_str(item.get("name"), "").strip()
+                priority = _to_int(item.get("priority"), 1)
+                max_articles = _to_int(item.get("max_articles"), 20)
+                meta: dict[str, Any] = {}
+                for key in ("d_id", "thumbcache", "date", "md_dir"):
+                    value = _to_str(item.get(key), "").strip()
+                    if value:
+                        meta[key] = value
+                selected_games: list[str] = []
+                for value in _to_str_list(item.get("games")):
+                    if value not in selected_games:
+                        selected_games.append(value)
+                for value in _to_str_list(item.get("games_custom")):
+                    if value not in selected_games:
+                        selected_games.append(value)
+                if selected_games:
+                    meta["games"] = ",".join(selected_games)
+                if "page_size" in item:
+                    meta["page_size"] = max(1, min(_to_int(item.get("page_size"), 5), 5))
+                if "max_pages" in item:
+                    meta["max_pages"] = max(1, min(_to_int(item.get("max_pages"), 10), 50))
+                src = NewsSourceConfig(
+                    name=name or "森空岛官方",
+                    url="skland://official",
+                    type="skland_official",
+                    priority=max(1, priority),
+                    max_articles=max(1, min(max_articles, 100)),
                     album_keyword=None,
                     meta=meta or None,
                 )

@@ -402,21 +402,39 @@ class PluginRegistrySubAgent:
         since_hours = int(meta.get("since_hours") or 27)
         new_cnt = 0
         listed_cnt = 0
+        focus_names: list[str] = []
         for a in articles or []:
             if isinstance(a, dict) and a.get("is_new_repo"):
                 new_cnt += 1
             if isinstance(a, dict) and a.get("is_new_in_registry_snapshot"):
                 listed_cnt += 1
+            if isinstance(a, dict):
+                name = str(a.get("display_name") or a.get("key") or "").strip()
+                if name and name not in focus_names:
+                    focus_names.append(name)
 
-        angle = f"近 {since_hours} 小时：新增上架 {listed_cnt} / 新仓库 {new_cnt}"
+        focus_text = "、".join(focus_names[:5])
+        angle = (
+            f"请写清楚插件市场近 {since_hours} 小时内的具体上新插件，"
+            f"不要只写数量统计。"
+            f"优先关注：{focus_text or '本次命中的插件'}。"
+            f"对每个插件尽量交代用途、版本、仓库链接、星标，以及它属于“新增上架”还是“新仓库”。"
+            f"统计信息仅作辅助：新增上架 {listed_cnt} 个，新仓库 {new_cnt} 个。"
+        )
         sample: list[dict[str, Any]] = []
-        for a in (articles or [])[:3]:
+        for a in (articles or [])[:5]:
             if not isinstance(a, dict):
                 continue
             sample.append(
                 {
                     "display_name": a.get("display_name") or a.get("key"),
                     "repo": a.get("repo_html_url") or a.get("repo"),
+                    "version": a.get("version") or "",
+                    "desc": _first_line(str(a.get("desc") or "")),
+                    "plugin_stars": int(a.get("plugin_stars") or 0),
+                    "repo_stars": int(a.get("repo_stars") or 0),
+                    "repo_created_at": a.get("repo_created_at") or "",
+                    "registry_updated_at": a.get("registry_updated_at") or "",
                     "is_new_in_registry_snapshot": bool(
                         a.get("is_new_in_registry_snapshot") or False
                     ),
@@ -430,7 +448,9 @@ class PluginRegistrySubAgent:
             "priority": int(source.priority or 1),
             "article_count": len(articles or []),
             "topics": ["plugins", "registry", "github"],
-            "quality_score": int(listed_cnt * 6 + new_cnt * 8),
+            "quality_score": int(
+                len(articles or []) * 2 + listed_cnt * 8 + new_cnt * 10
+            ),
             "today_angle": angle,
             "sample_articles": sample,
             "error": None,

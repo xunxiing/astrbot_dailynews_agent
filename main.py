@@ -223,18 +223,33 @@ class DailyNewsPlugin(Star):
                 yield rr
 
     @filter.command("daily_news")
-    async def daily_news(self, event: AstrMessageEvent):
-        """手动生成一次日报（并回发到当前会话）"""
-        yield event.plain_result("正在生成日报，请稍候...")
-        content = await self.scheduler.generate_once()
+    async def daily_news(self, event: AstrMessageEvent, args: str = ""):
+        """??????????????????
+        ???/daily_news [force]
+        """
+        parts = [p.strip().lower() for p in (args or "").strip().split() if p.strip()]
+        force_refresh = "force" in parts
+        yield event.plain_result(
+            "????????????..." if force_refresh else "??????????..."
+        )
+        cfg = self.scheduler.get_config_snapshot()
+        prepared = await self.scheduler.prepare_report(
+            cfg, source="manual", prefer_cache=not force_refresh
+        )
+        content = str(prepared.get("content") or "")
         if not (content or "").strip():
             astrbot_logger.warning(
                 "[dailynews] /daily_news got empty content; sending fallback text"
             )
-            content = "生成失败：日报内容为空（可能是抓取/LLM 超时或被其它插件过滤），请查看 AstrBot 日志。"
+            content = "生成失败：日报内容为空（可能是抓取、LLM 超时或被其它插件过滤），请查看 AstrBot 日志。"
         # Manual trigger should also publish to AstrBook when enabled.
         try:
-            res = await self.scheduler.publish_report_to_astrbook(content)
+            if not bool(prepared.get("cache_hit", False)):
+                res = await self.scheduler.publish_report_to_astrbook(
+                    content, config=cfg
+                )
+            else:
+                res = {"ok": False, "skipped": True, "reason": "cache_hit"}
             if not bool(res.get("ok", False)) and not bool(res.get("skipped", False)):
                 astrbot_logger.warning(
                     "[dailynews] manual publish to astrbook failed: %s %s",
@@ -249,9 +264,11 @@ class DailyNewsPlugin(Star):
         # Send to current session directly (with fallback inside scheduler) to avoid
         # "prepared but failed to send" cases when platform times out on images.
         try:
-            cfg = self.scheduler.get_config_snapshot()
             sent = await self.scheduler._send_to_targets(
-                content, [event.unified_msg_origin], config=cfg
+                content,
+                [event.unified_msg_origin],
+                config=cfg,
+                prepared=prepared,
             )
             if sent > 0:
                 return
@@ -786,8 +803,18 @@ class DailyNewsPlugin(Star):
         # Preferred (v4.10.4+): template_list sources.
         key = "wechat"
         low = url.lower()
+        is_rss_like = (
+            low.endswith((".xml", ".rss", ".atom"))
+            or "/feed" in low
+            or "rss.xml" in low
+            or "atom.xml" in low
+            or "format=rss" in low
+            or "feed.xml" in low
+        )
         if "miyoushe.com" in low:
             key = "miyoushe"
+        elif is_rss_like:
+            key = "rss"
         elif "github.com" in low or (
             "/" in url and " " not in url and "http" not in low and ":" not in url
         ):
@@ -845,6 +872,17 @@ class DailyNewsPlugin(Star):
                         "url": url,
                         "priority": 1,
                         "max_articles": 3,
+                    }
+                )
+        elif key == "rss":
+            if not _exists("rss", url):
+                items.append(
+                    {
+                        "__template_key": "rss",
+                        "name": display_name,
+                        "url": url,
+                        "priority": 1,
+                        "max_articles": 5,
                     }
                 )
         else:

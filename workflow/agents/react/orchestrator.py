@@ -23,6 +23,12 @@ except Exception:  # pragma: no cover
 from ...core.config_models import ReactAgentConfig
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
+from ...core.rss import fetch_rss_feed, format_rss_feed_for_tool
+from ...core.skland_official import (
+    fetch_skland_official_grouped,
+    flatten_skland_grouped,
+    format_skland_posts_for_tool,
+)
 from ...core.utils import _run_sync
 from ...pipeline.rendering import load_template
 from ..sources.github_source import GitHubClient, GitHubConfig, parse_repo
@@ -1029,9 +1035,18 @@ class ReActDailyNewsOrchestrator:
                     if scope not in {"auto", "account", "album"}:
                         scope = ""
                     chosen_url = _pick_first_url_arg(url, album_url)
-                    if not chosen_url:
-                        chosen_url = _pick_target_url("mp.weixin.qq.com")
-                    if not chosen_url:
+                    wechat_target_urls = [
+                        u
+                        for u in target_url_pool
+                        if isinstance(u, str) and "mp.weixin.qq.com" in u.lower()
+                    ]
+                    if not chosen_url and wechat_target_urls:
+                        chosen_urls = wechat_target_urls[:6]
+                    elif chosen_url:
+                        chosen_urls = [chosen_url]
+                    else:
+                        chosen_urls = []
+                    if not chosen_urls:
                         if not kw:
                             return "error: provide url/album_url or keyword."
                         return await self._vertical_web_fallback(
@@ -1064,126 +1079,172 @@ class ReActDailyNewsOrchestrator:
                         else 0
                     )
                     preferred_scope = scope or "auto"
-                    # For react preprocess we strongly prefer account-first;
-                    # only use album when explicitly requested.
                     pre_scope = (
                         "account" if preferred_scope in {"auto", "account"} else "album"
                     )
-                    resolved_url = chosen_url
-                    resolved_scope = pre_scope
-                    meta: dict[str, Any] = {}
-                    stale_only = False
-
-                    if callable(fetch_latest):
-                        try:
-                            rows, meta = await _run_sync(
-                                fetch_latest,
-                                chosen_url,
-                                parse_limit,
-                                latest_scope=pre_scope,
-                            )
-                            if max_age_hours > 0 and isinstance(rows, list) and rows:
-                                filtered_rows: list[dict[str, Any]] = []
-                                stale_count = 0
-                                for row in rows:
-                                    if not isinstance(row, dict):
-                                        continue
-                                    row_ts = _safe_unix_ts(row.get("create_time"))
-                                    if row_ts > 0 and row_ts < cutoff_ts:
-                                        stale_count += 1
-                                        continue
-                                    filtered_rows.append(row)
-                                if stale_count > 0:
-                                    astrbot_logger.info(
-                                        "[dailynews][react] wechat stale-filter dropped=%s kept=%s max_age_hours=%s url=%s",
-                                        stale_count,
-                                        len(filtered_rows),
-                                        max_age_hours,
-                                        chosen_url,
-                                    )
-                                stale_only = bool(rows) and not bool(filtered_rows)
-                                rows = filtered_rows
-                            if (
-                                isinstance(rows, list)
-                                and rows
-                                and isinstance(rows[0], dict)
-                                and str(rows[0].get("url") or "").strip()
-                            ):
-                                resolved_url = str(rows[0].get("url")).strip()
-                            resolved_scope = str((meta or {}).get("scope") or pre_scope)
-                        except Exception as e:
-                            astrbot_logger.warning(
-                                "[dailynews][react] wechat preprocess latest-list failed url=%s scope=%s err=%s",
-                                chosen_url,
-                                pre_scope,
-                                _exception_text(e),
-                                exc_info=True,
-                            )
-                    if stale_only:
-                        return (
-                            "error: latest wechat articles exceed freshness window "
-                            f"({max_age_hours}h), skip in react mode."
-                        )
-                    fetch_article = getattr(analysis_mod, "fetch_wechat_article", None)
-                    if cutoff_ts > 0 and callable(fetch_article):
-                        try:
-                            detail = await _run_sync(fetch_article, resolved_url)
-                            article_ts = _safe_unix_ts(
-                                (detail or {}).get("ct")
-                                or (detail or {}).get("create_time")
-                            )
-                            if article_ts > 0 and article_ts < cutoff_ts:
-                                return (
-                                    "error: wechat article is older than freshness window "
-                                    f"({max_age_hours}h), skip in react mode."
-                                )
-                        except Exception:
-                            # Don't block markdown parsing when detail probe fails.
-                            pass
-
                     output_dir = (
                         Path(__file__).resolve().parents[3]
                         / "analysis"
                         / "wechatanalysis"
                         / "output"
                     )
-                    try:
+                    fetch_article = getattr(analysis_mod, "fetch_wechat_article", None)
+
+                    async def _analyze_one(input_url: str) -> tuple[bool, str]:
+                        resolved_url = input_url
+                        resolved_scope = pre_scope
+                        meta: dict[str, Any] = {}
+                        stale_only = False
+
+                        if callable(fetch_latest):
+                            try:
+                                rows, meta = await _run_sync(
+                                    fetch_latest,
+                                    input_url,
+                                    parse_limit,
+                                    latest_scope=pre_scope,
+                                )
+                                if max_age_hours > 0 and isinstance(rows, list) and rows:
+                                    filtered_rows: list[dict[str, Any]] = []
+                                    stale_count = 0
+                                    for row in rows:
+                                        if not isinstance(row, dict):
+                                            continue
+                                        row_ts = _safe_unix_ts(row.get("create_time"))
+                                        if row_ts > 0 and row_ts < cutoff_ts:
+                                            stale_count += 1
+                                            continue
+                                        filtered_rows.append(row)
+                                    if stale_count > 0:
+                                        astrbot_logger.info(
+                                            "[dailynews][react] wechat stale-filter dropped=%s kept=%s max_age_hours=%s url=%s",
+                                            stale_count,
+                                            len(filtered_rows),
+                                            max_age_hours,
+                                            input_url,
+                                        )
+                                    stale_only = bool(rows) and not bool(filtered_rows)
+                                    rows = filtered_rows
+                                if (
+                                    isinstance(rows, list)
+                                    and rows
+                                    and isinstance(rows[0], dict)
+                                    and str(rows[0].get("url") or "").strip()
+                                ):
+                                    resolved_url = str(rows[0].get("url")).strip()
+                                resolved_scope = str((meta or {}).get("scope") or pre_scope)
+                            except Exception as e:
+                                astrbot_logger.warning(
+                                    "[dailynews][react] wechat preprocess latest-list failed url=%s scope=%s err=%s",
+                                    input_url,
+                                    pre_scope,
+                                    _exception_text(e),
+                                    exc_info=True,
+                                )
+                        if stale_only:
+                            return (
+                                False,
+                                "latest wechat articles exceed freshness window "
+                                f"({max_age_hours}h)",
+                            )
+
+                        if cutoff_ts > 0 and callable(fetch_article):
+                            try:
+                                detail = await _run_sync(fetch_article, resolved_url)
+                                article_ts = _safe_unix_ts(
+                                    (detail or {}).get("ct")
+                                    or (detail or {}).get("create_time")
+                                )
+                                if article_ts > 0 and article_ts < cutoff_ts:
+                                    return (
+                                        False,
+                                        "wechat article is older than freshness window "
+                                        f"({max_age_hours}h)",
+                                    )
+                            except Exception:
+                                pass
+
                         markdown_scope = (
                             "account" if pre_scope == "account" else preferred_scope
                         )
-                        md_path = await _run_sync(
-                            to_markdown,
-                            resolved_url,
-                            str(output_dir),
-                            limit=parse_limit,
-                            latest_scope=markdown_scope,
-                            download_images=False,
-                        )
-                    except Exception as e:
-                        return (
-                            "error: wechat_to_markdown failed "
-                            f"(url={resolved_url}, scope={markdown_scope}): {_exception_text(e)}"
-                        )
+                        try:
+                            md_path = await _run_sync(
+                                to_markdown,
+                                resolved_url,
+                                str(output_dir),
+                                limit=parse_limit,
+                                latest_scope=markdown_scope,
+                                download_images=False,
+                            )
+                        except Exception as e:
+                            return (
+                                False,
+                                "wechat_to_markdown failed "
+                                f"(url={resolved_url}, scope={markdown_scope}): {_exception_text(e)}",
+                            )
 
-                    try:
-                        with open(str(md_path), "r", encoding="utf-8") as f:
-                            md_text = f.read().strip()
-                    except Exception as e:
-                        return f"error: read markdown failed ({md_path}): {_exception_text(e)}"
+                        try:
+                            with open(str(md_path), encoding="utf-8") as f:
+                                md_text = f.read().strip()
+                        except Exception as e:
+                            return False, f"read markdown failed ({md_path}): {_exception_text(e)}"
 
-                    if len(md_text) > 16000:
-                        md_text = md_text[:16000] + "\n\n...(truncated)"
-                    header = [
-                        f"- input_url: {chosen_url}",
-                        f"- resolved_url: {resolved_url}",
-                        f"- preprocess_scope: {pre_scope}",
-                        f"- resolved_scope: {resolved_scope or '-'}",
-                        f"- latest_meta_error: {str((meta or {}).get('error') or '-')}",
-                        f"- max_age_hours: {max_age_hours}",
-                        f"- markdown_path: {md_path}",
+                        if len(md_text) > 10000:
+                            md_text = md_text[:10000] + "\n\n...(truncated)"
+                        header = [
+                            f"- input_url: {input_url}",
+                            f"- resolved_url: {resolved_url}",
+                            f"- preprocess_scope: {pre_scope}",
+                            f"- resolved_scope: {resolved_scope or '-'}",
+                            f"- latest_meta_error: {str((meta or {}).get('error') or '-')}",
+                            f"- max_age_hours: {max_age_hours}",
+                            f"- markdown_path: {md_path}",
+                            "",
+                        ]
+                        return True, "\n".join(header) + md_text
+
+                    success_blocks: list[str] = []
+                    failure_blocks: list[str] = []
+                    for current_url in chosen_urls:
+                        try:
+                            ok, block = await asyncio.wait_for(
+                                _analyze_one(current_url), timeout=75.0
+                            )
+                        except asyncio.TimeoutError:
+                            ok = False
+                            block = f"wechat analyze timeout>75s ({current_url})"
+                        if ok:
+                            success_blocks.append(block)
+                        else:
+                            failure_blocks.append(f"- {current_url}: {block}")
+
+                    if not success_blocks:
+                        if failure_blocks:
+                            return "error: all wechat targets failed\n" + "\n".join(
+                                failure_blocks[:8]
+                            )
+                        return "error: no usable wechat targets found."
+
+                    if len(success_blocks) == 1 and not failure_blocks:
+                        return success_blocks[0]
+
+                    merged: list[str] = [
+                        f"# WeChat Multi-Source Analysis ({len(success_blocks)}/{len(chosen_urls)} succeeded)",
                         "",
                     ]
-                    return "\n".join(header) + md_text
+                    if failure_blocks:
+                        merged.append("## Failed Targets")
+                        merged.extend(failure_blocks[:8])
+                        merged.append("")
+                    for idx, block in enumerate(success_blocks, start=1):
+                        merged.append(f"## Source {idx}")
+                        merged.append("")
+                        merged.append(block)
+                        merged.append("")
+                    merged_text = "\n".join(merged).strip()
+                    if len(merged_text) > 18000:
+                        merged_text = merged_text[:18000] + "\n\n...(truncated)"
+                    return merged_text
 
                 registry.register_callable(
                     name="tool_analyze_wechat",
@@ -1430,6 +1491,126 @@ class ReActDailyNewsOrchestrator:
                 "required": ["repo_name", "focus"],
             },
             handler=_tool_search_github,
+        )
+
+        async def _tool_read_rss_feed(
+            *,
+            context,
+            url: str,
+            limit: int = 8,
+            focus: str = "",
+            include_content: bool = False,
+        ):
+            _ = context
+            link = _pick_first_url_arg(url)
+            if not link:
+                return "error: url is required."
+            max_items = _safe_int(limit, 8, minimum=1, maximum=20)
+            try:
+                feed = await fetch_rss_feed(link, limit=max_items, timeout_s=20)
+            except Exception as e:
+                return f"error: rss fetch failed for `{link}`: {_exception_text(e)}"
+            packed = {
+                "url": link,
+                "focus": str(focus or "").strip(),
+                "feed_title": str(feed.get("feed_title") or "RSS Feed").strip(),
+                "items": (
+                    feed.get("items") if isinstance(feed.get("items"), list) else []
+                )[:max_items],
+            }
+            feed_hash = hashlib.sha1(link.encode("utf-8")).hexdigest()[:10]
+            memory.write(f"rss_feed::{feed_hash}", packed)
+            return format_rss_feed_for_tool(
+                feed,
+                limit=max_items,
+                focus=str(focus or "").strip(),
+                include_content=bool(include_content),
+            )
+
+        registry.register_callable(
+            name="tool_read_rss_feed",
+            description="Read and summarize an RSS/Atom feed by subscription URL.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "focus": {"type": "string"},
+                    "include_content": {"type": "boolean"},
+                },
+                "required": ["url"],
+            },
+            handler=_tool_read_rss_feed,
+        )
+
+        async def _tool_read_skland_official(
+            *,
+            context,
+            official_name: str,
+            limit: int = 8,
+            date: str = "",
+            focus: str = "",
+        ):
+            _ = context
+            target_name = str(official_name or "").strip()
+            if not target_name:
+                return "error: official_name is required."
+
+            target_name = re.sub(r"^森空岛", "", target_name).strip()
+            target_name = re.sub(r"官方$", "", target_name).strip()
+            if not target_name:
+                return "error: official_name is invalid."
+
+            max_items = _safe_int(limit, 8, minimum=1, maximum=20)
+            date_text = str(date or "").strip() or None
+            focus_text = str(focus or "").strip()
+            try:
+                grouped = await fetch_skland_official_grouped(
+                    games_text=target_name,
+                    date_text=date_text,
+                    page_size=5,
+                    max_pages=10,
+                )
+            except Exception as e:
+                return (
+                    f"error: skland official fetch failed for `{target_name}`: "
+                    f"{_exception_text(e)}"
+                )
+
+            rows = flatten_skland_grouped(grouped)
+            packed = {
+                "official_name": target_name,
+                "date": str(grouped.get("date") or "").strip(),
+                "focus": focus_text,
+                "items": rows[:max_items],
+            }
+            sk_hash = hashlib.sha1(
+                f"{target_name}|{packed['date']}".encode("utf-8")
+            ).hexdigest()[:10]
+            memory.write(f"skland_official::{sk_hash}", packed)
+            return format_skland_posts_for_tool(
+                grouped,
+                limit=max_items,
+                focus=focus_text,
+            )
+
+        registry.register_callable(
+            name="tool_read_skland_official",
+            description=(
+                "Read official posts from Skland for a given game/official name, "
+                "such as 明日方舟、明日方舟：终末地、来自星尘。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "official_name": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "date": {"type": "string"},
+                    "focus": {"type": "string"},
+                },
+                "required": ["official_name"],
+            },
+            handler=_tool_read_skland_official,
         )
 
         async def _tool_search_web(*, context, query: str):

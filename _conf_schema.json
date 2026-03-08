@@ -94,6 +94,18 @@
     ],
     "hint": "html_image 使用网页渲染服务生成图片发送；html_image_with_links 会在图片后追加一条“合并转发”消息，包含本日报所有来源链接"
   },
+  "report_cache_enabled": {
+    "type": "bool",
+    "description": "启用日报短时缓存",
+    "default": false,
+    "hint": "开启后，手动和定时生成成功后会缓存一份日报。在缓存有效期内，会直接复用旧的图片和链接转发内容，不重新生成。"
+  },
+  "report_cache_ttl_minutes": {
+    "type": "int",
+    "description": "日报缓存有效时长（分钟）",
+    "default": 60,
+    "hint": "仅在 report_cache_enabled=true 时生效。设置为 0 等同关闭缓存。"
+  },
   "chenyu_font_files": {
     "type": "file",
     "description": "沉玉谷模板自定义字体文件",
@@ -412,6 +424,90 @@
             "description": "代理地址（支持 http/socks5，例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:7890）",
             "default": "",
             "hint": "可选：用于访问 X/Twitter。兼容旧字段：twitter_proxy（已隐藏）。"
+          }
+        }
+      },
+      "rss": {
+        "name": "RSS 订阅",
+        "hint": "填写 RSS/Atom 订阅链接，例如站点的 /feed、rss.xml、atom.xml。react 模式下可以直接使用插件内部 RSS tool。",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "显示名称（可选）",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "description": "RSS/Atom 订阅链接",
+            "default": ""
+          },
+          "priority": {
+            "type": "int",
+            "description": "优先级（数值越大越先处理）",
+            "default": 1
+          },
+          "max_articles": {
+            "type": "int",
+            "description": "每次最多读取多少条订阅内容",
+            "default": 5
+          },
+          "timeout_s": {
+            "type": "int",
+            "description": "抓取超时秒数",
+            "default": 20
+          },
+          "include_content": {
+            "type": "bool",
+            "description": "尽量读取更长的摘要/正文摘录",
+            "default": true
+          }
+        }
+      },
+      "skland_official": {
+        "name": "森空岛官方",
+        "hint": "抓取森空岛各游戏“官方”分区当天帖子。日常使用只需要勾选游戏；留空表示抓全部游戏。",
+        "items": {
+          "name": {
+            "type": "string",
+            "description": "显示名称（可选）",
+            "default": ""
+          },
+          "priority": {
+            "type": "int",
+            "description": "优先级（数值越大越先处理）",
+            "default": 1
+          },
+          "max_articles": {
+            "type": "int",
+            "description": "最多保留多少篇官方帖子",
+            "default": 20
+          },
+          "games": {
+            "type": "list",
+            "description": "勾选要抓取的游戏（留空表示全部）",
+            "items": {
+              "type": "string"
+            },
+            "options": [
+              "明日方舟",
+              "明日方舟：终末地",
+              "来自星尘",
+              "泡姆泡姆"
+            ],
+            "labels": [
+              "明日方舟",
+              "明日方舟：终末地",
+              "来自星尘",
+              "泡姆泡姆"
+            ],
+            "render_type": "checkbox",
+            "default": []
+          },
+          "games_custom": {
+            "type": "string",
+            "description": "补充游戏名或 gameId（可选）",
+            "default": "",
+            "hint": "用于填写上面没有列出的游戏，多个用逗号分隔。"
           }
         }
       },

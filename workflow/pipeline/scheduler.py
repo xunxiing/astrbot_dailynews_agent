@@ -1,6 +1,8 @@
 import asyncio
+import json
 import re
-from datetime import datetime
+import shutil
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,8 @@ from ..agents.sources.github_agent import GitHubSubAgent
 from ..agents.sources.github_source import build_github_sources_from_config
 from ..agents.sources.miyoushe_agent import MiyousheSubAgent
 from ..agents.sources.plugin_registry_agent import PluginRegistrySubAgent
+from ..agents.sources.rss_agent import RssSubAgent
+from ..agents.sources.skland_official_agent import SklandOfficialSubAgent
 from ..agents.sources.twitter_agent import TwitterSubAgent
 from ..agents.sources.wechat_agent import WechatSubAgent
 from ..agents.sources.xiuxiu_ai_agent import XiuxiuAISubAgent
@@ -35,6 +39,7 @@ from ..core.config_models import (
     RenderPipelineConfig,
     SingleAgentConfig,
 )
+from ..core.image_utils import get_plugin_data_dir
 from ..core.models import NewsSourceConfig
 from .render_pipeline import render_daily_news_pages, split_pages
 from .rendering import load_template
@@ -288,6 +293,7 @@ class DailyNewsScheduler:
         self.task: asyncio.Task | None = None
         self._workflow_task: asyncio.Task | None = None
         self._did_migrate_news_sources = False
+        self._report_cache_lock = asyncio.Lock()
 
         self._init_workflow_manager()
 
@@ -296,6 +302,10 @@ class DailyNewsScheduler:
         self.workflow_manager.register_sub_agent("miyoushe", MiyousheSubAgent)
         self.workflow_manager.register_sub_agent("github", GitHubSubAgent)
         self.workflow_manager.register_sub_agent("twitter", TwitterSubAgent)
+        self.workflow_manager.register_sub_agent("rss", RssSubAgent)
+        self.workflow_manager.register_sub_agent(
+            "skland_official", SklandOfficialSubAgent
+        )
         self.workflow_manager.register_sub_agent("astrbook", AstrBookSubAgent)
         self.workflow_manager.register_sub_agent(
             "plugin_registry", PluginRegistrySubAgent
@@ -310,6 +320,237 @@ class DailyNewsScheduler:
                 astrbot_logger.error(
                     "[dailynews] config.save_config failed", exc_info=True
                 )
+
+    def _report_cache_path(self) -> Path:
+        return get_plugin_data_dir("daily_report_cache") / "latest_report.json"
+
+    def _report_cache_images_dir(self) -> Path:
+        return get_plugin_data_dir("daily_report_cache") / "images"
+
+    def _report_cache_ttl_minutes(self, config: dict[str, Any]) -> int:
+        try:
+            ttl = int(config.get("report_cache_ttl_minutes", 0) or 0)
+        except Exception:
+            ttl = 0
+        return max(0, min(ttl, 24 * 60 * 7))
+
+    def _report_cache_enabled(self, config: dict[str, Any]) -> bool:
+        return bool(config.get("report_cache_enabled", False)) and bool(
+            self._report_cache_ttl_minutes(config) > 0
+        )
+
+    def _raw_delivery_mode(self, config: dict[str, Any]) -> str:
+        return (
+            str(config.get("delivery_mode", "html_image") or "html_image")
+            .strip()
+            .lower()
+        )
+
+    def _send_links_forward(self, config: dict[str, Any]) -> bool:
+        return self._raw_delivery_mode(config) == "html_image_with_links"
+
+    def _actual_delivery_mode(self, config: dict[str, Any]) -> str:
+        raw = self._raw_delivery_mode(config)
+        if raw == "html_image_with_links":
+            return "html_image"
+        return raw
+
+    def _parse_cached_datetime(self, value: Any) -> datetime | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw)
+        except Exception:
+            return None
+
+    def _valid_cached_img_paths(self, paths: Any) -> list[str]:
+        if not isinstance(paths, list):
+            return []
+        out: list[str] = []
+        for item in paths:
+            try:
+                resolved = Path(str(item or "").strip()).resolve()
+            except Exception:
+                continue
+            if _is_valid_image_file(resolved):
+                out.append(resolved.as_posix())
+        return out
+
+    def _load_report_cache_sync(self) -> dict[str, Any] | None:
+        path = self._report_cache_path()
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
+
+    async def _load_report_cache(self) -> dict[str, Any] | None:
+        async with self._report_cache_lock:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, self._load_report_cache_sync)
+
+    def _store_report_cache_sync(
+        self, payload: dict[str, Any], config: dict[str, Any]
+    ) -> dict[str, Any]:
+        cache_dir = get_plugin_data_dir("daily_report_cache")
+        images_dir = self._report_cache_images_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        if images_dir.exists():
+            shutil.rmtree(images_dir, ignore_errors=True)
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        stored_img_paths: list[str] = []
+        for idx, src in enumerate(payload.get("img_paths") or [], start=1):
+            try:
+                resolved = Path(str(src or "").strip()).resolve()
+            except Exception:
+                continue
+            if not _is_valid_image_file(resolved):
+                continue
+            suffix = resolved.suffix if resolved.suffix else ".jpg"
+            dst = images_dir / f"page_{idx}{suffix}"
+            shutil.copy2(resolved, dst)
+            stored_img_paths.append(dst.resolve().as_posix())
+
+        ttl_minutes = self._report_cache_ttl_minutes(config)
+        now = datetime.now()
+        entry = {
+            "content": str(payload.get("content") or ""),
+            "img_paths": stored_img_paths,
+            "link_node_chunks": [
+                str(x)
+                for x in (payload.get("link_node_chunks") or [])
+                if str(x).strip()
+            ],
+            "created_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=ttl_minutes)).isoformat(),
+        }
+        path = self._report_cache_path()
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        tmp.replace(path)
+        return entry
+
+    async def _store_report_cache(
+        self, payload: dict[str, Any], config: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        async with self._report_cache_lock:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None, lambda: self._store_report_cache_sync(payload, config)
+            )
+
+    def _can_store_report_cache(
+        self, payload: dict[str, Any], config: dict[str, Any]
+    ) -> bool:
+        content = str(payload.get("content") or "").strip()
+        if not content or content.startswith("\u751f\u6210\u5931\u8d25"):
+            return False
+        if self._actual_delivery_mode(config) == "html_image":
+            return bool(self._valid_cached_img_paths(payload.get("img_paths") or []))
+        return True
+
+    def _cache_entry_usable(
+        self, entry: dict[str, Any] | None, config: dict[str, Any]
+    ) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        content = str(entry.get("content") or "").strip()
+        if not content:
+            return False
+        expires_at = self._parse_cached_datetime(entry.get("expires_at"))
+        if expires_at is None or expires_at <= datetime.now():
+            return False
+        if self._actual_delivery_mode(config) == "html_image":
+            return bool(self._valid_cached_img_paths(entry.get("img_paths") or []))
+        return True
+
+    def _build_link_node_chunks(self, content: str) -> list[str]:
+        try:
+            links_by_section = _extract_report_links(content, max_links=120)
+            return _build_forward_nodes_from_links(
+                links_by_section,
+                title="\u65e5\u62a5\u6765\u6e90\u94fe\u63a5\uff08\u53ef\u70b9\u51fb\uff09",
+                max_node_chars=650,
+                max_nodes=14,
+            )
+        except Exception:
+            return []
+
+    async def _build_report_payload(
+        self,
+        content: str,
+        config: dict[str, Any],
+        *,
+        cache_hit: bool,
+    ) -> dict[str, Any]:
+        payload = {
+            "content": str(content or ""),
+            "img_paths": [],
+            "link_node_chunks": [],
+            "cache_hit": bool(cache_hit),
+        }
+        if self._send_links_forward(config):
+            payload["link_node_chunks"] = self._build_link_node_chunks(content)
+        if self._actual_delivery_mode(config) == "html_image":
+            payload["img_paths"] = self._valid_cached_img_paths(
+                await self._render_content_images(content, config=config)
+            )
+        return payload
+
+    async def prepare_report(
+        self,
+        cfg: dict[str, Any] | None = None,
+        *,
+        source: str = "manual",
+        prefer_cache: bool = True,
+    ) -> dict[str, Any]:
+        config = cfg or self._normalized_config()
+        if prefer_cache and self._report_cache_enabled(config):
+            cached = await self._load_report_cache()
+            if self._cache_entry_usable(cached, config):
+                content = str(cached.get("content") or "")
+                payload = {
+                    "content": content,
+                    "img_paths": self._valid_cached_img_paths(
+                        cached.get("img_paths") or []
+                    ),
+                    "link_node_chunks": [
+                        str(x)
+                        for x in (cached.get("link_node_chunks") or [])
+                        if str(x).strip()
+                    ],
+                    "cache_hit": True,
+                    "created_at": str(cached.get("created_at") or ""),
+                    "expires_at": str(cached.get("expires_at") or ""),
+                }
+                if self._send_links_forward(config) and not payload["link_node_chunks"]:
+                    payload["link_node_chunks"] = self._build_link_node_chunks(content)
+                astrbot_logger.info(
+                    "[dailynews] report cache hit source=%s expires_at=%s",
+                    source,
+                    payload.get("expires_at") or "",
+                )
+                return payload
+
+        content = await self.generate_once(config, source=source)
+        payload = await self._build_report_payload(content, config, cache_hit=False)
+        if self._report_cache_enabled(config) and self._can_store_report_cache(
+            payload, config
+        ):
+            stored = await self._store_report_cache(payload, config)
+            if isinstance(stored, dict):
+                payload["img_paths"] = self._valid_cached_img_paths(
+                    stored.get("img_paths") or []
+                )
+                payload["created_at"] = str(stored.get("created_at") or "")
+                payload["expires_at"] = str(stored.get("expires_at") or "")
+        return payload
 
     def _split_sources(self, raw: Any) -> list[str]:
         """
@@ -351,6 +592,8 @@ class DailyNewsScheduler:
         cfg.setdefault("schedule_time", "09:00")
         cfg.setdefault("output_format", "markdown")
         cfg.setdefault("delivery_mode", "html_image")
+        cfg.setdefault("report_cache_enabled", False)
+        cfg.setdefault("report_cache_ttl_minutes", 60)
         cfg.setdefault("render_template_name", "daily_news")
 
         mode_cfg = NewsWorkflowModeConfig.from_mapping(cfg)
@@ -524,6 +767,38 @@ class DailyNewsScheduler:
             return
 
         if isinstance(raw, list) and raw:
+            changed = False
+            normalized_items: list[Any] = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    normalized_items.append(item)
+                    continue
+                entry = dict(item)
+                if entry.get("__template_key") == "skland_official":
+                    games_value = entry.get("games", None)
+                    if isinstance(games_value, str):
+                        entry["games"] = [
+                            part.strip()
+                            for part in games_value.replace("\n", ",").split(",")
+                            if part.strip()
+                        ]
+                        changed = True
+                    elif games_value is None:
+                        entry["games"] = []
+                        changed = True
+                normalized_items.append(entry)
+
+            if changed:
+                try:
+                    self.config["news_sources"] = normalized_items
+                    self._save_config()
+                    astrbot_logger.info(
+                        "[dailynews] normalized template_list source shapes (count=%s)",
+                        len(normalized_items),
+                    )
+                except Exception:
+                    pass
+
             self._did_migrate_news_sources = True
             return
 
@@ -715,13 +990,26 @@ class DailyNewsScheduler:
                         await asyncio.sleep(120)
                         continue
 
-                    content = await self.generate_once(cfg, source="scheduled")
+                    prepared = await self.prepare_report(
+                        cfg, source="scheduled", prefer_cache=True
+                    )
+                    content = str(prepared.get("content") or "")
+                    cache_hit = bool(prepared.get("cache_hit", False))
                     sent = 0
                     if targets:
-                        sent = await self._send_to_targets(content, targets, config=cfg)
+                        sent = await self._send_to_targets(
+                            content,
+                            targets,
+                            config=cfg,
+                            prepared=prepared,
+                        )
 
                     published = False
-                    if publish_enabled and astrbook_token:
+                    if cache_hit and publish_enabled:
+                        astrbot_logger.info(
+                            "[dailynews] skip astrbook publish on cached report"
+                        )
+                    elif publish_enabled and astrbook_token:
                         try:
                             res = await self.publish_report_to_astrbook(
                                 content, config=cfg
@@ -788,6 +1076,21 @@ class DailyNewsScheduler:
                 ):
                     astrbot_logger.warning(
                         "[dailynews] news_sources(twitter) invalid (%s). Expected https://x.com/<user> or https://twitter.com/<user>.",
+                        s.url,
+                    )
+                    continue
+                if s.type == "rss" and not low.startswith(("http://", "https://")):
+                    astrbot_logger.warning(
+                        "[dailynews] news_sources(rss) invalid (%s). Expected an http/https RSS or Atom feed URL.",
+                        s.url,
+                    )
+                    continue
+                if (
+                    s.type == "skland_official"
+                    and str(s.url or "").strip() != "skland://official"
+                ):
+                    astrbot_logger.warning(
+                        "[dailynews] news_sources(skland_official) invalid (%s). Expected template-managed skland://official.",
                         s.url,
                     )
                     continue
@@ -913,9 +1216,15 @@ class DailyNewsScheduler:
 
     async def generate_and_send(self, cfg: dict[str, Any] | None = None) -> str:
         config = cfg or self._normalized_config()
-        content = await self.generate_once(config)
+        prepared = await self.prepare_report(
+            config, source="scheduled", prefer_cache=True
+        )
+        content = str(prepared.get("content") or "")
         await self._send_to_targets(
-            content, list(config.get("target_sessions", []) or []), config=config
+            content,
+            list(config.get("target_sessions", []) or []),
+            config=config,
+            prepared=prepared,
         )
         return content
 
@@ -1009,7 +1318,11 @@ class DailyNewsScheduler:
         return out
 
     async def _send_to_targets(
-        self, content: str, target_sessions: list[str], config: dict[str, Any]
+        self,
+        content: str,
+        target_sessions: list[str],
+        config: dict[str, Any],
+        prepared: dict[str, Any] | None = None,
     ) -> int:
         normalized_targets, invalid_targets = _normalize_umo_list(
             target_sessions,
@@ -1033,31 +1346,32 @@ class DailyNewsScheduler:
             astrbot_logger.warning("[dailynews] MessageChain unavailable; skip sending")
             return 0
 
-        delivery_mode = (
-            str(config.get("delivery_mode", "html_image") or "html_image")
-            .strip()
-            .lower()
-        )
-        send_links_forward = False
-        if delivery_mode == "html_image_with_links":
-            send_links_forward = True
-            delivery_mode = "html_image"
+        delivery_mode = self._actual_delivery_mode(config)
+        send_links_forward = self._send_links_forward(config)
 
         link_node_chunks: list[str] = []
-        if send_links_forward:
-            try:
-                links_by_section = _extract_report_links(content, max_links=120)
-                link_node_chunks = _build_forward_nodes_from_links(
-                    links_by_section,
-                    title="日报来源链接（可点击）",
-                    max_node_chars=650,
-                    max_nodes=14,
-                )
-            except Exception:
-                link_node_chunks = []
+        if isinstance(prepared, dict):
+            link_node_chunks = [
+                str(x)
+                for x in (prepared.get("link_node_chunks") or [])
+                if str(x).strip()
+            ]
+        if send_links_forward and not link_node_chunks:
+            link_node_chunks = self._build_link_node_chunks(content)
+
         img_paths: list[str] = []
         if delivery_mode == "html_image":
-            img_paths = await self._render_content_images(content, config=config)
+            if isinstance(prepared, dict):
+                img_paths = self._valid_cached_img_paths(
+                    prepared.get("img_paths") or []
+                )
+                if img_paths:
+                    astrbot_logger.info(
+                        "[dailynews] reuse cached report images: count=%s",
+                        len(img_paths),
+                    )
+            if not img_paths:
+                img_paths = await self._render_content_images(content, config=config)
             if not img_paths:
                 astrbot_logger.warning(
                     "[dailynews] html_image enabled but render returned empty; fallback to text"
