@@ -456,6 +456,12 @@ def _classify_image_for_layout(
         return classes
 
     aspect = width / float(height)
+    side_float_candidate = (
+        float_enabled
+        and 1.18 <= aspect <= 2.8
+        and 160 <= height <= 760
+        and width <= max(int(full_max_width * 2.0) + 320, medium_max_width + 360)
+    )
     if aspect >= 1.75:
         classes.append("md-img--panorama")
     elif aspect >= 1.15:
@@ -465,15 +471,21 @@ def _classify_image_for_layout(
     else:
         classes.append("md-img--portrait")
 
-    resized_w = min(width, full_max_width)
-    if resized_w <= float_if_width_le or aspect <= 0.92 or width <= narrow_max_width:
+    if width <= narrow_max_width:
         classes.append("md-img--narrow")
-        if float_enabled:
+        if float_enabled and (width <= float_if_width_le or side_float_candidate):
             classes.append("md-img--float-r" if float_dir == "r" else "md-img--float-l")
         return classes
 
-    if resized_w <= medium_max_width:
+    if width <= medium_max_width:
         classes.append("md-img--medium")
+        if side_float_candidate:
+            classes.append("md-img--float-r" if float_dir == "r" else "md-img--float-l")
+        return classes
+
+    if side_float_candidate:
+        classes.append("md-img--medium")
+        classes.append("md-img--float-r" if float_dir == "r" else "md-img--float-l")
         return classes
 
     classes.append("md-img--full")

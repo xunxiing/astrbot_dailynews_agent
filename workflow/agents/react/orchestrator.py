@@ -20,7 +20,7 @@ except Exception:  # pragma: no cover
 
     astrbot_logger = logging.getLogger(__name__)
 
-from ...core.config_models import ReactAgentConfig
+from ...core.config_models import ImageLabelConfig, ReactAgentConfig
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
 from ...core.rss import fetch_rss_feed, format_rss_feed_for_tool
@@ -31,6 +31,7 @@ from ...core.skland_official import (
 )
 from ...core.utils import _run_sync
 from ...pipeline.rendering import load_template
+from ..image_labeler import ImageLabeler
 from ..sources.github_source import GitHubClient, GitHubConfig, parse_repo
 from .react_agent import ReActAgent, ReactRunResult
 from .shared_memory import SharedMemory
@@ -1551,7 +1552,6 @@ class ReActDailyNewsOrchestrator:
             date: str = "",
             focus: str = "",
         ):
-            _ = context
             target_name = str(official_name or "").strip()
             if not target_name:
                 return "error: official_name is required."
@@ -1584,15 +1584,110 @@ class ReActDailyNewsOrchestrator:
                 "focus": focus_text,
                 "items": rows[:max_items],
             }
-            sk_hash = hashlib.sha1(
-                f"{target_name}|{packed['date']}".encode("utf-8")
-            ).hexdigest()[:10]
-            memory.write(f"skland_official::{sk_hash}", packed)
-            return format_skland_posts_for_tool(
+            rendered = format_skland_posts_for_tool(
                 grouped,
                 limit=max_items,
                 focus=focus_text,
             )
+
+            try:
+                sampled_urls: list[str] = []
+                sampled_meta: list[dict[str, str]] = []
+                seen_urls: set[str] = set()
+                for item in rows[:max_items]:
+                    title = re.sub(r"\s+", " ", str(item.get("title") or "").strip())
+                    game_name = str(item.get("game_name") or target_name).strip() or target_name
+                    taken = 0
+                    for raw_url in item.get("image_urls") or []:
+                        image_url = str(raw_url or "").strip()
+                        if not image_url or image_url in seen_urls:
+                            continue
+                        seen_urls.add(image_url)
+                        sampled_urls.append(image_url)
+                        sampled_meta.append(
+                            {
+                                "url": image_url,
+                                "title": title or "未命名帖子",
+                                "game_name": game_name,
+                            }
+                        )
+                        taken += 1
+                        if taken >= 2 or len(sampled_urls) >= 6:
+                            break
+                    if len(sampled_urls) >= 6:
+                        break
+
+                label_cfg = ImageLabelConfig.from_mapping(user_config)
+                react_cfg = ReactAgentConfig.from_mapping(user_config)
+                label_provider_id = str(
+                    label_cfg.provider_id
+                    or self._pick_provider_id(
+                        user_config=user_config,
+                        react_cfg=react_cfg,
+                    )
+                    or ""
+                ).strip()
+                astr_ctx = getattr(getattr(context, "context", None), "context", None)
+                prompt = str(
+                    load_template("templates/prompts/image_labeler_system.txt") or ""
+                ).strip()
+
+                if sampled_urls and label_provider_id and astr_ctx is not None and prompt:
+                    runtime_label_cfg = replace(
+                        label_cfg,
+                        enabled=True,
+                        provider_id=label_provider_id,
+                        max_images_total=min(6, max(1, len(sampled_urls))),
+                        concurrency=max(1, min(int(label_cfg.concurrency), 2)),
+                    )
+                    labeler = ImageLabeler(system_prompt=prompt)
+                    image_catalog, _ = await labeler.build_catalog(
+                        images_by_source={target_name: sampled_urls},
+                        astrbot_context=astr_ctx,
+                        cfg=runtime_label_cfg,
+                    )
+                    label_map = {
+                        str(item.get("url") or "").strip(): str(item.get("label") or "").strip()
+                        for item in image_catalog
+                        if isinstance(item, dict)
+                        and str(item.get("url") or "").strip()
+                        and str(item.get("label") or "").strip()
+                    }
+                    if label_map:
+                        for item in packed["items"]:
+                            labels = [
+                                label_map[url]
+                                for url in (item.get("image_urls") or [])
+                                if isinstance(url, str) and label_map.get(url)
+                            ]
+                            if labels:
+                                item["image_labels"] = labels[:3]
+
+                        rendered += "\n\nImage Understanding:\n"
+                        rendered += "\n".join(
+                            f"- [{meta['game_name']}] {meta['title']}: {label_map[meta['url']]}"
+                            for meta in sampled_meta
+                            if label_map.get(meta["url"])
+                        )
+                        astrbot_logger.info(
+                            "[dailynews][react] skland tool image labels ready: %s provider=%s official=%s",
+                            len(label_map),
+                            label_provider_id,
+                            target_name,
+                        )
+            except Exception as e:
+                astrbot_logger.warning(
+                    "[dailynews][react] skland tool image labeling failed official=%s err=%s",
+                    target_name,
+                    _exception_text(e),
+                    exc_info=True,
+                )
+
+            sk_hash = hashlib.sha1(
+                f"{target_name}|{packed['date']}".encode("utf-8")
+            ).hexdigest()[:10]
+            memory.write(f"skland_official::{sk_hash}", packed)
+            return rendered
 
         registry.register_callable(
             name="tool_read_skland_official",

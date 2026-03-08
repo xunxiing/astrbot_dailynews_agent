@@ -116,11 +116,11 @@
       /* Images: standardize size then decide side-by-side (float) */
       .md {
         /* hard-coded sizes (do not expose in config UI) */
-        --img-full: 400px;
-        --img-medium: 500px;
-        --img-narrow: 300px;
-        --img-portrait-max-h: 420;
-        --img-panorama-max-h: 320;
+        --img-full: 500px;
+        --img-medium: 420px;
+        --img-narrow: 340px;
+        --img-portrait-max-h: 520;
+        --img-panorama-max-h: 360;
       }
       .md img { max-width: 100%; height: auto; display: block; margin: 12px 0; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.35); box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10); }
       .md p.md-imgp { margin: 10px 0; }
@@ -132,8 +132,8 @@
       .md img.md-img--panorama { max-height: calc(var(--img-panorama-max-h) * 1px); object-fit: contain; }
       .md img.md-img--float-r,
       .md img.md-img--float-l {
-        width: clamp(260px, 38%, var(--img-narrow));
-        max-width: 42%;
+        width: clamp(300px, 44%, 360px);
+        max-width: 46%;
         height: auto;
         display: block;
         margin-top: 8px;
@@ -271,4 +271,3 @@
     </div>
   </body>
 </html>
-

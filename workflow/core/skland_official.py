@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -254,6 +255,8 @@ def format_skland_posts_for_tool(
         return "\n".join(lines).strip()
 
     lines.append("Top Posts:")
+    tool_images: list[str] = []
+    seen_images: set[str] = set()
     for idx, item in enumerate(picked, start=1):
         title = str(item.get("title") or "未命名帖子").strip()
         game_name = str(item.get("game_name") or "未知游戏").strip()
@@ -280,5 +283,27 @@ def format_skland_posts_for_tool(
             lines.append(f"   Summary: {summary}")
         if image_count:
             lines.append(f"   Images: {image_count}")
+        preview_urls: list[str] = []
+        for candidate in item.get("image_urls") or []:
+            image_url = str(candidate or "").strip()
+            if not image_url:
+                continue
+            if image_url not in seen_images:
+                seen_images.add(image_url)
+                tool_images.append(image_url)
+            if len(preview_urls) < 2:
+                preview_urls.append(image_url)
+        for image_url in preview_urls:
+            lines.append(f"   Image: {image_url}")
+
+    if tool_images:
+        lines.append("")
+        lines.append(f"Image URLs ({len(tool_images)}):")
+        for image_url in tool_images[:12]:
+            lines.append(f"- {image_url}")
+        lines.append("")
+        lines.append("Image Markdown Samples:")
+        for idx, image_url in enumerate(tool_images[:4], start=1):
+            lines.append(f"![skland-image-{idx}]({image_url})")
 
     return "\n".join(lines).strip()

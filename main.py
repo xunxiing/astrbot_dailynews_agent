@@ -224,13 +224,13 @@ class DailyNewsPlugin(Star):
 
     @filter.command("daily_news")
     async def daily_news(self, event: AstrMessageEvent, args: str = ""):
-        """??????????????????
-        ???/daily_news [force]
+        """手动生成一次日报（并回发到当前会话）
+        用法：/daily_news [force]
         """
         parts = [p.strip().lower() for p in (args or "").strip().split() if p.strip()]
         force_refresh = "force" in parts
         yield event.plain_result(
-            "????????????..." if force_refresh else "??????????..."
+            "正在强制刷新日报，请稍候..." if force_refresh else "正在准备日报，请稍候..."
         )
         cfg = self.scheduler.get_config_snapshot()
         prepared = await self.scheduler.prepare_report(

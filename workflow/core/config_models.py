@@ -90,20 +90,20 @@ def _to_optional_str(value: Any) -> str | None:
 class RenderImageStyleConfig:
     # NOTE: These values are intentionally hard-coded (see user request).
     # The dashboard config fields for these widths/threshold are disabled/removed.
-    full_max_width: int = 400
-    medium_max_width: int = 500
-    narrow_max_width: int = 300
-    float_threshold: int = 480
+    full_max_width: int = 500
+    medium_max_width: int = 420
+    narrow_max_width: int = 340
+    float_threshold: int = 360
     float_enabled: bool = True
 
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> RenderImageStyleConfig:
         return cls(
             # Hard-coded layout constants, only float_enabled remains configurable.
-            full_max_width=400,
-            medium_max_width=500,
-            narrow_max_width=300,
-            float_threshold=480,
+            full_max_width=500,
+            medium_max_width=420,
+            narrow_max_width=340,
+            float_threshold=360,
             float_enabled=_to_bool(cfg.get("render_img_float_enabled"), True),
         )
 
