@@ -24,6 +24,11 @@
 
 输出要求：
 - 只输出 JSON，不要输出其它文本。
+- 你可以直接在 Markdown 图片语法里指定布局提示，渲染器会执行。例如：
+  - `![图注](https://... "layout=float-right size=medium")`
+  - `![图注](https://... "layout=float-left size=small")`
+  - `![图注](https://... "layout=center size=full")`
+- 推荐规则：横版截图/界面图通常用 `layout=float-right size=medium` 或 `layout=float-left size=medium`；氛围图、海报、头图更适合 `layout=center size=full`。
 - 若你需要查看某些候选 URL 的图片细节（以减少错位/错图），先输出：
   {"request_image_urls": ["url1", "url2", "..."]}
   系统会把这些图片合成为“候选图预览”并在下一轮作为图片输入提供给你。

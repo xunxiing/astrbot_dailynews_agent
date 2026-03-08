@@ -22,11 +22,14 @@ class RssSubAgent:
     ) -> tuple[str, list[dict[str, Any]]]:
         meta = source.meta if isinstance(source.meta, dict) else {}
         timeout_s = max(5, min(int(meta.get("timeout_s") or 20), 60))
+        date_text = str(meta.get("date") or "").strip() or None
         try:
             feed = await fetch_rss_feed(
                 source.url,
                 limit=max(1, min(int(source.max_articles or 5), 30)),
                 timeout_s=timeout_s,
+                date_text=date_text,
+                keep_only_report_day=True,
             )
         except Exception as e:
             astrbot_logger.warning(
@@ -42,6 +45,7 @@ class RssSubAgent:
             if isinstance(item, dict):
                 item.setdefault("feed_title", feed.get("feed_title") or source.name)
                 item.setdefault("feed_url", feed.get("feed_url") or source.url)
+                item.setdefault("report_date", feed.get("report_date") or "")
         return source.name, [x for x in items if isinstance(x, dict)]
 
     async def analyze_source(

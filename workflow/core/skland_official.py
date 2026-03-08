@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover
 
 TZ = ZoneInfo("Asia/Shanghai")
 OFFICIAL_SORT_TYPE = 2
+REPORT_DAY_CUTOFF_HOUR = 6
 
 
 def _import_skland_client() -> tuple[Any, Any, Any]:
@@ -51,21 +52,55 @@ def parse_target_date(date_text: str | None) -> tuple[int, int, str]:
         start = datetime.strptime(date_text, "%Y-%m-%d").replace(tzinfo=TZ)
     else:
         now = datetime.now(TZ)
+        if now.hour < REPORT_DAY_CUTOFF_HOUR:
+            now = now - timedelta(days=1)
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
     return int(start.timestamp()), int(end.timestamp()), start.strftime("%Y-%m-%d")
 
 
-def normalize_filters(games_text: str | None) -> set[str]:
+def _normalize_game_token(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[\s:：·•・,，、\-_/()（）\[\]【】<>《》'\"`]+", "", text)
+    return text
+
+
+def normalize_filters(games_text: Any) -> set[str]:
     if not games_text:
         return set()
-    return {part.strip() for part in str(games_text).split(",") if part.strip()}
+    if isinstance(games_text, (list, tuple, set)):
+        raw_parts = [str(part).strip() for part in games_text if str(part).strip()]
+    else:
+        raw_parts = [part.strip() for part in str(games_text).split(",") if part.strip()]
+    out: set[str] = set()
+    for part in raw_parts:
+        out.add(part)
+        normalized = _normalize_game_token(part)
+        if normalized:
+            out.add(normalized)
+    return out
 
 
 def match_game(filters: set[str], game_id: int, game_name: str) -> bool:
     if not filters:
         return True
-    return str(game_id) in filters or str(game_name) in filters
+    game_id_text = str(game_id)
+    game_name_text = str(game_name)
+    game_name_norm = _normalize_game_token(game_name_text)
+    if game_id_text in filters or game_name_text in filters or game_name_norm in filters:
+        return True
+    for flt in filters:
+        if not flt:
+            continue
+        if flt == game_id_text or flt == game_name_text or flt == game_name_norm:
+            return True
+        if flt.isdigit():
+            continue
+        if flt in game_name_text or flt in game_name_norm:
+            return True
+        if game_name_norm and game_name_norm in flt:
+            return True
+    return False
 
 
 async def fetch_skland_official_grouped(

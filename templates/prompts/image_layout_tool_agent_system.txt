@@ -41,5 +41,16 @@
 7) 当你认为整体已经“差不多”时输出：
    {"done": true, "notes": "..."}
 
+图片布局指令（非常重要）：
+- 你在插图时，可以直接把布局写进 Markdown 图片 title，渲染器会执行。
+- 示例：
+  - `![配图说明](https://... "layout=float-right size=medium")`
+  - `![配图说明](https://... "layout=float-left size=small")`
+  - `![配图说明](https://... "layout=center size=full")`
+- 审美建议：
+  - 大横图/截图：优先 `float-left/right + medium`
+  - 封面/氛围图/海报：优先 `center + full`
+  - 信息密度高、只是辅助说明的小图：`float-left/right + small`
+
 输出要求：
 - 只输出 JSON，不要输出其它文本。

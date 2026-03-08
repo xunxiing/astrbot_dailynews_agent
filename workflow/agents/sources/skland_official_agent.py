@@ -20,6 +20,14 @@ from ...core.skland_official import (
 )
 
 
+def _join_game_filters(value: Any) -> str | None:
+    if isinstance(value, (list, tuple, set)):
+        parts = [str(x).strip() for x in value if str(x).strip()]
+        return ",".join(parts) if parts else None
+    text = str(value or "").strip()
+    return text or None
+
+
 def _short_text(value: Any, limit: int = 220) -> str:
     text = str(value or "").strip()
     if len(text) <= limit:
@@ -41,7 +49,7 @@ class SklandOfficialSubAgent:
                 date_text=str(meta.get("date") or "").strip() or None,
                 page_size=max(1, min(int(meta.get("page_size") or 5), 5)),
                 max_pages=max(1, min(int(meta.get("max_pages") or 10), 50)),
-                games_text=str(meta.get("games") or "").strip() or None,
+                games_text=_join_game_filters(meta.get("games")),
             )
         except Exception as e:
             astrbot_logger.warning(

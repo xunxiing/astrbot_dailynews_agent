@@ -6,12 +6,15 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
 _IMG_RE = re.compile(r"<img[^>]+src=[\"']([^\"']+)[\"']", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
+TZ = ZoneInfo("Asia/Shanghai")
+REPORT_DAY_CUTOFF_HOUR = 6
 
 
 def _local_name(tag: Any) -> str:
@@ -70,8 +73,22 @@ def _parse_datetime(value: Any) -> tuple[str, int]:
         return raw, 0
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    dt = dt.astimezone(timezone.utc)
+    dt = dt.astimezone(TZ)
     return dt.strftime("%Y-%m-%d %H:%M"), int(dt.timestamp())
+
+
+def resolve_report_day_window(date_text: str | None = None) -> tuple[int, int, str]:
+    if date_text:
+        start = datetime.strptime(str(date_text).strip(), "%Y-%m-%d").replace(tzinfo=TZ)
+    else:
+        now = datetime.now(TZ)
+        if now.hour < REPORT_DAY_CUTOFF_HOUR:
+            now = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            start = datetime.fromtimestamp(now.timestamp() - 86400, TZ)
+        else:
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = datetime.fromtimestamp(start.timestamp() + 86400, TZ)
+    return int(start.timestamp()), int(end.timestamp()), start.strftime("%Y-%m-%d")
 
 
 def _child_text(elem: ET.Element, *names: str) -> str:
@@ -138,6 +155,8 @@ async def fetch_rss_feed(
     limit: int = 10,
     timeout_s: int = 20,
     user_agent: str | None = None,
+    date_text: str | None = None,
+    keep_only_report_day: bool = True,
 ) -> dict[str, Any]:
     feed_url = str(url or "").strip()
     if not feed_url:
@@ -231,6 +250,16 @@ async def fetch_rss_feed(
         raise ValueError(f"unsupported rss/atom root tag: {root.tag}")
 
     items.sort(key=lambda row: int(row.get("published_ts") or 0), reverse=True)
+    report_date = ""
+    if keep_only_report_day:
+        start_ts, end_ts, report_date = resolve_report_day_window(date_text)
+        has_timestamped_items = any(int(row.get("published_ts") or 0) > 0 for row in items)
+        if has_timestamped_items:
+            items = [
+                row
+                for row in items
+                if start_ts <= int(row.get("published_ts") or 0) < end_ts
+            ]
     if limit > 0:
         items = items[:limit]
 
@@ -238,6 +267,7 @@ async def fetch_rss_feed(
         "feed_title": feed_title or "RSS Feed",
         "feed_description": feed_description,
         "feed_url": feed_url,
+        "report_date": report_date,
         "items": items,
     }
 
@@ -251,12 +281,15 @@ def format_rss_feed_for_tool(
 ) -> str:
     title = str(feed.get("feed_title") or "RSS Feed").strip()
     feed_url = str(feed.get("feed_url") or "").strip()
+    report_date = str(feed.get("report_date") or "").strip()
     items = feed.get("items") if isinstance(feed.get("items"), list) else []
     rows = items[: max(1, int(limit))]
 
     lines = [f"RSS ??{title}"]
     if feed_url:
         lines.append(f"?????{feed_url}")
+    if report_date:
+        lines.append(f"?????{report_date}")
     desc = _short_text(feed.get("feed_description") or "", 160)
     if desc:
         lines.append(f"???{desc}")

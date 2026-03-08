@@ -72,6 +72,14 @@ class LLMRunner:
                                 exc_info=True,
                             )
 
+                    # If explicit provider ids were supplied, do not silently fall back to
+                    # the runtime default provider. That fallback can trigger a second hidden
+                    # LLM request, causing confusing double-timeout logs at the outer layer.
+                    raise RuntimeError(
+                        f"LLM call failed for explicit provider(s) after {int(self._max_retries) + 1} attempts: "
+                        f"{type(last_exc).__name__ if last_exc else 'UnknownError'}"
+                    )
+
                 provider = self._ctx.get_using_provider()
                 coro = provider.text_chat(
                     prompt=prompt,
@@ -107,7 +115,8 @@ class LLMRunner:
                     exc_info=True,
                 )
 
-            await asyncio.sleep(min(2.0 * attempt, 6.0))
+            if attempt < int(self._max_retries) + 1:
+                await asyncio.sleep(min(2.0 * attempt, 6.0))
 
         raise RuntimeError(
             f"LLM call failed after {int(self._max_retries) + 1} attempts: "

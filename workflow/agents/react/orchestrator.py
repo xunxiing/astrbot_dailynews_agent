@@ -146,6 +146,107 @@ def _extract_image_urls(payload: Any, *, max_count: int = 20) -> list[str]:
     return out[:max_count]
 
 
+def _compact_prefetched_item(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    title = str(item.get("title") or item.get("name") or "").strip()
+    url = _extract_item_url(item)
+    published = str(
+        item.get("published")
+        or item.get("published_at")
+        or item.get("publish_time")
+        or item.get("publish_datetime")
+        or item.get("date_label")
+        or item.get("report_date")
+        or ""
+    ).strip()
+    summary = str(
+        item.get("summary")
+        or item.get("content_text")
+        or item.get("ai_comment")
+        or item.get("sub_dynamic")
+        or item.get("content")
+        or ""
+    ).strip()
+    summary = re.sub(r"\s+", " ", summary)
+    if len(summary) > 220:
+        summary = summary[:217].rstrip() + "..."
+    image_urls = _extract_image_urls(item, max_count=4)
+    return {
+        "title": title,
+        "url": url,
+        "published": published,
+        "summary": summary,
+        "image_urls": image_urls,
+    }
+
+
+def _build_prefetched_source_payload(
+    *, source: NewsSourceConfig, items: list[dict[str, Any]], max_items: int = 8
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    all_images: list[str] = []
+    seen_images: set[str] = set()
+    for raw in (items or [])[: max(1, int(max_items))]:
+        row = _compact_prefetched_item(raw)
+        if not row:
+            continue
+        rows.append(row)
+        for image_url in row.get("image_urls") or []:
+            if image_url and image_url not in seen_images:
+                seen_images.add(image_url)
+                all_images.append(image_url)
+    return {
+        "source_name": str(source.name or "").strip(),
+        "source_type": str(source.type or "").strip(),
+        "source_url": str(source.url or "").strip(),
+        "article_count": len(items or []),
+        "items": rows,
+        "image_urls": all_images[:12],
+    }
+
+
+def _format_prefetched_source_for_tool(
+    payload: dict[str, Any], *, limit: int = 6, focus: str = ""
+) -> str:
+    source_name = str(payload.get("source_name") or "").strip() or "(unknown)"
+    source_type = str(payload.get("source_type") or "").strip() or "(unknown)"
+    source_url = str(payload.get("source_url") or "").strip()
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    rows = items[: max(1, int(limit or 6))]
+    lines = [f"Prefetched Source: {source_name}", f"Type: {source_type}"]
+    if source_url:
+        lines.append(f"Seed URL: {source_url}")
+    lines.append(f"Fetched Items: {int(payload.get('article_count') or len(items))}")
+    if focus:
+        lines.append(f"Focus: {str(focus).strip()}")
+    lines.append("")
+    if not rows:
+        lines.append("No prefetched items available.")
+        return "\n".join(lines).strip()
+    lines.append("Items:")
+    for idx, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title") or "Untitled").strip()
+        url = str(row.get("url") or "").strip()
+        published = str(row.get("published") or "").strip()
+        summary = str(row.get("summary") or "").strip()
+        head = f"{idx}. {title}"
+        if published:
+            head += f" [{published}]"
+        lines.append(head)
+        if url:
+            lines.append(f"   URL: {url}")
+        if summary:
+            lines.append(f"   Summary: {summary}")
+        image_urls = row.get("image_urls") if isinstance(row.get("image_urls"), list) else []
+        for image_url in image_urls[:2]:
+            if isinstance(image_url, str) and image_url.strip():
+                lines.append(f"   Image: {image_url.strip()}")
+    return "\n".join(lines).strip()
+
+
 def _format_vertical_tool_output(payload: Any, *, max_chars: int = 5200) -> str:
     if not isinstance(payload, dict):
         return _to_brief_text(payload, max_chars=max_chars)
@@ -454,9 +555,14 @@ def _format_target_source_context(snapshot: dict[str, Any], *, user_goal: str) -
         st = str(row.get("type") or "").strip() or "(unknown)"
         seed_url = str(row.get("seed_url") or "").strip() or "(none)"
         article_count = int(row.get("article_count") or 0)
-        source_lines.append(
-            f"- {name} [{st}] seed={seed_url} fetched_items={article_count}"
+        sample_titles = row.get("sample_titles") if isinstance(row.get("sample_titles"), list) else []
+        title_hint = " | ".join(
+            [str(x).strip() for x in sample_titles[:3] if str(x).strip()]
         )
+        line = f"- {name} [{st}] seed={seed_url} fetched_items={article_count}"
+        if title_hint:
+            line += f" titles={title_hint}"
+        source_lines.append(line)
 
     return (
         f"North Star Goal: {user_goal}\n\n"
@@ -1374,6 +1480,17 @@ class ReActDailyNewsOrchestrator:
         initial_context = _format_target_source_context(
             source_snapshot, user_goal=user_goal
         )
+        prefetched_source_map: dict[str, dict[str, Any]] = {}
+        for src in sources or []:
+            if not isinstance(src, NewsSourceConfig):
+                continue
+            src_name = str(src.name or "").strip()
+            if not src_name:
+                continue
+            items = fetched.get(src_name, []) or []
+            payload = _build_prefetched_source_payload(source=src, items=items)
+            prefetched_source_map[src_name] = payload
+            memory.write(f"prefetched_source::{src_name}", payload)
 
         vertical_llm_timeout_s = _safe_int(
             user_config.get("react_vertical_llm_timeout_s", 45),
@@ -1444,6 +1561,43 @@ class ReActDailyNewsOrchestrator:
             provider_id=provider_id or None,
         )
 
+        async def _tool_read_prefetched_source(
+            *, context, source_name: str, limit: int = 6, focus: str = ""
+        ):
+            _ = context
+            target_name = str(source_name or "").strip()
+            if not target_name:
+                return "error: source_name is required."
+            payload = prefetched_source_map.get(target_name)
+            if payload is None:
+                lowered = target_name.lower()
+                for name, candidate in prefetched_source_map.items():
+                    if lowered == name.lower() or lowered in name.lower():
+                        payload = candidate
+                        break
+            if payload is None:
+                return f"error: prefetched source not found: `{target_name}`"
+            return _format_prefetched_source_for_tool(
+                payload,
+                limit=_safe_int(limit, 6, minimum=1, maximum=12),
+                focus=str(focus or "").strip(),
+            )
+
+        registry.register_callable(
+            name="tool_read_prefetched_source",
+            description="Read stage-1 prefetched source items directly from local memory without re-fetching.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "source_name": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "focus": {"type": "string"},
+                },
+                "required": ["source_name"],
+            },
+            handler=_tool_read_prefetched_source,
+        )
+
         async def _tool_search_github(*, context, repo_name: str, focus: str):
             _ = context
             repo_input = str(repo_name or "").strip()
@@ -1501,14 +1655,22 @@ class ReActDailyNewsOrchestrator:
             limit: int = 8,
             focus: str = "",
             include_content: bool = False,
+            date: str = "",
         ):
             _ = context
             link = _pick_first_url_arg(url)
             if not link:
                 return "error: url is required."
             max_items = _safe_int(limit, 8, minimum=1, maximum=20)
+            date_text = str(date or "").strip() or None
             try:
-                feed = await fetch_rss_feed(link, limit=max_items, timeout_s=20)
+                feed = await fetch_rss_feed(
+                    link,
+                    limit=max_items,
+                    timeout_s=20,
+                    date_text=date_text,
+                    keep_only_report_day=True,
+                )
             except Exception as e:
                 return f"error: rss fetch failed for `{link}`: {_exception_text(e)}"
             packed = {
@@ -1538,6 +1700,7 @@ class ReActDailyNewsOrchestrator:
                     "limit": {"type": "integer"},
                     "focus": {"type": "string"},
                     "include_content": {"type": "boolean"},
+                    "date": {"type": "string"},
                 },
                 "required": ["url"],
             },

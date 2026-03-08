@@ -25,6 +25,7 @@ except Exception:  # pragma: no cover
 
 _DATA_URI_RE = re.compile(r"^data:image/[a-zA-Z0-9.+-]+;base64,", re.I)
 _IMG_CLASS_RE = re.compile(r'\sclass=(?P<q>["\'])(?P<cls>[^"\']*)(?P=q)', re.I)
+_IMG_ATTR_RE = re.compile(r'\s(?P<name>[a-zA-Z_:][-a-zA-Z0-9_:.]*)=(?P<q>["\'])(?P<val>[^"\']*)(?P=q)', re.I)
 _FETCH_WARNED: set[tuple[str, int]] = set()
 _INLINE_NOOP_WARNED: set[str] = set()
 
@@ -504,6 +505,88 @@ def _merge_img_class_attr(tag: str, classes_to_add: list[str]) -> str:
     return tag[: m.start("cls")] + merged + tag[m.end("cls") :]
 
 
+def _img_attrs(tag: str) -> dict[str, str]:
+    attrs: dict[str, str] = {}
+    for m in _IMG_ATTR_RE.finditer(tag or ""):
+        name = str(m.group("name") or "").strip().lower()
+        if not name:
+            continue
+        attrs[name] = _html.unescape(str(m.group("val") or "").strip())
+    return attrs
+
+
+def _parse_img_layout_hints(tag: str) -> list[str]:
+    attrs = _img_attrs(tag)
+    hint_texts: list[str] = []
+    for key in ("title", "alt", "data-layout", "data-image-layout"):
+        value = str(attrs.get(key) or "").strip()
+        if value:
+            hint_texts.append(value)
+    if not hint_texts:
+        return []
+
+    hint_blob = " | ".join(hint_texts).lower()
+    hint_blob = hint_blob.replace("_", "-")
+    classes: list[str] = ["md-img"]
+
+    size = ""
+    align = ""
+
+    size_match = re.search(r"(?:^|[\s|,;])size\s*[:=]\s*(full|large|medium|small|narrow)", hint_blob)
+    if size_match:
+        size = size_match.group(1)
+    else:
+        for candidate in ("size-full", "size-large", "size-medium", "size-small", "size-narrow"):
+            if candidate in hint_blob:
+                size = candidate.split("-", 1)[1]
+                break
+
+    align_match = re.search(r"(?:^|[\s|,;])(?:layout|align|image-layout)\s*[:=]\s*(center|left|right|float-left|float-right|side-left|side-right)", hint_blob)
+    if align_match:
+        align = align_match.group(1)
+    else:
+        for candidate in (
+            "float-left",
+            "float-right",
+            "side-left",
+            "side-right",
+            "align-left",
+            "align-right",
+            "align-center",
+            "layout-left",
+            "layout-right",
+            "layout-center",
+        ):
+            if candidate in hint_blob:
+                align = candidate
+                break
+
+    if size in {"full", "large"}:
+        classes.append("md-img--full")
+    elif size == "medium":
+        classes.append("md-img--medium")
+    elif size in {"small", "narrow"}:
+        classes.append("md-img--narrow")
+
+    if align in {"left", "float-left", "side-left", "align-left", "layout-left"}:
+        if not any(c in classes for c in ("md-img--medium", "md-img--narrow")):
+            classes.append("md-img--medium")
+        classes.append("md-img--float-l")
+    elif align in {"right", "float-right", "side-right", "align-right", "layout-right"}:
+        if not any(c in classes for c in ("md-img--medium", "md-img--narrow")):
+            classes.append("md-img--medium")
+        classes.append("md-img--float-r")
+    elif align in {"center", "align-center", "layout-center"}:
+        if not any(c in classes for c in ("md-img--full", "md-img--medium", "md-img--narrow")):
+            classes.append("md-img--full")
+
+    deduped: list[str] = []
+    for cls in classes:
+        if cls and cls not in deduped:
+            deduped.append(cls)
+    return deduped
+
+
 def _inject_img_data_attrs(tag: str, *, width: int, height: int) -> str:
     if width <= 0 or height <= 0:
         return tag
@@ -575,9 +658,10 @@ async def adaptive_layout_html_images(
         tag = f"<img{before} src={q}{src}{q}{after}>"
         sz = sizes.get(src)
         nonlocal float_toggle
+        hinted_classes = _parse_img_layout_hints(tag)
         if sz:
             w, h = sz
-            classes = _classify_image_for_layout(
+            classes = hinted_classes or _classify_image_for_layout(
                 width=w,
                 height=h,
                 full_max_width=full_max_width,
@@ -587,12 +671,18 @@ async def adaptive_layout_html_images(
                 float_enabled=float_enabled,
                 float_dir=float_toggle,
             )
+            if hinted_classes:
+                astrbot_logger.info(
+                    "[dailynews] image layout hints applied src=%s classes=%s",
+                    src[:180],
+                    classes,
+                )
             if "md-img--float-r" in classes or "md-img--float-l" in classes:
                 float_toggle = "l" if float_toggle == "r" else "r"
             tag = _merge_img_class_attr(tag, classes)
             tag = _inject_img_data_attrs(tag, width=w, height=h)
         else:
-            tag = _merge_img_class_attr(tag, ["md-img", "md-img--full"])
+            tag = _merge_img_class_attr(tag, hinted_classes or ["md-img", "md-img--full"])
         return tag
 
     out = _IMG_SRC_RE.sub(repl, s, count=max_images)
