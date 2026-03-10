@@ -213,10 +213,18 @@ class ToolBasedLayoutEditor:
                     ),
                 },
                 "tools": {
-                    "insert_image": "md_doc_match_insert_image(doc_id, match, image_url, ...)",
+                    "insert_image": "md_doc_match_insert_image(doc_id, match, image_url, alt=?, layout=?, size=?, title=?, caption=?)",
                     "apply_edits": "md_doc_apply_edits(doc_id, edits=[...])",
                     "read": "md_doc_read(doc_id, start=0, max_chars=2400)",
                     "image_meta": "image_url_download(url) -> {local_path,width,height}",
+                },
+                "image_layout_hints": {
+                    "preferred": "优先侧边图，不要默认全居中；只有封面/海报/氛围大图才居中。",
+                    "examples": [
+                        "layout=float-right size=medium",
+                        "layout=float-left size=medium",
+                        "layout=center size=full"
+                    ]
                 },
                 "output_schema": {
                     "done": "boolean",

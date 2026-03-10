@@ -283,6 +283,8 @@ class NewsWorkflowManager:
                     name, articles = r
                     fetched[name] = articles
 
+                layout_cfg = ImageLayoutConfig.from_mapping(user_config)
+
                 workflow_mode = (
                     str(user_config.get("news_workflow_mode", "multi") or "multi")
                     .strip()
@@ -312,6 +314,37 @@ class NewsWorkflowManager:
                     final_md = sanitize_markdown_for_publish(
                         str(react_result.final_markdown or "")
                     )
+                    react_layout_sub_results = list(
+                        getattr(react_result, "layout_sub_results", []) or []
+                    )
+                    react_layout_guidance = str(
+                        getattr(react_result, "image_layout_guidance", "") or ""
+                    ).strip()
+                    if layout_cfg.enabled and final_md and react_layout_sub_results:
+                        try:
+                            astrbot_logger.info(
+                                "[dailynews][react] image_layout start sources=%s guidance=%s",
+                                len(react_layout_sub_results),
+                                bool(react_layout_guidance),
+                            )
+                            final_md = await ImageLayoutAgent().enhance_markdown(
+                                draft_markdown=final_md,
+                                sub_results=react_layout_sub_results,
+                                user_config=user_config,
+                                astrbot_context=astrbot_context,
+                                image_plan=None,
+                                layout_guidance=react_layout_guidance,
+                            )
+                            final_md = sanitize_markdown_for_publish(str(final_md or ""))
+                            astrbot_logger.info(
+                                "[dailynews][react] image_layout done has_image=%s",
+                                bool(re.search(r"!\[[^\]]*\]\(", (final_md or "")))
+                                or ("<img" in (final_md or "")),
+                            )
+                        except Exception as e:
+                            astrbot_logger.warning(
+                                "[dailynews][react] image_layout failed: %s", e, exc_info=True
+                            )
                     if not final_md:
                         return {
                             "status": "error",

@@ -39,7 +39,11 @@ from ..core.config_models import (
     RenderPipelineConfig,
     SingleAgentConfig,
 )
-from ..core.image_utils import get_plugin_data_dir
+from ..core.image_utils import (
+    _should_externalize_image,
+    get_plugin_data_dir,
+    probe_image_size_from_url,
+)
 from ..core.models import NewsSourceConfig
 from .render_pipeline import render_daily_news_pages, split_pages
 from .rendering import load_template
@@ -85,6 +89,10 @@ LAYOUT_REFINE_PREVIEW_TIMEOUT_MS = 20000
 _MD_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\((https?://[^)]+)\)")
 _H2_SECTION_RE = re.compile(r"^##\s*(.+?)\s*$")
 _MD_IMAGE_RE = re.compile(r"!\[[^\]]*]\((https?://[^)\s]+)\)", flags=re.I)
+_MD_IMAGE_ENTRY_RE = re.compile(
+    r"!\[(?P<alt>[^\]]*)\]\((?P<url>https?://[^)\s]+)(?:\s+\"[^\"]*\")?\)",
+    flags=re.I,
+)
 _HTML_IMG_RE = re.compile(r"<img[^>]+src=[\"'](https?://[^\"'>\s]+)", flags=re.I)
 
 
@@ -181,6 +189,46 @@ def _build_forward_nodes_from_links(
     if buf and len(chunks) < max_nodes:
         chunks.append(buf.strip())
     return [c for c in chunks if c.strip()]
+
+
+def _extract_report_image_entries(
+    md: str, *, max_images: int = 24
+) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for match in _MD_IMAGE_ENTRY_RE.finditer(md or ""):
+        url = str(match.group("url") or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        out.append(
+            {
+                "url": url,
+                "alt": str(match.group("alt") or "").strip(),
+            }
+        )
+        if len(out) >= max(1, int(max_images)):
+            break
+    return out
+
+
+def _build_appendix_image_rows(
+    images: list[dict[str, Any]],
+) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    for idx, item in enumerate(images, start=1):
+        url = str(item.get("url") or "").strip()
+        if not url:
+            continue
+        alt = str(item.get("alt") or "").strip() or f"?? {idx}"
+        width = int(item.get("width") or 0)
+        height = int(item.get("height") or 0)
+        if width > 0 and height > 0:
+            label = f"{alt}??? {width}?{height}?"
+        else:
+            label = f"{alt}??????"
+        rows.append((label, url))
+    return rows
 
 
 def _normalize_umo(
@@ -425,6 +473,16 @@ class DailyNewsScheduler:
                 for x in (payload.get("link_node_chunks") or [])
                 if str(x).strip()
             ],
+            "appendix_images": [
+                {
+                    "url": str(item.get("url") or "").strip(),
+                    "alt": str(item.get("alt") or "").strip(),
+                    "width": int(item.get("width") or 0),
+                    "height": int(item.get("height") or 0),
+                }
+                for item in (payload.get("appendix_images") or [])
+                if str(item.get("url") or "").strip()
+            ],
             "created_at": now.isoformat(),
             "expires_at": (now + timedelta(minutes=ttl_minutes)).isoformat(),
         }
@@ -482,6 +540,146 @@ class DailyNewsScheduler:
         except Exception:
             return []
 
+    async def _collect_appendix_long_images(
+        self, content: str, *, max_items: int = 8
+    ) -> list[dict[str, Any]]:
+        candidates = _extract_report_image_entries(
+            content, max_images=max(max_items * 3, max_items)
+        )
+        if not candidates:
+            return []
+
+        out: list[dict[str, Any]] = []
+        for item in candidates:
+            url = str(item.get("url") or "").strip()
+            if not url:
+                continue
+            try:
+                size = await probe_image_size_from_url(url)
+            except Exception:
+                size = None
+            if not size:
+                continue
+            width, height = size
+            if not _should_externalize_image(width=width, height=height, classes=[]):
+                continue
+            out.append(
+                {
+                    "url": url,
+                    "alt": str(item.get("alt") or "").strip(),
+                    "width": int(width),
+                    "height": int(height),
+                }
+            )
+            if len(out) >= max(1, int(max_items)):
+                break
+        return out
+
+    def _replace_appendix_images_with_notices(
+        self, content: str, appendix_images: list[dict[str, Any]]
+    ) -> str:
+        if not appendix_images:
+            return str(content or "")
+
+        mapping: dict[str, str] = {}
+        for idx, item in enumerate(appendix_images, start=1):
+            url = str(item.get("url") or "").strip()
+            if not url:
+                continue
+            alt = str(item.get("alt") or "").strip() or f"?? {idx}"
+            mapping[url] = f"> ??????????????{alt}"
+
+        def repl(match: re.Match) -> str:
+            url = str(match.group("url") or "").strip()
+            return mapping.get(url, match.group(0))
+
+        updated = _MD_IMAGE_ENTRY_RE.sub(repl, str(content or ""))
+        updated = re.sub(r"\n{3,}", "\n\n", updated).strip()
+        return updated
+
+    async def _build_appendix_node_chunks(
+        self, content: str, config: dict[str, Any]
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        links_by_section: dict[str, list[tuple[str, str]]] = {}
+        if self._send_links_forward(config):
+            links_by_section.update(_extract_report_links(content, max_links=120))
+
+        appendix_images: list[dict[str, Any]] = []
+        if self._actual_delivery_mode(config) == "html_image":
+            appendix_images = await self._collect_appendix_long_images(content)
+            if appendix_images:
+                links_by_section["????"] = _build_appendix_image_rows(appendix_images)
+
+        if not links_by_section:
+            return [], appendix_images
+
+        return (
+            _build_forward_nodes_from_links(
+                links_by_section,
+                title="?????????????",
+                max_node_chars=650,
+                max_nodes=16,
+            ),
+            appendix_images,
+        )
+
+    def _normalize_appendix_images(self, value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            out.append(
+                {
+                    "url": url,
+                    "alt": str(item.get("alt") or "").strip(),
+                    "width": int(item.get("width") or 0),
+                    "height": int(item.get("height") or 0),
+                }
+            )
+        return out
+
+    def _build_appendix_image_nodes(self, images: list[dict[str, Any]]) -> list[Any]:
+        if _NodeComponent is None or _PlainComponent is None or _ImageComponent is None:
+            return []
+        nodes: list[Any] = []
+        for idx, item in enumerate(self._normalize_appendix_images(images), start=1):
+            url = str(item.get("url") or "").strip()
+            if not url:
+                continue
+            alt = str(item.get("alt") or "").strip() or f"?? {idx}"
+            width = int(item.get("width") or 0)
+            height = int(item.get("height") or 0)
+            title = f"???? {idx}?{alt}"
+            if width > 0 and height > 0:
+                title = f"{title}?{width}?{height}?"
+            image_comp = None
+            try:
+                if hasattr(_ImageComponent, "fromURL"):
+                    image_comp = _ImageComponent.fromURL(url)
+                else:
+                    image_comp = _ImageComponent(file=url)
+            except Exception:
+                image_comp = None
+            content_items: list[Any] = [_PlainComponent(title)]
+            if image_comp is not None:
+                content_items.append(image_comp)
+            content_items.append(_PlainComponent(url))
+            nodes.append(
+                _NodeComponent(
+                    uin="0",
+                    name="??????",
+                    content=content_items,
+                )
+            )
+        return nodes
+
     async def _build_report_payload(
         self,
         content: str,
@@ -493,13 +691,25 @@ class DailyNewsScheduler:
             "content": str(content or ""),
             "img_paths": [],
             "link_node_chunks": [],
+            "appendix_images": [],
             "cache_hit": bool(cache_hit),
         }
-        if self._send_links_forward(config):
-            payload["link_node_chunks"] = self._build_link_node_chunks(content)
+        render_content = str(content or "")
+        payload["link_node_chunks"], appendix_images = await self._build_appendix_node_chunks(
+            render_content, config
+        )
+        payload["appendix_images"] = list(appendix_images or [])
+        if appendix_images:
+            render_content = self._replace_appendix_images_with_notices(
+                render_content, appendix_images
+            )
+            astrbot_logger.info(
+                "[dailynews] moved %s long images to appendix forward",
+                len(appendix_images),
+            )
         if self._actual_delivery_mode(config) == "html_image":
             payload["img_paths"] = self._valid_cached_img_paths(
-                await self._render_content_images(content, config=config)
+                await self._render_content_images(render_content, config=config)
             )
         return payload
 
@@ -525,12 +735,28 @@ class DailyNewsScheduler:
                         for x in (cached.get("link_node_chunks") or [])
                         if str(x).strip()
                     ],
+                    "appendix_images": [
+                        {
+                            "url": str(item.get("url") or "").strip(),
+                            "alt": str(item.get("alt") or "").strip(),
+                            "width": int(item.get("width") or 0),
+                            "height": int(item.get("height") or 0),
+                        }
+                        for item in (cached.get("appendix_images") or [])
+                        if isinstance(item, dict) and str(item.get("url") or "").strip()
+                    ],
                     "cache_hit": True,
                     "created_at": str(cached.get("created_at") or ""),
                     "expires_at": str(cached.get("expires_at") or ""),
                 }
-                if self._send_links_forward(config) and not payload["link_node_chunks"]:
-                    payload["link_node_chunks"] = self._build_link_node_chunks(content)
+                if not payload["link_node_chunks"] or not payload.get("appendix_images"):
+                    rebuilt_chunks, rebuilt_images = await self._build_appendix_node_chunks(
+                        content, config
+                    )
+                    if not payload["link_node_chunks"]:
+                        payload["link_node_chunks"] = rebuilt_chunks
+                    if not payload.get("appendix_images"):
+                        payload["appendix_images"] = rebuilt_images
                 astrbot_logger.info(
                     "[dailynews] report cache hit source=%s expires_at=%s",
                     source,
@@ -1347,17 +1573,23 @@ class DailyNewsScheduler:
             return 0
 
         delivery_mode = self._actual_delivery_mode(config)
-        send_links_forward = self._send_links_forward(config)
-
         link_node_chunks: list[str] = []
+        appendix_images: list[dict[str, Any]] = []
         if isinstance(prepared, dict):
             link_node_chunks = [
                 str(x)
                 for x in (prepared.get("link_node_chunks") or [])
                 if str(x).strip()
             ]
-        if send_links_forward and not link_node_chunks:
-            link_node_chunks = self._build_link_node_chunks(content)
+            appendix_images = self._normalize_appendix_images(
+                prepared.get("appendix_images") or []
+            )
+        if not link_node_chunks or not appendix_images:
+            rebuilt_chunks, rebuilt_images = await self._build_appendix_node_chunks(content, config)
+            if not link_node_chunks:
+                link_node_chunks = rebuilt_chunks
+            if not appendix_images:
+                appendix_images = rebuilt_images
 
         img_paths: list[str] = []
         if delivery_mode == "html_image":
@@ -1398,7 +1630,7 @@ class DailyNewsScheduler:
                             sent_this = True
                         except Exception:
                             continue
-                    if sent_this and send_links_forward and link_node_chunks:
+                    if sent_this and (link_node_chunks or appendix_images):
                         try:
                             if (
                                 _NodesComponent is not None
@@ -1408,28 +1640,47 @@ class DailyNewsScheduler:
                                 nodes = [
                                     _NodeComponent(
                                         uin="0",
-                                        name="每日资讯日报",
+                                        name="??????",
                                         content=[_PlainComponent(chunk)],
                                     )
                                     for chunk in link_node_chunks
                                 ]
-                                chain = MessageChain()
-                                chain.chain.append(_NodesComponent(nodes))
-                                await self.context.send_message(umo, chain)
+                                nodes.extend(self._build_appendix_image_nodes(appendix_images))
+                                if nodes:
+                                    chain = MessageChain()
+                                    chain.chain.append(_NodesComponent(nodes))
+                                    await self.context.send_message(umo, chain)
                             else:
+                                fallback_parts = list(link_node_chunks)
+                                fallback_parts.extend(
+                                    [
+                                        str(item.get("url") or "").strip()
+                                        for item in appendix_images
+                                        if str(item.get("url") or "").strip()
+                                    ]
+                                )
                                 chain = MessageChain().message(
-                                    "\n\n".join(link_node_chunks)
+                                    "\n\n".join([x for x in fallback_parts if x])
                                 )
                                 await self.context.send_message(umo, chain)
                         except Exception:
                             # Fallback to plain text if merged-forward fails on this platform.
                             try:
+                                fallback_parts = list(link_node_chunks)
+                                fallback_parts.extend(
+                                    [
+                                        str(item.get("url") or "").strip()
+                                        for item in appendix_images
+                                        if str(item.get("url") or "").strip()
+                                    ]
+                                )
                                 chain = MessageChain().message(
-                                    "\n\n".join(link_node_chunks)
+                                    "\n\n".join([x for x in fallback_parts if x])
                                 )
                                 await self.context.send_message(umo, chain)
                             except Exception:
                                 pass
+
                     if not sent_this:
                         # Fallback: if sending images fails (platform timeout / upload issues), try plain text.
                         try:

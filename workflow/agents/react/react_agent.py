@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -46,6 +47,8 @@ class ReactRunResult:
     missing_parts: list[str] = field(default_factory=list)
     tool_trace: list[ToolTrace] = field(default_factory=list)
     termination_reason: str = ""
+    layout_sub_results: list[Any] = field(default_factory=list)
+    image_layout_guidance: str = ""
 
 
 class ReActAgent:
@@ -57,6 +60,7 @@ class ReActAgent:
         shared_memory: SharedMemory,
         config: ReactAgentConfig,
         provider_id: str = "",
+        provider_ids: Iterable[str] | None = None,
         session_id: str | None = None,
     ):
         self._ctx = astrbot_context
@@ -64,23 +68,69 @@ class ReActAgent:
         self._memory = shared_memory
         self._config = config
         self._provider_id = str(provider_id or "").strip()
+        ids: list[str] = []
+        if provider_ids is not None:
+            for x in provider_ids:
+                if not isinstance(x, str):
+                    continue
+                s = x.strip()
+                if not s or s in ids:
+                    continue
+                ids.append(s)
+        if self._provider_id and self._provider_id not in ids:
+            ids.insert(0, self._provider_id)
+        self._provider_ids = ids
         self._session_id = session_id or f"react:{uuid.uuid4().hex[:10]}"
 
-    async def _resolve_provider(self) -> Provider:
-        if self._provider_id:
-            prov = await self._ctx.provider_manager.get_provider_by_id(
-                self._provider_id
-            )
-            if prov is not None:
-                return prov
-            astrbot_logger.warning(
-                "[dailynews][react] provider_id=%s not found, fallback to current provider",
-                self._provider_id,
-            )
+    async def _resolve_providers(self) -> list[tuple[str, Provider]]:
+        providers: list[tuple[str, Provider]] = []
+        for pid in self._provider_ids:
+            prov = await self._ctx.provider_manager.get_provider_by_id(pid)
+            if prov is None:
+                astrbot_logger.warning(
+                    "[dailynews][react] provider_id=%s not found, skip in provider chain",
+                    pid,
+                )
+                continue
+            providers.append((pid, prov))
+        if providers:
+            return providers
         prov = self._ctx.get_using_provider()
         if prov is None:
             raise RuntimeError("No chat provider available for react mode")
-        return prov
+        return [("(current)", prov)]
+
+    async def _chat_with_provider_chain(self, *, contexts: list[Message], func_tool: Any):
+        last_exc: BaseException | None = None
+        last_err_resp = None
+        for pid, provider in await self._resolve_providers():
+            try:
+                resp = await provider.text_chat(contexts=contexts, func_tool=func_tool)
+                if getattr(resp, "role", None) == "err":
+                    last_err_resp = resp
+                    astrbot_logger.warning(
+                        "[dailynews][react] provider=%s returned err role, try next provider: %s",
+                        pid,
+                        getattr(resp, "completion_text", "") or "(empty)",
+                    )
+                    continue
+                return resp
+            except Exception as e:
+                last_exc = e
+                astrbot_logger.warning(
+                    "[dailynews][react] provider=%s chat failed, try next provider: %s",
+                    pid,
+                    e,
+                    exc_info=True,
+                )
+                continue
+        if last_exc is not None:
+            raise RuntimeError(
+                f"react provider chain failed: {type(last_exc).__name__}: {last_exc}"
+            )
+        if last_err_resp is not None:
+            return last_err_resp
+        raise RuntimeError("react provider chain failed: no provider available")
 
     def _format_memory_for_prompt(self, *, max_item_chars: int = 2400) -> str:
         memory = self._memory.read_all()
@@ -173,13 +223,13 @@ class ReActAgent:
             "3) If some parts are unavailable, clearly mention missing parts in the final report.\n"
             "4) Use web-search tools for recent facts, external background, and cross-source verification.\n"
             "5) If a good page-extraction tool is available, extract the target page before summarizing it.\n"
+            "6) If images matter for presentation, collect source materials first, then use the image-brief tool to tell the downstream image-layout agent what to do.\n"
             f"Current step: {step}/{max_steps}."
         )
 
     async def _finalize_without_tools(
         self,
         *,
-        provider: Provider,
         conversation: list[Message],
         user_goal: str,
         reason: str,
@@ -205,11 +255,10 @@ class ReActAgent:
                 ),
             ),
         ]
-        resp = await provider.text_chat(contexts=msgs, func_tool=None)
+        resp = await self._chat_with_provider_chain(contexts=msgs, func_tool=None)
         return (resp.completion_text or "").strip()
 
     async def run(self, *, user_goal: str, initial_context: str = "") -> ReactRunResult:
-        provider = await self._resolve_provider()
         toolset = self._registry.build_toolset()
         event = make_internal_event(session_id=self._session_id)
         run_context = ContextWrapper(
@@ -240,7 +289,7 @@ class ReActAgent:
                 *conversation,
             ]
 
-            llm_resp = await provider.text_chat(contexts=messages, func_tool=toolset)
+            llm_resp = await self._chat_with_provider_chain(contexts=messages, func_tool=toolset)
             if llm_resp.role == "err":
                 termination_reason = f"llm_error: {llm_resp.completion_text}"
                 break
@@ -348,7 +397,6 @@ class ReActAgent:
             termination_reason = "max_steps_reached"
 
         final_md = await self._finalize_without_tools(
-            provider=provider,
             conversation=conversation,
             user_goal=user_goal,
             reason=termination_reason,

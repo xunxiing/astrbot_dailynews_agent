@@ -247,6 +247,78 @@ def _format_prefetched_source_for_tool(
     return "\n".join(lines).strip()
 
 
+def _coerce_react_layout_sub_result(agent_id: str, payload: Any) -> SubAgentResult | None:
+    if not isinstance(payload, dict):
+        return None
+    source_name = str(payload.get("source_name") or agent_id or "").strip()
+    if not source_name:
+        return None
+    content = str(payload.get("content") or "").strip()
+    summary = str(payload.get("summary") or "").strip()
+    raw_points = payload.get("key_points") or []
+    key_points = (
+        [str(x).strip() for x in raw_points if str(x).strip()]
+        if isinstance(raw_points, list)
+        else []
+    )
+    images = _extract_image_urls(payload, max_count=24)
+    error = str(payload.get("error") or "").strip() or None
+    if not content and not summary and not key_points and not images:
+        return None
+    return SubAgentResult(
+        source_name=source_name,
+        content=content,
+        summary=summary,
+        key_points=key_points,
+        images=images or None,
+        error=error,
+    )
+
+
+def _collect_react_layout_sub_results(memory: SharedMemory) -> list[SubAgentResult]:
+    snapshot = memory.read_all()
+    out: list[SubAgentResult] = []
+    seen: set[str] = set()
+    for agent_id, payload in snapshot.items():
+        aid = str(agent_id or "").strip()
+        if not aid.startswith("vertical::"):
+            continue
+        row = _coerce_react_layout_sub_result(aid, payload)
+        if row is None:
+            continue
+        fp = f"{row.source_name}::{len(row.images or [])}::{hash((row.content or '')[:400])}"
+        if fp in seen:
+            continue
+        seen.add(fp)
+        out.append(row)
+    return out
+
+
+def _format_image_layout_guidance(payload: Any) -> str:
+    if isinstance(payload, str):
+        return payload.strip()
+    if not isinstance(payload, dict):
+        return ""
+    lines: list[str] = []
+    guidance = str(payload.get("guidance") or payload.get("brief") or "").strip()
+    if guidance:
+        lines.append(guidance)
+    preferred_sources = payload.get("preferred_sources") or []
+    if isinstance(preferred_sources, list):
+        srcs = [str(x).strip() for x in preferred_sources if str(x).strip()]
+        if srcs:
+            lines.append("Preferred sources: " + ", ".join(srcs[:8]))
+    preferred_urls = payload.get("preferred_image_urls") or []
+    if isinstance(preferred_urls, list):
+        urls = [str(x).strip() for x in preferred_urls if str(x).strip()]
+        if urls:
+            lines.append("Preferred image URLs:\n" + "\n".join(urls[:8]))
+    avoid = str(payload.get("avoid") or "").strip()
+    if avoid:
+        lines.append("Avoid: " + avoid)
+    return "\n".join([x for x in lines if x]).strip()
+
+
 def _format_vertical_tool_output(payload: Any, *, max_chars: int = 5200) -> str:
     if not isinstance(payload, dict):
         return _to_brief_text(payload, max_chars=max_chars)
@@ -659,28 +731,29 @@ class ReActDailyNewsOrchestrator:
     def __init__(self, *, sub_agent_classes: dict[str, Any]):
         self._sub_agent_classes = dict(sub_agent_classes or {})
 
-    def _pick_provider_id(
+    def _pick_provider_chain(
         self, *, user_config: dict[str, Any], react_cfg: ReactAgentConfig
-    ) -> str:
-        if react_cfg.provider_id:
-            return react_cfg.provider_id
-        provider_id = str(user_config.get("main_agent_provider_id") or "").strip()
-        if provider_id:
-            return provider_id
+    ) -> list[str]:
+        ordered: list[str] = []
+
+        def _push(value: Any) -> None:
+            s = str(value or "").strip()
+            if s and s not in ordered:
+                ordered.append(s)
+
+        _push(react_cfg.provider_id)
+        _push(user_config.get("main_agent_provider_id"))
         raw_list = user_config.get("main_agent_fallback_provider_ids") or []
         if isinstance(raw_list, list):
             for x in raw_list:
-                if isinstance(x, str) and x.strip():
-                    return x.strip()
+                _push(x)
         for k in (
             "main_agent_fallback_provider_id_1",
             "main_agent_fallback_provider_id_2",
             "main_agent_fallback_provider_id_3",
         ):
-            v = user_config.get(k)
-            if isinstance(v, str) and v.strip():
-                return v.strip()
-        return ""
+            _push(user_config.get(k))
+        return ordered
 
     async def _vertical_web_fallback(
         self,
@@ -831,6 +904,11 @@ class ReActDailyNewsOrchestrator:
                 full_instruction = (
                     f"{instruction}\n\nDependency context:\n{injected_prompt}"
                 )
+            full_instruction = (
+                f"{full_instruction}\n\n"
+                "When useful, preserve a small set of strong, relevant image URLs in the returned images field. "
+                "Prefer official posters, key screenshots, or images that best represent the section."
+            )
 
             async def _call_process() -> Any:
                 try:
@@ -1462,9 +1540,10 @@ class ReActDailyNewsOrchestrator:
         fetched: dict[str, list[dict[str, Any]]],
     ) -> ReactRunResult:
         react_cfg = ReactAgentConfig.from_mapping(user_config)
-        provider_id = self._pick_provider_id(
+        provider_chain = self._pick_provider_chain(
             user_config=user_config, react_cfg=react_cfg
         )
+        provider_id = provider_chain[0] if provider_chain else ""
         memory = SharedMemory.instance()
         memory.reset()
         registry = ToolRegistry()
@@ -1541,6 +1620,10 @@ class ReActDailyNewsOrchestrator:
                 vertical_llm_timeout_s,
             )
         astrbot_logger.info(
+            "[dailynews][react] provider chain=%s",
+            provider_chain or ["(current)"],
+        )
+        astrbot_logger.info(
             "[dailynews][react] timeout budgets tool_call=%s vertical_llm=%s vertical_analyze=%s vertical_process=%s",
             int(react_cfg.tool_call_timeout_s),
             vertical_llm_timeout_s,
@@ -1551,14 +1634,14 @@ class ReActDailyNewsOrchestrator:
             astrbot_context,
             timeout_s=vertical_llm_timeout_s,
             max_retries=vertical_llm_max_retries,
-            provider_id=provider_id or None,
+            provider_ids=provider_chain or None,
         )
 
         llm_writer = LLMRunner(
             astrbot_context,
             timeout_s=max(60, int(user_config.get("llm_write_timeout_s", 360) or 360)),
             max_retries=max(0, int(user_config.get("llm_max_retries", 1) or 1)),
-            provider_id=provider_id or None,
+            provider_ids=provider_chain or None,
         )
 
         async def _tool_read_prefetched_source(
@@ -1911,6 +1994,59 @@ class ReActDailyNewsOrchestrator:
             target_urls=target_urls,
         )
 
+        async def _tool_set_image_layout_brief(
+            *,
+            context,
+            guidance: str = "",
+            preferred_sources: list[str] | None = None,
+            preferred_image_urls: list[str] | None = None,
+            avoid: str = "",
+        ):
+            _ = context
+            payload = {
+                "guidance": str(guidance or "").strip(),
+                "preferred_sources": [
+                    str(x).strip() for x in (preferred_sources or []) if str(x).strip()
+                ][:12],
+                "preferred_image_urls": [
+                    str(x).strip()
+                    for x in (preferred_image_urls or [])
+                    if str(x).strip()
+                ][:16],
+                "avoid": str(avoid or "").strip(),
+            }
+            existing = memory.read(["react::image_layout_brief"]).get("react::image_layout_brief")
+            if isinstance(existing, dict):
+                if not payload["guidance"]:
+                    payload["guidance"] = str(existing.get("guidance") or "").strip()
+                payload["preferred_sources"] = list(dict.fromkeys([
+                    *[str(x).strip() for x in (existing.get("preferred_sources") or []) if str(x).strip()],
+                    *payload["preferred_sources"],
+                ]))[:12]
+                payload["preferred_image_urls"] = list(dict.fromkeys([
+                    *[str(x).strip() for x in (existing.get("preferred_image_urls") or []) if str(x).strip()],
+                    *payload["preferred_image_urls"],
+                ]))[:16]
+                if not payload["avoid"]:
+                    payload["avoid"] = str(existing.get("avoid") or "").strip()
+            memory.write("react::image_layout_brief", payload)
+            return _format_image_layout_guidance(payload) or "ok: image layout brief stored"
+
+        registry.register_callable(
+            name="tool_set_image_layout_brief",
+            description="Store guidance for the downstream image-layout agent, including preferred sources and image URLs.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "guidance": {"type": "string"},
+                    "preferred_sources": {"type": "array", "items": {"type": "string"}},
+                    "preferred_image_urls": {"type": "array", "items": {"type": "string"}},
+                    "avoid": {"type": "string"}
+                }
+            },
+            handler=_tool_set_image_layout_brief,
+        )
+
         async def _tool_write_report(
             *,
             context,
@@ -2009,12 +2145,23 @@ class ReActDailyNewsOrchestrator:
             shared_memory=memory,
             config=react_cfg,
             provider_id=provider_id,
+            provider_ids=provider_chain or None,
         )
         result = await agent.run(user_goal=user_goal, initial_context=initial_context)
+        layout_sub_results = _collect_react_layout_sub_results(memory)
+        layout_guidance = _format_image_layout_guidance(
+            memory.read(["react::image_layout_brief"]).get("react::image_layout_brief")
+        )
         astrbot_logger.info(
-            "[dailynews][react] done status=%s steps=%s reason=%s",
+            "[dailynews][react] done status=%s steps=%s reason=%s layout_sources=%s has_layout_guidance=%s",
             result.status,
             result.steps,
             result.termination_reason,
+            len(layout_sub_results),
+            bool(layout_guidance),
         )
-        return result
+        return replace(
+            result,
+            layout_sub_results=layout_sub_results,
+            image_layout_guidance=layout_guidance,
+        )

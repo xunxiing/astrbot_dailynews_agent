@@ -75,6 +75,36 @@ def _normalize_occurrence(value: Any, default: int = 1) -> int:
     return n
 
 
+def _build_image_markdown(
+    *,
+    image_url: str,
+    alt: str = "",
+    title: str = "",
+    layout: str = "",
+    size: str = "",
+    caption: str = "",
+) -> str:
+    image_url = (image_url or "").strip()
+    alt = (alt or "").strip()
+    title = (title or "").strip().replace('"', "'")
+    layout = (layout or "").strip()
+    size = (size or "").strip()
+    caption = (caption or "").strip()
+
+    if not title:
+        hints: list[str] = []
+        if layout:
+            hints.append(f"layout={layout}")
+        if size:
+            hints.append(f"size={size}")
+        title = " ".join(hints).strip()
+
+    img_md = f"![{alt}]({image_url}{f' "{title}"' if title else ''})"
+    if caption:
+        return f"{img_md}\n\n*{caption}*"
+    return img_md
+
+
 def _find_spans(
     text: str, *, match: str, regex: bool, occurrence: int
 ) -> list[tuple[int, int]]:
@@ -404,7 +434,7 @@ class MarkdownDocApplyEditsTool(FunctionTool[AstrAgentContext]):
 @dataclass
 class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
     name: str = "md_doc_match_insert_image"
-    description: str = "Match text in markdown and insert an image markdown `![](url)` right after the matched line."
+    description: str = "Match text in markdown and insert an image markdown right after the matched line, optionally with layout/title/caption hints."
     parameters: dict[str, Any] = Field(
         default_factory=lambda: {
             "type": "object",
@@ -421,6 +451,22 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
                 },
                 "image_url": {"type": "string", "description": "Image URL to insert"},
                 "alt": {"type": "string", "description": "Alt text, default empty"},
+                "title": {
+                    "type": "string",
+                    "description": "Optional markdown image title, e.g. `layout=float-right size=medium`",
+                },
+                "layout": {
+                    "type": "string",
+                    "description": "Optional layout hint: float-right | float-left | center",
+                },
+                "size": {
+                    "type": "string",
+                    "description": "Optional size hint: small | medium | full",
+                },
+                "caption": {
+                    "type": "string",
+                    "description": "Optional italic caption inserted below the image",
+                },
                 "ensure_blank_line": {
                     "type": "boolean",
                     "description": "Ensure blank lines around insertion, default true",
@@ -443,6 +489,10 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
         occurrence = _normalize_occurrence(kwargs.get("occurrence", 1), 1)
         image_url = str(kwargs.get("image_url") or "").strip()
         alt = str(kwargs.get("alt") or "")
+        title = str(kwargs.get("title") or "")
+        layout = str(kwargs.get("layout") or "")
+        size = str(kwargs.get("size") or "")
+        caption = str(kwargs.get("caption") or "")
         ensure_blank_line = bool(kwargs.get("ensure_blank_line", True))
         suggestions_limit = int(kwargs.get("suggestions_limit", 5) or 5)
 
@@ -495,7 +545,14 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
                 }
             )
 
-        img_md = f"![{alt}]({image_url})"
+        img_md = _build_image_markdown(
+            image_url=image_url,
+            alt=alt,
+            title=title,
+            layout=layout,
+            size=size,
+            caption=caption,
+        )
         targets = spans if occurrence == 0 else spans[:1]
         patched = md
         inserted = 0
@@ -524,6 +581,10 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
                 "regex": regex,
                 "occurrence": occurrence,
                 "image_url": image_url,
+                "title": title,
+                "layout": layout,
+                "size": size,
+                "caption": caption,
                 "matched_line": matched_line if inserted == 1 else None,
             }
         )

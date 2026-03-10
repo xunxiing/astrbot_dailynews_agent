@@ -105,6 +105,7 @@ class ImageLayoutAgent:
         user_config: dict[str, Any],
         astrbot_context: Any,
         image_plan: dict[str, Any] | None = None,
+        layout_guidance: str = "",
     ) -> str:
         layout_cfg = ImageLayoutConfig.from_mapping(user_config)
         if not layout_cfg.enabled:
@@ -287,18 +288,21 @@ class ImageLayoutAgent:
                     for u in urls:
                         if u in existing:
                             continue
-                        out += f"**{src}**\n![]({u})\n\n"
+                        out += f"**{src}**\n{_build_img_md(u, alt=src)}\n\n"
                         existing.add(u)
                 return out.strip()
 
-            def _apply_at_line(insert_at: int, url: str) -> None:
-                nonlocal lines
+            float_side = "right"
+
+            def _apply_at_line(insert_at: int, src: str, url: str) -> None:
+                nonlocal lines, float_side
                 insert_at = max(0, min(int(insert_at), len(lines)))
                 if insert_at > 0 and lines[insert_at - 1].strip():
                     lines.insert(insert_at, "")
                     insert_at += 1
-                lines.insert(insert_at, f"![]({url})")
+                lines.insert(insert_at, _build_img_md(url, alt=src, float_side=float_side))
                 lines.insert(insert_at + 1, "")
+                float_side = "left" if float_side == "right" else "right"
 
             used_any = False
             for src, urls in picked_by_source.items():
@@ -322,7 +326,7 @@ class ImageLayoutAgent:
                 for u in urls:
                     if u in existing:
                         continue
-                    _apply_at_line(insert_at, u)
+                    _apply_at_line(insert_at, src, u)
                     used_any = True
                     existing.add(u)
                     insert_at += 2
@@ -365,6 +369,67 @@ class ImageLayoutAgent:
             images_by_source = shuffled
 
         plan_by_source: dict[str, int] = {}
+        image_catalog: list[dict[str, Any]] = []
+
+        def _catalog_entry_for_url(url: str) -> dict[str, Any] | None:
+            target = str(url or "").strip()
+            if not target:
+                return None
+            for row in image_catalog:
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("url") or "").strip() == target:
+                    return row
+            return None
+
+        def _suggest_layout_hint(url: str) -> tuple[str, str]:
+            row = _catalog_entry_for_url(url) or {}
+            label = str(row.get("label") or "").lower()
+            try:
+                width = int(row.get("width") or 0)
+            except Exception:
+                width = 0
+            try:
+                height = int(row.get("height") or 0)
+            except Exception:
+                height = 0
+            aspect = (float(width) / float(height)) if width > 0 and height > 0 else 0.0
+
+            poster_words = (
+                "海报", "壁纸", "封面", "头图", "宣传", "视觉", "立绘", "概念图", "场景", "风景", "氛围", "主视觉"
+            )
+            ui_words = (
+                "界面", "ui", "截图", "实机", "菜单", "面板", "版本", "图表", "路线图", "数据", "公告", "活动页"
+            )
+            icon_words = ("表情", "头像", "图标", "icon", "logo", "贴纸")
+
+            portrait_ratio = (float(height) / float(width)) if width > 0 and height > 0 else 0.0
+            if portrait_ratio >= 2.35 and height >= 1200:
+                return "external", "external"
+            if any(word in label for word in poster_words) and portrait_ratio < 2.1:
+                return "center", "full"
+            if any(word in label for word in icon_words):
+                return "float-right", "small"
+            if any(word in label for word in ui_words):
+                return "float-right", "medium"
+            if aspect >= 1.9:
+                return "center", "full"
+            if aspect >= 1.35:
+                return "float-right", "medium"
+            if 0 < aspect <= 0.58 and portrait_ratio >= 2.2:
+                return "external", "external"
+            if 0 < aspect <= 0.8:
+                return "float-right", "small"
+            return "float-right", "medium"
+
+        def _build_img_md(url: str, *, alt: str = "", float_side: str = "right") -> str:
+            layout, size = _suggest_layout_hint(url)
+            side = "left" if str(float_side or "").strip().lower() == "left" else "right"
+            if layout in {"float-right", "float-left"}:
+                layout = f"float-{side}"
+            title = f'layout={layout} size={size}'.strip()
+            alt_text = str(alt or "").strip()
+            return f'![{alt_text}]({url} "{title}")'
 
         def _fallback_insert(md: str) -> str:
             picked: list[tuple[str, str]] = []
@@ -398,7 +463,7 @@ class ImageLayoutAgent:
                 lines_out: list[str] = [(md or "").rstrip(), "", "## 配图", ""]
                 for src, urls in picked_by_source.items():
                     for u in urls:
-                        lines_out.extend([f"**{src}**", f"![]({u})", ""])
+                        lines_out.extend([f"**{src}**", _build_img_md(u, alt=src), ""])
                 return "\n".join([x for x in lines_out if x is not None]).strip()
 
         if not images_by_source:
@@ -483,7 +548,6 @@ class ImageLayoutAgent:
 
         prompts = LayoutPrompts.from_files(load_template=load_template)
 
-        image_catalog: list[dict[str, Any]] = []
         label_cfg = ImageLabelConfig.from_mapping(user_config)
         if label_cfg.enabled and label_cfg.provider_id:
             # When we have per-image labels, avoid feeding the layout model a huge image list (and skip vision previews).
@@ -512,6 +576,12 @@ class ImageLayoutAgent:
                 tool_system += f"- 总图片数不超过 {max_images_total} 张；单个来源不超过 {max_images_per_source} 张。\n"
                 if image_plan:
                     tool_system += "- image_plan 表示主 Agent 对各来源图片数量的约束，请优先满足。\n"
+
+                tool_system += "- 优先侧边排版：除封面/海报/氛围大图外，不要默认全居中。\n"
+                tool_system += "- 插图时请显式给出 layout/size；常用 `layout=float-right size=medium`。\n"
+
+                if (layout_guidance or "").strip():
+                    tool_system += f"- Layout guidance from chief editor: {str(layout_guidance).strip()}\n"
 
                 patched = await ToolBasedLayoutEditor(system_prompt=tool_system).edit(
                     draft_markdown=draft_markdown,
@@ -577,6 +647,9 @@ class ImageLayoutAgent:
         system_prompt = (prompts.image_layout_system + "\n").strip() + "\n"
         system_prompt += f"- 总图片数不超过 {max_images_total} 张；单个来源不超过 {max_images_per_source} 张。\n"
 
+        system_prompt += "- Prefer side-aligned images by default; use center/full only for hero posters or atmosphere images.\n"
+        if (layout_guidance or "").strip():
+            system_prompt += f"- Layout guidance from chief editor: {str(layout_guidance).strip()}\n"
         if image_plan:
             system_prompt += (
                 "- image_plan 表示主 Agent 对各来源图片数量的约束，请优先满足。\n"

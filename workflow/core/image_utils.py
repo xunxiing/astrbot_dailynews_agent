@@ -472,9 +472,14 @@ def _classify_image_for_layout(
     else:
         classes.append("md-img--portrait")
 
+    portrait_ratio = height / float(width)
+    if portrait_ratio >= 2.35 and height >= 1200:
+        classes.append("md-img--external")
+        return classes
+
     if width <= narrow_max_width:
         classes.append("md-img--narrow")
-        if float_enabled and (width <= float_if_width_le or side_float_candidate):
+        if float_enabled and (width <= float_if_width_le or side_float_candidate) and portrait_ratio <= 1.8:
             classes.append("md-img--float-r" if float_dir == "r" else "md-img--float-l")
         return classes
 
@@ -567,6 +572,8 @@ def _parse_img_layout_hints(tag: str) -> list[str]:
         classes.append("md-img--medium")
     elif size in {"small", "narrow"}:
         classes.append("md-img--narrow")
+    elif size in {"external", "link", "outside"}:
+        classes.append("md-img--external")
 
     if align in {"left", "float-left", "side-left", "align-left", "layout-left"}:
         if not any(c in classes for c in ("md-img--medium", "md-img--narrow")):
@@ -579,6 +586,8 @@ def _parse_img_layout_hints(tag: str) -> list[str]:
     elif align in {"center", "align-center", "layout-center"}:
         if not any(c in classes for c in ("md-img--full", "md-img--medium", "md-img--narrow")):
             classes.append("md-img--full")
+    elif align in {"external", "link", "outside", "link-only", "layout-external"}:
+        classes.append("md-img--external")
 
     deduped: list[str] = []
     for cls in classes:
@@ -594,6 +603,39 @@ def _inject_img_data_attrs(tag: str, *, width: int, height: int) -> str:
     if tag.startswith("<img") and " data-w=" not in tag:
         return tag.replace("<img", "<img" + insert, 1)
     return tag
+
+
+def _extract_img_alt(tag: str) -> str:
+    attrs = _img_attrs(tag)
+    return str(attrs.get("alt") or "").strip()
+
+
+def _should_externalize_image(*, width: int, height: int, classes: list[str]) -> bool:
+    if width <= 0 or height <= 0:
+        return False
+    if "md-img--external" in classes:
+        return True
+    ratio_h_w = height / float(width)
+    if ratio_h_w >= 2.35 and height >= 1200:
+        return True
+    if ratio_h_w >= 3.0 and height >= 900:
+        return True
+    if height >= 2400 and ratio_h_w >= 1.8:
+        return True
+    return False
+
+
+def _build_external_image_link(src: str, *, alt: str = "", width: int = 0, height: int = 0) -> str:
+    label = alt or "??????"
+    if width > 0 and height > 0:
+        label = f"{label}?{width}?{height}?"
+    href = _html.escape(src, quote=True)
+    text = _html.escape(label)
+    return (
+        '<p class="md-extimg">'
+        f'<a class="md-extimg__link" href="{href}" target="_blank" rel="noopener noreferrer">{text}</a>'
+        '</p>'
+    )
 
 
 async def adaptive_layout_html_images(
@@ -677,12 +719,25 @@ async def adaptive_layout_html_images(
                     src[:180],
                     classes,
                 )
+            if _should_externalize_image(width=w, height=h, classes=classes):
+                return _build_external_image_link(
+                    src,
+                    alt=_extract_img_alt(tag) or "??????",
+                    width=w,
+                    height=h,
+                )
             if "md-img--float-r" in classes or "md-img--float-l" in classes:
                 float_toggle = "l" if float_toggle == "r" else "r"
             tag = _merge_img_class_attr(tag, classes)
             tag = _inject_img_data_attrs(tag, width=w, height=h)
         else:
-            tag = _merge_img_class_attr(tag, hinted_classes or ["md-img", "md-img--full"])
+            base_classes = hinted_classes or ["md-img", "md-img--full"]
+            if "md-img--external" in base_classes:
+                return _build_external_image_link(
+                    src,
+                    alt=_extract_img_alt(tag) or "??????",
+                )
+            tag = _merge_img_class_attr(tag, base_classes)
         return tag
 
     out = _IMG_SRC_RE.sub(repl, s, count=max_images)
