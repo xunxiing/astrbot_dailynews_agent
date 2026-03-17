@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -18,6 +19,8 @@ WECHAT_LATEST_MAX_AGE_HOURS = 36
 WECHAT_IMAGES_MAX_PER_ARTICLE = 8
 WECHAT_IMAGES_MAX_TOTAL = 24
 WECHAT_IMAGES_FOR_LLM_PER_ARTICLE = 3
+_DATE_IN_TEXT_RE_ASCII = re.compile(r"(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})")
+_DATE_IN_TEXT_RE = re.compile(r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})")
 
 
 def _safe_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
@@ -40,6 +43,26 @@ def _article_create_ts(item: dict[str, Any]) -> int:
     except Exception:
         pass
     return 0
+
+
+def _looks_like_today_item(item: dict[str, Any]) -> bool:
+    today = datetime.now().date()
+    for key in ("title", "name", "date_label", "published", "publish_time"):
+        text = str((item or {}).get(key) or "").strip()
+        if not text:
+            continue
+        m = _DATE_IN_TEXT_RE.search(text)
+        if not m:
+            continue
+        try:
+            y = int(m.group(1))
+            mo = int(m.group(2))
+            d = int(m.group(3))
+            if datetime(y, mo, d).date() == today:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _fallback_fetch_latest_articles(
@@ -183,7 +206,11 @@ class WechatSubAgent:
                         filtered_articles: list[dict[str, str]] = []
                         for item in articles:
                             ts = _article_create_ts(item)
-                            if ts > 0 and ts < cutoff_ts:
+                            if (
+                                ts > 0
+                                and ts < cutoff_ts
+                                and not _looks_like_today_item(item)
+                            ):
                                 stale_count += 1
                                 continue
                             filtered_articles.append(item)

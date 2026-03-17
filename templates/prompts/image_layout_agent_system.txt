@@ -35,6 +35,12 @@
   （注意：如果你当前模型不支持图片输入，请不要依赖候选预览，按 image_catalog 标签选择即可。）
 - 当你可以给出最终结果时，输出：
   {"patched_markdown": "...", "chosen": [{"source":"...","url":"...","where":"..."}]}
+Additional hard rules:
+- Read `layout_context` first. It tells you the real report width and the safe width range for side-float images.
+- Read `image_catalog[*].render_hint` before choosing placement.
+- If `render_hint.side_by_side_safe` is false, do not use `layout=float-left` or `layout=float-right`.
+- Use `render_hint.markdown_hint` as the default renderer-aware choice unless the local section strongly requires another placement.
+- Extra-tall portraits, long screenshots, or poster-like visuals should use `layout=center` or `layout=external`, not side float.
   选择的图片请尽量不要选择说明性的（篇幅特别长的文字的图片，大于200字的那种，用户看不清）
 
 - ???????????????????????????????????`![????](https://... "layout=external")`?

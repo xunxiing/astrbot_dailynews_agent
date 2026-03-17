@@ -1,3 +1,4 @@
+import asyncio
 import json
 import random
 import re
@@ -16,10 +17,16 @@ from ..core.config_models import (
     ImageLabelConfig,
     ImageLayoutConfig,
     IMAGE_LAYOUT_SOURCES,
+    LayoutModelContext,
     LayoutPrompts,
     LayoutRefineConfig,
+    RenderImageStyleConfig,
 )
-from ..core.image_utils import get_plugin_data_dir, merge_images_vertical
+from ..core.image_utils import (
+    get_plugin_data_dir,
+    merge_images_vertical,
+    probe_image_size_from_url,
+)
 from ..core.llm import LLMRunner
 from ..core.models import SubAgentResult
 from ..core.utils import _json_from_text
@@ -129,6 +136,8 @@ class ImageLayoutAgent:
         shuffle_seed = str(layout_cfg.shuffle_seed or "").strip()
 
         refine_cfg = LayoutRefineConfig.from_mapping(user_config)
+        style_cfg = RenderImageStyleConfig.from_mapping(user_config)
+        layout_context = LayoutModelContext.from_mapping(user_config)
 
         _IMG_MD_RE = re.compile(r"!\[[^\]]*\]\((?P<url>[^)]+)\)")
         _IMG_HTML_RE = re.compile(
@@ -382,8 +391,233 @@ class ImageLayoutAgent:
                     return row
             return None
 
+        def _to_pos_int(value: Any) -> int:
+            try:
+                out = int(value or 0)
+            except Exception:
+                out = 0
+            return max(0, out)
+
+        def _can_side_float(width: int, height: int) -> bool:
+            if not bool(layout_context.float_enabled):
+                return False
+            if width <= 0 or height <= 0:
+                return False
+            aspect = width / float(height)
+            portrait_ratio = height / float(width)
+            side_float_candidate = (
+                1.18 <= aspect <= 2.8
+                and 160 <= height <= 760
+                and width
+                <= max(
+                    int(style_cfg.full_max_width * 2.0) + 320,
+                    int(style_cfg.medium_max_width) + 360,
+                )
+            )
+            if width <= int(style_cfg.narrow_max_width):
+                return (
+                    width <= int(style_cfg.float_threshold) or side_float_candidate
+                ) and portrait_ratio <= 1.8
+            if width <= int(style_cfg.medium_max_width):
+                return side_float_candidate
+            return side_float_candidate
+
+        def _build_render_hint(row: dict[str, Any]) -> dict[str, Any]:
+            label = str(row.get("label") or "").lower()
+            width = _to_pos_int(row.get("width"))
+            height = _to_pos_int(row.get("height"))
+            aspect = (float(width) / float(height)) if width > 0 and height > 0 else 0.0
+            portrait_ratio = (
+                float(height) / float(width) if width > 0 and height > 0 else 0.0
+            )
+            side_ok = _can_side_float(width, height)
+
+            poster_words = (
+                "poster",
+                "wallpaper",
+                "cover",
+                "hero",
+                "promo",
+                "concept art",
+                "key visual",
+                "landscape",
+                "scene",
+                "atmosphere",
+            )
+            ui_words = (
+                "ui",
+                "interface",
+                "screenshot",
+                "menu",
+                "panel",
+                "dashboard",
+                "roadmap",
+                "chart",
+                "data",
+                "announcement",
+            )
+            icon_words = ("icon", "logo", "avatar", "sticker", "emoji")
+
+            mode = "center"
+            size = "medium"
+            reason = "default safe placement"
+
+            if portrait_ratio >= 2.35 and height >= 1200:
+                mode = "external"
+                size = "external"
+                reason = "extra-tall image will dominate the column"
+            elif any(word in label for word in poster_words) and portrait_ratio < 2.1:
+                mode = "center"
+                size = "full"
+                reason = "poster or atmosphere image works better as a centered hero"
+            elif any(word in label for word in icon_words):
+                mode = "side" if side_ok else "center"
+                size = "small" if side_ok else "medium"
+                reason = "small icon-like image is auxiliary visual support"
+            elif any(word in label for word in ui_words):
+                mode = "side" if side_ok else "center"
+                size = "medium" if side_ok else "full"
+                reason = "UI or screenshot image benefits from side-by-side reading"
+            elif aspect >= 1.9:
+                mode = "center"
+                size = "full"
+                reason = "panorama image needs centered width"
+            elif 0 < aspect <= 0.58 and portrait_ratio >= 2.2:
+                mode = "external"
+                size = "external"
+                reason = "long portrait image should be linked outside the report"
+            elif side_ok:
+                mode = "side"
+                size = "small" if width and width <= int(style_cfg.narrow_max_width) else "medium"
+                reason = "image can fit beside text within the readable column"
+            elif width and width <= int(style_cfg.medium_max_width):
+                mode = "center"
+                size = "medium"
+                reason = "small image but not safe enough for side float"
+            else:
+                mode = "center"
+                size = "full"
+                reason = "fallback to centered placement"
+
+            if mode == "side":
+                display_width_px = min(
+                    int(layout_context.float_image_max_px),
+                    int(style_cfg.narrow_max_width if size == "small" else style_cfg.medium_max_width),
+                )
+                markdown_hint = f"layout=float-right size={size}"
+            elif mode == "external":
+                display_width_px = 0
+                markdown_hint = "layout=external"
+            else:
+                display_width_px = int(
+                    style_cfg.full_max_width if size == "full" else style_cfg.medium_max_width
+                )
+                markdown_hint = f"layout=center size={size}"
+
+            return {
+                "mode": mode,
+                "size": size,
+                "side_by_side_safe": bool(side_ok),
+                "estimated_display_width_px": int(display_width_px),
+                "estimated_text_column_px": int(
+                    layout_context.min_text_column_px if mode == "side" else layout_context.content_width_px
+                ),
+                "markdown_hint": markdown_hint,
+                "reason": reason,
+            }
+
+        async def _ensure_image_catalog_rows() -> list[dict[str, Any]]:
+            merged: dict[str, dict[str, Any]] = {}
+            for row in image_catalog:
+                if not isinstance(row, dict):
+                    continue
+                url = str(row.get("url") or "").strip()
+                if not url:
+                    continue
+                merged[url] = dict(row)
+
+            probe_targets: list[tuple[str, str]] = []
+            probe_budget = max(8, min(24, int(max_images_total) * 3))
+            for src, urls in images_by_source.items():
+                for url in urls:
+                    clean_url = str(url or "").strip()
+                    if not clean_url:
+                        continue
+                    row = merged.get(clean_url) or {"source": src, "url": clean_url}
+                    row.setdefault("source", src)
+                    row.setdefault("url", clean_url)
+                    merged[clean_url] = row
+                    if (
+                        _to_pos_int(row.get("width")) <= 0
+                        or _to_pos_int(row.get("height")) <= 0
+                    ) and len(probe_targets) < probe_budget:
+                        probe_targets.append((src, clean_url))
+
+            if probe_targets:
+                sem = asyncio.Semaphore(4)
+
+                async def _probe_one(src: str, url: str) -> tuple[str, str, int, int]:
+                    async with sem:
+                        size = await probe_image_size_from_url(url)
+                    if not size:
+                        return src, url, 0, 0
+                    return src, url, _to_pos_int(size[0]), _to_pos_int(size[1])
+
+                for src, url, width, height in await asyncio.gather(
+                    *(_probe_one(src, url) for src, url in probe_targets)
+                ):
+                    row = merged.get(url)
+                    if row is None:
+                        row = {"source": src, "url": url}
+                        merged[url] = row
+                    if width > 0 and height > 0:
+                        row["width"] = int(width)
+                        row["height"] = int(height)
+
+            rows: list[dict[str, Any]] = []
+            seen_rows: set[str] = set()
+            for src, urls in images_by_source.items():
+                for url in urls:
+                    clean_url = str(url or "").strip()
+                    if not clean_url or clean_url in seen_rows:
+                        continue
+                    seen_rows.add(clean_url)
+                    row = dict(merged.get(clean_url) or {"source": src, "url": clean_url})
+                    row["source"] = str(row.get("source") or src)
+                    row["url"] = clean_url
+                    row["width"] = _to_pos_int(row.get("width"))
+                    row["height"] = _to_pos_int(row.get("height"))
+                    if row["width"] > 0 and row["height"] > 0:
+                        row["aspect_ratio"] = round(
+                            row["width"] / float(row["height"]),
+                            3,
+                        )
+                        row["orientation"] = (
+                            "landscape"
+                            if row["aspect_ratio"] > 1.05
+                            else "portrait"
+                            if row["aspect_ratio"] < 0.95
+                            else "square"
+                        )
+                    else:
+                        row["aspect_ratio"] = 0.0
+                        row["orientation"] = "unknown"
+                    row["render_hint"] = _build_render_hint(row)
+                    rows.append(row)
+            return rows
+
         def _suggest_layout_hint(url: str) -> tuple[str, str]:
             row = _catalog_entry_for_url(url) or {}
+            render_hint = row.get("render_hint") if isinstance(row, dict) else {}
+            if isinstance(render_hint, dict):
+                mode = str(render_hint.get("mode") or "").strip().lower()
+                size = str(render_hint.get("size") or "").strip().lower()
+                if mode == "external":
+                    return "external", size or "external"
+                if mode == "center":
+                    return "center", size or "full"
+                if mode == "side":
+                    return "float-right", size or "medium"
             label = str(row.get("label") or "").lower()
             try:
                 width = int(row.get("width") or 0)
@@ -568,6 +802,13 @@ class ImageLayoutAgent:
                     "[dailynews] image_label failed: %s", e, exc_info=True
                 )
 
+        try:
+            image_catalog = await _ensure_image_catalog_rows()
+        except Exception as e:
+            astrbot_logger.warning(
+                "[dailynews] image_layout build catalog failed: %s", e, exc_info=True
+            )
+
         # Tool-based layout editing: let the model call tools to insert images / fix text,
         # then we render a preview each round and feed it back until it says "done".
         if tool_enabled and hasattr(astrbot_context, "tool_loop_agent"):
@@ -579,6 +820,15 @@ class ImageLayoutAgent:
 
                 tool_system += "- 优先侧边排版：除封面/海报/氛围大图外，不要默认全居中。\n"
                 tool_system += "- 插图时请显式给出 layout/size；常用 `layout=float-right size=medium`。\n"
+
+                tool_system += (
+                    f"- Real layout context: readable column is about {layout_context.content_width_px}px; "
+                    f"side-float images should usually stay within {layout_context.float_image_min_px}-{layout_context.float_image_max_px}px "
+                    f"and keep at least {layout_context.min_text_column_px}px for text.\n"
+                )
+                tool_system += (
+                    "- If image_catalog[*].render_hint.side_by_side_safe is false, do not use float-left/right for that image.\n"
+                )
 
                 if (layout_guidance or "").strip():
                     tool_system += f"- Layout guidance from chief editor: {str(layout_guidance).strip()}\n"
@@ -648,6 +898,15 @@ class ImageLayoutAgent:
         system_prompt += f"- 总图片数不超过 {max_images_total} 张；单个来源不超过 {max_images_per_source} 张。\n"
 
         system_prompt += "- Prefer side-aligned images by default; use center/full only for hero posters or atmosphere images.\n"
+        system_prompt += (
+            f"- Real layout context: template={layout_context.template_name}, page_width={layout_context.page_width_px}px, "
+            f"readable column={layout_context.content_width_px}px. Side-float images should stay around "
+            f"{layout_context.float_image_min_px}-{layout_context.float_image_max_px}px wide and keep at least "
+            f"{layout_context.min_text_column_px}px for text.\n"
+        )
+        system_prompt += (
+            "- Treat image_catalog[*].render_hint as renderer-aware advice. If side_by_side_safe is false, avoid float-left/right.\n"
+        )
         if (layout_guidance or "").strip():
             system_prompt += f"- Layout guidance from chief editor: {str(layout_guidance).strip()}\n"
         if image_plan:
@@ -712,6 +971,7 @@ class ImageLayoutAgent:
 
         payload = {
             "now": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "layout_context": layout_context.to_payload(),
             "constraints": {
                 "max_images_total": max_images_total,
                 "max_images_per_source": max_images_per_source,

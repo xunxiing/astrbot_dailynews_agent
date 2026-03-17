@@ -36,6 +36,48 @@ _DOMAIN_LABEL_LINK_RE = re.compile(
     flags=re.I,
 )
 
+_INTERNAL_NOTE_TRIGGER_RE = re.compile(
+    r"^\s*(?:#{2,6}\s*(?:数据说明|备注|说明)\s*$|\*\*备注\*\*[:：]?\s*$)",
+    flags=re.I,
+)
+
+_INTERNAL_NOTE_LINE_RE = re.compile(
+    r"(freshness window|older than freshness window|fetched_items|timeout(?:_s|>)|"
+    r"tool warning|stale-filter|process_timeout|analyze_timeout|"
+    r"新鲜度窗口|时效窗|超时|仅保留标题(?:与链接)?|无法完整提取|"
+    r"点击原文链接查看详情|部分微信公众号文章|米游社动态分析因超时)",
+    flags=re.I,
+)
+
+
+def _strip_internal_note_sections(text: str) -> str:
+    lines = (text or "").splitlines()
+    out: list[str] = []
+    skipping = False
+    for line in lines:
+        s = (line or "").rstrip()
+        stripped = s.strip()
+
+        if skipping:
+            if re.match(r"^#{1,6}\s+", stripped) and not _INTERNAL_NOTE_TRIGGER_RE.match(stripped):
+                skipping = False
+            else:
+                continue
+
+        if _INTERNAL_NOTE_TRIGGER_RE.match(stripped):
+            skipping = True
+            # Drop a trailing separator before the removed note block.
+            while out and re.match(r"^\s*(?:---+|\*\*\*)\s*$", out[-1].strip()):
+                out.pop()
+            continue
+
+        if _INTERNAL_NOTE_LINE_RE.search(stripped):
+            continue
+
+        out.append(s)
+
+    return "\n".join(out)
+
 
 def sanitize_markdown_for_publish(text: str) -> str:
     """
@@ -46,6 +88,8 @@ def sanitize_markdown_for_publish(text: str) -> str:
     """
     if not text:
         return ""
+
+    text = _strip_internal_note_sections(text)
 
     # Some providers may prepend "thinking"/analysis text before the real markdown.
     # Prefer keeping only the actual report starting from "# 每日资讯日报".

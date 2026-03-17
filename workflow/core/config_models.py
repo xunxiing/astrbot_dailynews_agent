@@ -21,6 +21,9 @@ IMAGE_LAYOUT_MAX_IMAGES_TO_MODEL = 6
 IMAGE_LAYOUT_REQUEST_MAX_REQUESTS = 1
 IMAGE_LAYOUT_REQUEST_MAX_IMAGES = 6
 
+DAILY_NEWS_TEMPLATE_WIDTH = 1120
+CHENYU_TEMPLATE_WIDTH = 1280
+
 
 def _to_int(value: Any, default: int) -> int:
     try:
@@ -106,6 +109,76 @@ class RenderImageStyleConfig:
             float_threshold=360,
             float_enabled=_to_bool(cfg.get("render_img_float_enabled"), True),
         )
+
+
+@dataclass(frozen=True)
+class LayoutModelContext:
+    template_name: str = "daily_news"
+    page_width_px: int = DAILY_NEWS_TEMPLATE_WIDTH
+    content_width_px: int = 1020
+    float_enabled: bool = True
+    float_image_min_px: int = 300
+    float_image_max_px: int = 360
+    float_image_max_ratio: float = 0.46
+    float_gap_px: int = 16
+    min_text_column_px: int = 644
+    full_max_width: int = 500
+    medium_max_width: int = 420
+    narrow_max_width: int = 340
+    float_threshold: int = 360
+
+    @classmethod
+    def from_mapping(cls, cfg: Mapping[str, Any]) -> "LayoutModelContext":
+        style = RenderImageStyleConfig.from_mapping(cfg)
+        template_name = _to_str(cfg.get("render_template_name"), "daily_news").strip().lower()
+        is_chenyu = "chenyu" in template_name
+        page_width_px = CHENYU_TEMPLATE_WIDTH if is_chenyu else DAILY_NEWS_TEMPLATE_WIDTH
+        # Approximate readable markdown width after container/paper paddings in the templates.
+        content_width_px = 1120 if is_chenyu else 1020
+        float_image_min_px = 300
+        float_image_max_px = min(360, content_width_px)
+        float_gap_px = 16
+        min_text_column_px = max(
+            320,
+            int(content_width_px - float_image_max_px - float_gap_px),
+        )
+        return cls(
+            template_name=template_name or "daily_news",
+            page_width_px=page_width_px,
+            content_width_px=content_width_px,
+            float_enabled=style.float_enabled,
+            float_image_min_px=float_image_min_px,
+            float_image_max_px=float_image_max_px,
+            float_image_max_ratio=0.46,
+            float_gap_px=float_gap_px,
+            min_text_column_px=min_text_column_px,
+            full_max_width=int(style.full_max_width),
+            medium_max_width=int(style.medium_max_width),
+            narrow_max_width=int(style.narrow_max_width),
+            float_threshold=int(style.float_threshold),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "template_name": self.template_name,
+            "page_width_px": int(self.page_width_px),
+            "content_width_px": int(self.content_width_px),
+            "float_enabled": bool(self.float_enabled),
+            "float_image_min_px": int(self.float_image_min_px),
+            "float_image_max_px": int(self.float_image_max_px),
+            "float_image_max_ratio": float(self.float_image_max_ratio),
+            "float_gap_px": int(self.float_gap_px),
+            "min_text_column_px": int(self.min_text_column_px),
+            "full_image_width_px": int(self.full_max_width),
+            "medium_image_width_px": int(self.medium_max_width),
+            "narrow_image_width_px": int(self.narrow_max_width),
+            "float_threshold_px": int(self.float_threshold),
+            "rules": [
+                "Prefer side float only when the image can fit inside the readable column without crushing text.",
+                "Use center/full for hero posters, atmosphere art, or extra-wide panorama images.",
+                "Use external when the image is an extra-tall long poster or long screenshot.",
+            ],
+        }
 
 
 @dataclass(frozen=True)

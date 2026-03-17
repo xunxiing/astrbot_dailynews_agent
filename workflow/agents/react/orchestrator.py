@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover
 
 from ...core.config_models import ImageLabelConfig, ReactAgentConfig
 from ...core.llm import LLMRunner
+from ...core.markdown_sanitizer import sanitize_markdown_for_publish
 from ...core.models import NewsSourceConfig, SubAgentResult
 from ...core.rss import fetch_rss_feed, format_rss_feed_for_tool
 from ...core.skland_official import (
@@ -55,6 +56,40 @@ def _to_brief_text(payload: Any, *, max_chars: int = 2400) -> str:
     return text
 
 
+_WRITER_INTERNAL_LINE_RE = re.compile(
+    r"(freshness window|older than freshness window|fetched_items|timeout(?:_s|>)|"
+    r"tool warning|stale-filter|process_timeout|analyze_timeout|"
+    r"新鲜度窗口|时效窗|超时|仅保留标题(?:与链接)?|无法完整提取|"
+    r"点击原文链接查看详情|部分微信公众号文章|米游社动态分析因超时)",
+    flags=re.I,
+)
+
+
+def _sanitize_writer_context(text: str) -> str:
+    if not text:
+        return ""
+    lines = (text or "").splitlines()
+    out: list[str] = []
+    skip_tool_warning = False
+    for line in lines:
+        s = (line or "").rstrip()
+        stripped = s.strip()
+        if skip_tool_warning:
+            if not stripped:
+                skip_tool_warning = False
+            continue
+        if stripped == "Tool Warning:":
+            skip_tool_warning = True
+            continue
+        if _WRITER_INTERNAL_LINE_RE.search(stripped):
+            continue
+        out.append(s)
+    cleaned = "\n".join(out)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    # Reuse publish sanitizer to strip any leaked note sections before prompting the writer.
+    return sanitize_markdown_for_publish(cleaned)
+
+
 def _safe_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
     try:
         n = int(value)
@@ -69,6 +104,31 @@ def _safe_unix_ts(value: Any) -> int:
     except Exception:
         return 0
     return n // 1000 if n > 10_000_000_000 else n
+
+
+_DATE_IN_TEXT_RE = re.compile(r"(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})")
+
+
+def _looks_like_today_item(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    today = datetime.now().date()
+    for key in ("title", "name", "date_label", "published", "publish_time"):
+        text = str(payload.get(key) or "").strip()
+        if not text:
+            continue
+        m = _DATE_IN_TEXT_RE.search(text)
+        if not m:
+            continue
+        try:
+            y = int(m.group(1))
+            mo = int(m.group(2))
+            d = int(m.group(3))
+            if datetime(y, mo, d).date() == today:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _exception_text(exc: BaseException) -> str:
@@ -250,7 +310,14 @@ def _format_prefetched_source_for_tool(
 def _coerce_react_layout_sub_result(agent_id: str, payload: Any) -> SubAgentResult | None:
     if not isinstance(payload, dict):
         return None
-    source_name = str(payload.get("source_name") or agent_id or "").strip()
+    source_name = str(
+        payload.get("source_name")
+        or payload.get("official_name")
+        or payload.get("game_name")
+        or agent_id or ""
+    ).strip()
+    if "::" in source_name and not str(payload.get("source_name") or "").strip():
+        source_name = source_name.split("::", 1)[0].strip()
     if not source_name:
         return None
     content = str(payload.get("content") or "").strip()
@@ -262,6 +329,25 @@ def _coerce_react_layout_sub_result(agent_id: str, payload: Any) -> SubAgentResu
         else []
     )
     images = _extract_image_urls(payload, max_count=24)
+    if not summary and isinstance(payload.get("items"), list):
+        item_count = len(payload.get("items") or [])
+        if item_count > 0:
+            summary = f"Collected {item_count} items for {source_name}."
+    if not content and isinstance(payload.get("items"), list):
+        rows = payload.get("items") or []
+        lines: list[str] = [f"## {source_name}", ""]
+        for item in rows[:6]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get('title') or item.get('name') or "").strip()
+            url = str(item.get('url') or item.get('link') or "").strip()
+            if title and url:
+                lines.append(f"- {title} ([查看详情]({url}))")
+            elif title:
+                lines.append(f"- {title}")
+            elif url:
+                lines.append(f"- [查看详情]({url})")
+        content = "\n".join(lines).strip()
     error = str(payload.get("error") or "").strip() or None
     if not content and not summary and not key_points and not images:
         return None
@@ -281,7 +367,7 @@ def _collect_react_layout_sub_results(memory: SharedMemory) -> list[SubAgentResu
     seen: set[str] = set()
     for agent_id, payload in snapshot.items():
         aid = str(agent_id or "").strip()
-        if not aid.startswith("vertical::"):
+        if not aid.startswith(("vertical::", "prefetched_source::", "skland_official::")):
             continue
         row = _coerce_react_layout_sub_result(aid, payload)
         if row is None:
@@ -1296,7 +1382,11 @@ class ReActDailyNewsOrchestrator:
                                         if not isinstance(row, dict):
                                             continue
                                         row_ts = _safe_unix_ts(row.get("create_time"))
-                                        if row_ts > 0 and row_ts < cutoff_ts:
+                                        if (
+                                            row_ts > 0
+                                            and row_ts < cutoff_ts
+                                            and not _looks_like_today_item(row)
+                                        ):
                                             stale_count += 1
                                             continue
                                         filtered_rows.append(row)
@@ -1327,11 +1417,11 @@ class ReActDailyNewsOrchestrator:
                                     exc_info=True,
                                 )
                         if stale_only:
-                            return (
-                                False,
-                                "latest wechat articles exceed freshness window "
-                                f"({max_age_hours}h)",
+                            astrbot_logger.info(
+                                "[dailynews][react] wechat latest-list stale_only, fallback to direct seed url: %s",
+                                input_url,
                             )
+                            resolved_url = input_url
 
                         if cutoff_ts > 0 and callable(fetch_article):
                             try:
@@ -1340,7 +1430,11 @@ class ReActDailyNewsOrchestrator:
                                     (detail or {}).get("ct")
                                     or (detail or {}).get("create_time")
                                 )
-                                if article_ts > 0 and article_ts < cutoff_ts:
+                                if (
+                                    article_ts > 0
+                                    and article_ts < cutoff_ts
+                                    and not _looks_like_today_item(detail or {})
+                                ):
                                     return (
                                         False,
                                         "wechat article is older than freshness window "
@@ -2059,7 +2153,10 @@ class ReActDailyNewsOrchestrator:
 
             async def _runner(injected_prompt: str) -> Any:
                 snapshot = memory.read(dep_ids) if dep_ids else memory.read_all()
-                materials = _to_brief_text(snapshot, max_chars=22000)
+                materials = _sanitize_writer_context(
+                    _to_brief_text(snapshot, max_chars=22000)
+                )
+                injected_prompt = _sanitize_writer_context(str(injected_prompt or ""))
                 system_core = str(
                     load_template("templates/prompts/react_writer_system.txt") or ""
                 ).strip()

@@ -40,6 +40,12 @@
    系统会把这些图合成为“候选图预览”并在下一轮作为图片输入提供给你。
 7) 当你认为整体已经“差不多”时输出：
    {"done": true, "notes": "..."}
+Additional hard rules:
+- Read `layout_context` before calling insert tools. It tells you the real report width and the safe width range for side-float images.
+- Read `image_catalog[*].render_hint` before you decide `layout` and `size`.
+- If `render_hint.side_by_side_safe` is false, do not insert that image with `layout=float-left` or `layout=float-right`.
+- Use `render_hint.markdown_hint` as the default tool argument unless the surrounding section strongly needs another placement.
+- If the image is extra tall, long, or poster-like, prefer `layout=center` or `layout=external`.
 
 图片布局指令（非常重要）：
 - 你在插图时，可以直接把布局写进 Markdown 图片 title，渲染器会执行。

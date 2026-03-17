@@ -21,6 +21,7 @@ from ...tools import (
     MarkdownDocReadTool,
 )
 from ..core.config_models import (
+    LayoutModelContext,
     LayoutRefineConfig,
     RenderImageStyleConfig,
     RenderPipelineConfig,
@@ -134,6 +135,7 @@ class ToolBasedLayoutEditor:
 
         refine_cfg = LayoutRefineConfig.from_mapping(user_config)
         style_cfg = RenderImageStyleConfig.from_mapping(user_config)
+        layout_context = LayoutModelContext.from_mapping(user_config)
 
         # Tools available to the LLM for editing.
         tools = ToolSet(
@@ -195,6 +197,7 @@ class ToolBasedLayoutEditor:
                 "doc_id": did,
                 "doc_excerpt": current[:1800],
                 "doc_length": len(current),
+                "layout_context": layout_context.to_payload(),
                 "image_candidates": images_by_source,
                 "image_catalog": image_catalog or [],
                 "constraints": {
@@ -220,10 +223,16 @@ class ToolBasedLayoutEditor:
                 },
                 "image_layout_hints": {
                     "preferred": "优先侧边图，不要默认全居中；只有封面/海报/氛围大图才居中。",
+                    "preferred": "Prefer side-aligned images by default; only hero posters or atmosphere art should use centered full width.",
+                    "side_float_width_px": {
+                        "min": int(layout_context.float_image_min_px),
+                        "max": int(layout_context.float_image_max_px),
+                    },
+                    "min_text_column_px": int(layout_context.min_text_column_px),
                     "examples": [
                         "layout=float-right size=medium",
                         "layout=float-left size=medium",
-                        "layout=center size=full"
+                        "layout=center size=full",
                     ]
                 },
                 "output_schema": {
