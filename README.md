@@ -46,8 +46,9 @@
 | 插件 | 功能 | 链接 |
 |------|------|------|
 | astrbot_plugin_grok_web_search | Grok网络搜索 | [GitHub](https://github.com/piexian/astrbot_plugin_grok_web_search) |
+| astrbot_plugin_gemini_image_generation | Gemini文生图工具 | [GitHub](https://github.com/piexian/astrbot_plugin_gemini_image_generation) |
 
-> 💡 **特别致谢**: 感谢 **@piexian** 开发的Grok搜索插件，为本项目提供了强大的网络搜索能力支持！
+> 💡 **特别致谢**: 感谢 **@piexian** 开发的Grok搜索插件和Gemini文生图插件，为本项目提供了强大的网络搜索能力与图像生成支持！
 
 ## 🚀 使用指南
 
