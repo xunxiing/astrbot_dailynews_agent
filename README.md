@@ -26,9 +26,12 @@
 | wechat_agent | 微信公众号文章采集 |
 | miyoushe_agent | 米游社帖子获取 |
 | twitter_agent | Twitter信息抓取 |
-| astrbook_agent | AstrBook内容获取 |
-| github_agent | GitHub动态追踪 |
-| xiuxiu_ai_agent | 秀秀AI内容获取 |
+| skland_official_agent | 森空岛官方公告获取 |
+| rss_agent | 通用 RSS 订阅支持 |
+| github_agent | GitHub 动态追踪 |
+| plugin_registry_agent | AstrBot 插件注册表监控 |
+| astrbook_agent | AstrBook 内容获取 |
+| xiuxiu_ai_agent | 秀秀 AI 内容获取 |
 
 ## 📰 信息源推荐
 
