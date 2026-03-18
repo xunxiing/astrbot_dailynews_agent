@@ -762,6 +762,23 @@
     "invisible": true,
     "default": 8
   },
+  "image_layout_generation_enabled": {
+    "type": "bool",
+    "description": "允许图片排版 Agent 在候选图不足时额外调用 Gemini 文生图工具",
+    "default": false
+  },
+  "image_layout_generation_resolution": {
+    "type": "string",
+    "description": "Gemini 文生图默认分辨率",
+    "invisible": true,
+    "default": "1K"
+  },
+  "image_layout_generation_aspect_ratio": {
+    "type": "string",
+    "description": "Gemini 文生图默认宽高比",
+    "invisible": true,
+    "default": "4:3"
+  },
   "image_layout_tool_enabled": {
     "type": "bool",
     "description": "启用“工具驱动的排版编辑”：先给 AI 文字稿，再让 AI 通过 tools 插图/改文并反复渲染校验",

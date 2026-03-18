@@ -20,7 +20,9 @@ from ...tools import (
     MarkdownDocMatchInsertImageTool,
     MarkdownDocReadTool,
 )
+from ...tools.image_tools import GeminiLayoutGenerateImageTool
 from ..core.config_models import (
+    ImageLayoutConfig,
     LayoutModelContext,
     LayoutRefineConfig,
     RenderImageStyleConfig,
@@ -136,16 +138,18 @@ class ToolBasedLayoutEditor:
         refine_cfg = LayoutRefineConfig.from_mapping(user_config)
         style_cfg = RenderImageStyleConfig.from_mapping(user_config)
         layout_context = LayoutModelContext.from_mapping(user_config)
+        image_layout_cfg = ImageLayoutConfig.from_mapping(user_config)
 
         # Tools available to the LLM for editing.
-        tools = ToolSet(
-            [
-                MarkdownDocReadTool(),
-                MarkdownDocApplyEditsTool(),
-                MarkdownDocMatchInsertImageTool(),
-                ImageUrlDownloadTool(),
-            ]
-        )
+        tool_items = [
+            MarkdownDocReadTool(),
+            MarkdownDocApplyEditsTool(),
+            MarkdownDocMatchInsertImageTool(),
+            ImageUrlDownloadTool(),
+        ]
+        if image_layout_cfg.generation_enabled:
+            tool_items.append(GeminiLayoutGenerateImageTool())
+        tools = ToolSet(tool_items)
 
         allowed_urls: set[str] = set()
         for _, urls in (images_by_source or {}).items():
@@ -205,6 +209,11 @@ class ToolBasedLayoutEditor:
                     if send_images_to_model
                     else 0,
                     "request_max_images": int(request_max_images),
+                    "max_center_full_images": 0
+                    if image_layout_cfg.generation_enabled
+                    else 1,
+                    "forbid_duplicate_canonical_images": True,
+                    "prefer_side_float_only": True,
                 },
                 "candidate_preview": {
                     "provided": bool(candidate_preview_url),
@@ -220,10 +229,40 @@ class ToolBasedLayoutEditor:
                     "apply_edits": "md_doc_apply_edits(doc_id, edits=[...])",
                     "read": "md_doc_read(doc_id, start=0, max_chars=2400)",
                     "image_meta": "image_url_download(url) -> {local_path,width,height}",
+                    "generate_image": (
+                        "gemini_image_generation(prompt, resolution=?, aspect_ratio=?) "
+                        "-> {image_url,file_url,local_path,width,height,image_count}"
+                        if image_layout_cfg.generation_enabled
+                        else "disabled"
+                    ),
+                },
+                "image_generation": {
+                    "enabled": bool(image_layout_cfg.generation_enabled),
+                    "default_resolution": image_layout_cfg.generation_resolution,
+                    "default_aspect_ratio": image_layout_cfg.generation_aspect_ratio,
+                    "tool": (
+                        "gemini_image_generation(prompt, resolution=?, aspect_ratio=?) "
+                        "-> {image_url,file_url,local_path,width,height,image_count}"
+                    ),
+                    "rules": [
+                        "Use this before forcing an unrelated or duplicated candidate image into a section.",
+                        "Use only when candidate images are missing, too weak, duplicated, or clearly do not fit the section.",
+                        "Generate supporting atmosphere art or abstract illustrations, not factual screenshots or official posters.",
+                        "Prefer generated art for tech/open-source sections that do not have matching source images.",
+                        "Prefer generated art for section separators, mood images, or concept illustrations.",
+                        "Do not choose center/full just because it looks prettier; generation is preferred over centered fallback.",
+                    ],
                 },
                 "image_layout_hints": {
                     "preferred": "优先侧边图，不要默认全居中；只有封面/海报/氛围大图才居中。",
-                    "preferred": "Prefer side-aligned images by default; only hero posters or atmosphere art should use centered full width.",
+                    "preferred": "Prefer side-aligned images by default. Center/full is exceptional, not the default.",
+                    "hard_rules": [
+                        "Do not use game images to illustrate unrelated tech/open-source sections.",
+                        "Do not reuse the same canonical image twice in one report.",
+                        "Normal body inserts must stay float-left/right. Center/full is forbidden unless the chief editor explicitly asked for a hero or cover image.",
+                        "If render_hint.mode=side, do not upgrade it to center/full unless side insertion would clearly break layout.",
+                        "If no side-safe topic-matched image exists, call gemini_image_generation instead of inserting a centered unrelated image.",
+                    ],
                     "side_float_width_px": {
                         "min": int(layout_context.float_image_min_px),
                         "max": int(layout_context.float_image_max_px),
@@ -232,7 +271,7 @@ class ToolBasedLayoutEditor:
                     "examples": [
                         "layout=float-right size=medium",
                         "layout=float-left size=medium",
-                        "layout=center size=full",
+                        "layout=float-right size=small",
                     ]
                 },
                 "output_schema": {

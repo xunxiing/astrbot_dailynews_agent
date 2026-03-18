@@ -1,4 +1,5 @@
 import json
+import inspect
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,22 @@ from ..workflow.core.image_utils import (
     merge_images_vertical,
     parse_image_urls,
     probe_image_size_from_url,
+)
+from ..workflow.core.internal_event import make_internal_event
+
+GEMINI_LAYOUT_PLUGIN_NAME = "astrbot_plugin_gemini_image_generation"
+GEMINI_LAYOUT_VALID_RESOLUTIONS = ("1K", "2K", "4K")
+GEMINI_LAYOUT_VALID_ASPECT_RATIOS = (
+    "1:1",
+    "16:9",
+    "4:3",
+    "3:2",
+    "9:16",
+    "4:5",
+    "5:4",
+    "21:9",
+    "3:4",
+    "2:3",
 )
 
 
@@ -267,3 +284,186 @@ class ImageUrlsDownloadBatchTool(FunctionTool[AstrAgentContext]):
             },
             ensure_ascii=False,
         )
+
+
+@dataclass
+class GeminiLayoutGenerateImageTool(FunctionTool[AstrAgentContext]):
+    """
+    Generate one supporting image synchronously via the Gemini image plugin.
+    """
+
+    name: str = "gemini_image_generation"
+    description: str = (
+        "Synchronous Gemini image generation for the layout stage. "
+        "Generate one supporting image and return {image_url,file_url,local_path,width,height,image_count}."
+    )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Image generation prompt for a supporting illustration.",
+                },
+                "resolution": {
+                    "type": "string",
+                    "description": "Optional resolution override.",
+                    "enum": list(GEMINI_LAYOUT_VALID_RESOLUTIONS),
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "description": "Optional aspect ratio override.",
+                    "enum": list(GEMINI_LAYOUT_VALID_ASPECT_RATIOS),
+                },
+                "use_reference_images": {
+                    "type": "boolean",
+                    "description": "Reserved for compatibility with gemini_image_generation. Ignored in layout stage.",
+                    "default": False,
+                },
+                "include_user_avatar": {
+                    "type": "boolean",
+                    "description": "Reserved for compatibility with gemini_image_generation. Ignored in layout stage.",
+                    "default": False,
+                },
+            },
+            "required": ["prompt"],
+        }
+    )
+
+    async def call(
+        self, context: ContextWrapper[AstrAgentContext], **kwargs
+    ) -> ToolExecResult:
+        prompt = str(kwargs.get("prompt") or "").strip()
+        if not prompt:
+            return json.dumps(
+                {"ok": False, "error": "prompt_is_empty"},
+                ensure_ascii=False,
+            )
+
+        resolution_raw = str(kwargs.get("resolution") or "").strip().upper()
+        resolution = (
+            resolution_raw
+            if resolution_raw in GEMINI_LAYOUT_VALID_RESOLUTIONS
+            else None
+        )
+        aspect_ratio_raw = str(kwargs.get("aspect_ratio") or "").strip()
+        aspect_ratio = (
+            aspect_ratio_raw
+            if aspect_ratio_raw in GEMINI_LAYOUT_VALID_ASPECT_RATIOS
+            else None
+        )
+
+        agent_ctx = context.context
+        star_ctx = getattr(agent_ctx, "context", None)
+        event = getattr(agent_ctx, "event", None) or make_internal_event(
+            session_id="gemini-layout-tool"
+        )
+        plugin_meta = (
+            star_ctx.get_registered_star(GEMINI_LAYOUT_PLUGIN_NAME)
+            if star_ctx is not None
+            else None
+        )
+        plugin = getattr(plugin_meta, "star_cls", None)
+        if plugin is None:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": "gemini_plugin_not_found",
+                    "plugin_name": GEMINI_LAYOUT_PLUGIN_NAME,
+                },
+                ensure_ascii=False,
+            )
+
+        try:
+            ensure_client = getattr(plugin, "_ensure_api_client", None)
+            if callable(ensure_client):
+                ensured = ensure_client(quiet=True)
+                if inspect.isawaitable(ensured):
+                    await ensured
+
+            success, result = await plugin._generate_image_core_internal(
+                event=event,
+                prompt=prompt,
+                reference_images=[],
+                avatar_reference=[],
+                override_resolution=resolution,
+                override_aspect_ratio=aspect_ratio,
+            )
+            if not success:
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "error": "generation_failed",
+                        "detail": str(result or ""),
+                    },
+                    ensure_ascii=False,
+                )
+
+            image_urls, image_paths, text_content, thought_signature = result
+            resolved_paths = [
+                str(Path(str(p)).resolve())
+                for p in (image_paths or [])
+                if str(p or "").strip()
+            ]
+            first_image_url = str((image_urls or [None])[0] or "").strip()
+            if resolved_paths:
+                first_path = Path(resolved_paths[0]).resolve()
+                if not first_path.exists():
+                    return json.dumps(
+                        {
+                            "ok": False,
+                            "error": "generated_file_missing",
+                            "local_path": str(first_path),
+                        },
+                        ensure_ascii=False,
+                    )
+                image_url = f"file:///{first_path.as_posix()}"
+                file_url = image_url
+                local_path = str(first_path)
+            elif first_image_url:
+                image_url = first_image_url
+                file_url = None
+                local_path = None
+            else:
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "error": "no_image_result_returned",
+                        "image_urls": image_urls or [],
+                    },
+                    ensure_ascii=False,
+                )
+
+            size = await probe_image_size_from_url(image_url)
+            width, height = size or (0, 0)
+            return json.dumps(
+                {
+                    "ok": True,
+                    "image_url": image_url,
+                    "file_url": file_url,
+                    "local_path": local_path,
+                    "width": int(width),
+                    "height": int(height),
+                    "image_count": max(len(resolved_paths), len(image_urls or [])),
+                    "image_urls": image_urls or [],
+                    "text_content": text_content,
+                    "thought_signature": thought_signature,
+                    "resolution": resolution,
+                    "aspect_ratio": aspect_ratio,
+                },
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            astrbot_logger.warning(
+                "[dailynews] layout gemini_image_generation failed: %s",
+                e,
+                exc_info=True,
+            )
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": type(e).__name__,
+                    "detail": str(e),
+                },
+                ensure_ascii=False,
+            )

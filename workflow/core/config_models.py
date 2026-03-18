@@ -20,6 +20,9 @@ IMAGE_LAYOUT_PASS_IMAGES_TO_MODEL = True
 IMAGE_LAYOUT_MAX_IMAGES_TO_MODEL = 6
 IMAGE_LAYOUT_REQUEST_MAX_REQUESTS = 1
 IMAGE_LAYOUT_REQUEST_MAX_IMAGES = 6
+IMAGE_LAYOUT_GENERATION_ENABLED = False
+IMAGE_LAYOUT_GENERATION_RESOLUTION = "1K"
+IMAGE_LAYOUT_GENERATION_ASPECT_RATIO = "4:3"
 
 DAILY_NEWS_TEMPLATE_WIDTH = 1120
 CHENYU_TEMPLATE_WIDTH = 1280
@@ -214,6 +217,9 @@ class ImageLayoutConfig:
     preview_gap: int = 8
     request_max_requests: int = IMAGE_LAYOUT_REQUEST_MAX_REQUESTS
     request_max_images: int = IMAGE_LAYOUT_REQUEST_MAX_IMAGES
+    generation_enabled: bool = IMAGE_LAYOUT_GENERATION_ENABLED
+    generation_resolution: str = IMAGE_LAYOUT_GENERATION_RESOLUTION
+    generation_aspect_ratio: str = IMAGE_LAYOUT_GENERATION_ASPECT_RATIO
     tool_enabled: bool = True
     tool_rounds: int = 2
     tool_max_steps: int = 25
@@ -241,6 +247,20 @@ class ImageLayoutConfig:
             preview_gap=max(0, _to_int(cfg.get("image_layout_preview_gap"), 8)),
             request_max_requests=IMAGE_LAYOUT_REQUEST_MAX_REQUESTS,
             request_max_images=IMAGE_LAYOUT_REQUEST_MAX_IMAGES,
+            generation_enabled=_to_bool(
+                cfg.get("image_layout_generation_enabled"),
+                IMAGE_LAYOUT_GENERATION_ENABLED,
+            ),
+            generation_resolution=_to_str(
+                cfg.get("image_layout_generation_resolution"),
+                IMAGE_LAYOUT_GENERATION_RESOLUTION,
+            ).strip()
+            or IMAGE_LAYOUT_GENERATION_RESOLUTION,
+            generation_aspect_ratio=_to_str(
+                cfg.get("image_layout_generation_aspect_ratio"),
+                IMAGE_LAYOUT_GENERATION_ASPECT_RATIO,
+            ).strip()
+            or IMAGE_LAYOUT_GENERATION_ASPECT_RATIO,
             tool_enabled=_to_bool(cfg.get("image_layout_tool_enabled"), True),
             tool_rounds=max(1, _to_int(cfg.get("image_layout_tool_rounds"), 2)),
             tool_max_steps=max(5, _to_int(cfg.get("image_layout_tool_max_steps"), 25)),

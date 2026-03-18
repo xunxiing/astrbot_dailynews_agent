@@ -18,7 +18,11 @@ except Exception:  # pragma: no cover
 from PIL import Image
 
 from ..core.config_models import ImageLabelConfig
-from ..core.image_utils import download_image_to_jpeg_file, get_plugin_data_dir
+from ..core.image_utils import (
+    canonicalize_image_url,
+    download_image_to_jpeg_file,
+    get_plugin_data_dir,
+)
 from ..core.utils import _json_from_text
 from ..storage.image_label_store import (
     ImageLabelEntry,
@@ -204,13 +208,25 @@ class ImageLabeler:
             return [], {}
 
         items: list[dict[str, Any]] = []
+        seen_canonical: set[str] = set()
         for source, urls in (images_by_source or {}).items():
             src = str(source or "").strip()
             for u in urls or []:
                 url = str(u or "").strip()
                 if not url:
                     continue
-                items.append({"source": src, "url": url})
+                canonical_url = canonicalize_image_url(url)
+                if canonical_url and canonical_url in seen_canonical:
+                    continue
+                if canonical_url:
+                    seen_canonical.add(canonical_url)
+                items.append(
+                    {
+                        "source": src,
+                        "url": url,
+                        "canonical_url": canonical_url or url,
+                    }
+                )
                 if cfg.max_images_total > 0 and len(items) >= cfg.max_images_total:
                     break
             if cfg.max_images_total > 0 and len(items) >= cfg.max_images_total:
@@ -379,6 +395,7 @@ class ImageLabeler:
                 {
                     "source": src,
                     "url": url,
+                    "canonical_url": str(it.get("canonical_url") or canonicalize_image_url(url) or url),
                     "label": label,
                     "width": int(entry.width or 0),
                     "height": int(entry.height or 0),

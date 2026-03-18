@@ -930,6 +930,13 @@ class DailyNewsScheduler:
         cfg.setdefault("image_layout_preview_max_images", layout.preview_max_images)
         cfg.setdefault("image_layout_preview_max_width", layout.preview_max_width)
         cfg.setdefault("image_layout_preview_gap", layout.preview_gap)
+        cfg.setdefault("image_layout_generation_enabled", layout.generation_enabled)
+        cfg.setdefault(
+            "image_layout_generation_resolution", layout.generation_resolution
+        )
+        cfg.setdefault(
+            "image_layout_generation_aspect_ratio", layout.generation_aspect_ratio
+        )
         cfg.setdefault("image_layout_shuffle_candidates", layout.shuffle_candidates)
         cfg.setdefault("image_layout_shuffle_seed", layout.shuffle_seed)
 

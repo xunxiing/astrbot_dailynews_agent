@@ -12,6 +12,7 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.astr_agent_context import AstrAgentContext
 
+from ..workflow.core.image_utils import canonicalize_image_url
 from ..workflow.storage.md_doc_store import create_doc, read_doc, write_doc
 
 
@@ -102,6 +103,21 @@ def _build_image_markdown(
         title = " ".join(hints).strip()
 
     return f'![{alt}]({image_url}{f" {chr(34)}{title}{chr(34)}" if title else ""})'
+
+
+_DOC_IMG_URL_RE = re.compile(r'!\[[^\]]*\]\((?P<url>\S+?)(?:\s+"[^"]*")?\)')
+
+
+def _extract_doc_image_urls(text: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in _DOC_IMG_URL_RE.finditer(text or ""):
+        url = str(match.group("url") or "").strip()
+        canonical = canonicalize_image_url(url) or url
+        if canonical and canonical not in seen:
+            seen.add(canonical)
+            out.append(canonical)
+    return out
 
 
 def _find_spans(
@@ -421,10 +437,36 @@ class MarkdownDocApplyEditsTool(FunctionTool[AstrAgentContext]):
                 }
             )
         md = read_doc(doc_id)
-        patched, rep = _apply_edits(md, edits=[e for e in edits if isinstance(e, dict)])
+        existing_images = set(_extract_doc_image_urls(md))
+        filtered_edits: list[dict[str, Any]] = []
+        skipped_duplicates: list[str] = []
+        for edit in [e for e in edits if isinstance(e, dict)]:
+            payloads = [
+                str(edit.get("text") or ""),
+                str(edit.get("replacement") or ""),
+            ]
+            dup = False
+            for payload in payloads:
+                for image_url in _extract_doc_image_urls(payload):
+                    if image_url in existing_images:
+                        skipped_duplicates.append(image_url)
+                        dup = True
+                        break
+                if dup:
+                    break
+            if not dup:
+                filtered_edits.append(edit)
+
+        patched, rep = _apply_edits(md, edits=filtered_edits)
         changed = patched != md
         if changed:
             write_doc(doc_id, patched)
+        if skipped_duplicates and isinstance(rep, dict):
+            rep = dict(rep)
+            rep.setdefault("errors", [])
+            rep["errors"] = list(rep.get("errors") or []) + [
+                f"duplicate image skipped: {u}" for u in skipped_duplicates
+            ]
         errors = rep.get("errors") if isinstance(rep, dict) else None
         ok = bool(isinstance(errors, list) and len(errors) == 0)
         return _json_dump({"ok": ok, "doc_id": doc_id, "changed": changed, **rep})
@@ -508,7 +550,9 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
 
         md = read_doc(doc_id)
         # idempotency: avoid inserting the same image URL repeatedly
-        if image_url in md:
+        image_canonical = canonicalize_image_url(image_url) or image_url
+        existing_images = set(_extract_doc_image_urls(md))
+        if image_url in md or image_canonical in existing_images:
             return _json_dump(
                 {
                     "ok": True,
@@ -517,6 +561,7 @@ class MarkdownDocMatchInsertImageTool(FunctionTool[AstrAgentContext]):
                     "inserted": 0,
                     "skipped": "already_exists",
                     "image_url": image_url,
+                    "canonical_url": image_canonical,
                 }
             )
         spans = _find_spans(

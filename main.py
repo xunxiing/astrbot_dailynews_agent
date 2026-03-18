@@ -23,6 +23,7 @@ from .tools import (
 from .workflow import (
     DailyNewsScheduler,
     ImageLayoutAgent,
+    NewsSourceConfig,
     RenderImageStyleConfig,
     RenderPipelineConfig,
     SubAgentResult,
@@ -89,6 +90,7 @@ class DailyNewsPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self._plugin_module_prefix = str(__package__ or "").strip()
 
         tools = [
             WechatArticleMarkdownTool(),
@@ -101,6 +103,11 @@ class DailyNewsPlugin(Star):
             MarkdownDocApplyEditsTool(),
             MarkdownDocMatchInsertImageTool(),
         ]
+        self._registered_llm_tool_names = {tool.name for tool in tools}
+
+        # Hot reload in AstrBot does not always clean stale tool registrations reliably.
+        # Purge any old dailynews-owned tool objects before registering the current set.
+        self._purge_dailynews_llm_tools(include_internal_only=True)
 
         if hasattr(self.context, "add_llm_tools"):
             self.context.add_llm_tools(*tools)
@@ -122,6 +129,69 @@ class DailyNewsPlugin(Star):
                     "[dailynews] failed to start scheduler", exc_info=True
                 )
 
+    def _tool_modules(self, tool) -> set[str]:
+        mods: set[str] = set()
+        for value in (
+            getattr(tool, "handler_module_path", None),
+            getattr(tool, "__module__", None),
+            getattr(getattr(tool, "__class__", None), "__module__", None),
+        ):
+            text = str(value or "").strip()
+            if text:
+                mods.add(text)
+        return mods
+
+    def _is_dailynews_owned_tool(self, tool) -> bool:
+        prefix = self._plugin_module_prefix
+        if not prefix:
+            return False
+        return any(mod.startswith(prefix) for mod in self._tool_modules(tool))
+
+    def _is_dailynews_internal_layout_tool(self, tool) -> bool:
+        name = str(getattr(tool, "name", "") or "").strip()
+        if name == "gemini_layout_generate_image":
+            return True
+        if name != "gemini_image_generation":
+            return False
+        modules = self._tool_modules(tool)
+        return any(
+            "astrbot_dailynews_agent" in mod and "image_tools" in mod for mod in modules
+        )
+
+    def _purge_dailynews_llm_tools(self, *, include_internal_only: bool) -> None:
+        tool_mgr = getattr(getattr(self.context, "provider_manager", None), "llm_tools", None)
+        if tool_mgr is None:
+            return
+        func_list = getattr(tool_mgr, "func_list", None)
+        if not isinstance(func_list, list):
+            return
+
+        removed: list[str] = []
+        for tool in list(func_list):
+            name = str(getattr(tool, "name", "") or "").strip()
+            if not name:
+                continue
+            should_remove = False
+            if self._is_dailynews_owned_tool(tool) and (
+                name in self._registered_llm_tool_names or include_internal_only
+            ):
+                should_remove = True
+            if include_internal_only and self._is_dailynews_internal_layout_tool(tool):
+                should_remove = True
+            if not should_remove:
+                continue
+            try:
+                func_list.remove(tool)
+                removed.append(name)
+            except ValueError:
+                continue
+
+        if removed:
+            astrbot_logger.info(
+                "[dailynews] purged stale llm tools: %s",
+                ", ".join(sorted(set(removed))),
+            )
+
     async def terminate(self):
         # Best-effort: cancel any in-flight workflow & background tasks to avoid leaking across reloads.
         if getattr(self, "scheduler", None) is not None:
@@ -136,6 +206,99 @@ class DailyNewsPlugin(Star):
                 t.cancel()
             except Exception:
                 pass
+
+        try:
+            self._purge_dailynews_llm_tools(include_internal_only=True)
+        except Exception:
+            astrbot_logger.warning(
+                "[dailynews] failed to purge llm tools during terminate",
+                exc_info=True,
+            )
+
+    async def _get_configured_sources(self, cfg: dict) -> list:
+        await self.scheduler.update_workflow_sources_from_config(cfg)
+        return list(self.scheduler.workflow_manager.news_sources)
+
+    def _is_likely_url(self, value: str) -> bool:
+        text = str(value or "").strip().lower()
+        return text.startswith("http://") or text.startswith("https://")
+
+    def _match_sources(self, sources: list, query: str) -> list:
+        key = str(query or "").strip().lower()
+        if not key:
+            return []
+        exact = []
+        fuzzy = []
+        for src in sources:
+            name = str(getattr(src, "name", "") or "")
+            low = name.lower()
+            if low == key:
+                exact.append(src)
+            elif key in low:
+                fuzzy.append(src)
+        return exact or fuzzy
+
+    async def _fetch_articles_for_sources(self, sources: list, cfg: dict) -> dict[str, list]:
+        fetch_tasks = []
+        fetch_sources = []
+        for src in sources:
+            agent_cls = self.scheduler.workflow_manager.sub_agents.get(src.type)
+            if not agent_cls:
+                continue
+            fetch_sources.append(src)
+            fetch_tasks.append(agent_cls().fetch_latest_articles(src, cfg))
+
+        fetched = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        source_articles: dict[str, list] = {}
+        for idx, result in enumerate(fetched):
+            src = fetch_sources[idx]
+            if isinstance(result, Exception):
+                astrbot_logger.warning(
+                    "[dailynews] fetch source articles failed: %s",
+                    result,
+                    exc_info=True,
+                )
+                source_articles[src.name] = []
+                continue
+            name, articles = result
+            source_articles[name] = articles or []
+        return source_articles
+
+    async def _collect_images_for_source(
+        self,
+        *,
+        source,
+        articles: list,
+        max_urls: int,
+    ) -> list[str]:
+        from .analysis.miyousheanalysis.analysis import fetch_miyoushe_post
+        from .analysis.wechatanalysis.analysis import fetch_wechat_article
+        from .workflow import _run_sync
+
+        urls: list[str] = []
+        for article in (articles or [])[: max(1, int(getattr(source, "max_articles", 2) or 2))]:
+            article_url = (
+                (article.get("url") or "").strip() if isinstance(article, dict) else ""
+            )
+            if not article_url:
+                continue
+            try:
+                if str(getattr(source, "type", "") or "") == "miyoushe":
+                    data = await _run_sync(fetch_miyoushe_post, article_url)
+                else:
+                    data = await _run_sync(fetch_wechat_article, article_url)
+                images = data.get("image_urls") or []
+                if not isinstance(images, list):
+                    continue
+                for item in images:
+                    image_url = str(item or "").strip()
+                    if image_url and image_url not in urls:
+                        urls.append(image_url)
+                        if len(urls) >= max_urls:
+                            return urls
+            except Exception:
+                continue
+        return urls
 
     # ====== commands ======
 
@@ -828,6 +991,215 @@ class DailyNewsPlugin(Star):
                 yield r
         else:
             yield event.plain_result(patched)
+
+    @filter.command("news_source_test")
+    async def news_source_test(self, event: AstrMessageEvent, args: str = ""):
+        """
+        只测试单个信息源的抓图或排版。
+        用法：/news_source_test <source_name|wechat_article_url> [images|layout] [plain|html] [preview] [max_urls]
+        """
+        parts = [p.strip() for p in (args or "").strip().split() if p.strip()]
+        if not parts:
+            yield event.plain_result(
+                "用法：news_source_test <source_name|wechat_article_url> [images|layout] [plain|html] [preview] [max_urls]"
+            )
+            return
+
+        source_query = parts[0]
+        flags = [p.lower() for p in parts[1:]]
+        test_kind = "images"
+        if "layout" in flags:
+            test_kind = "layout"
+        elif "images" in flags:
+            test_kind = "images"
+        output_mode = "html" if "html" in flags else "plain"
+        force_preview = "preview" in flags
+        max_urls = 12
+        for p in parts[1:]:
+            if p.isdigit():
+                max_urls = max(1, min(50, int(p)))
+                break
+
+        cfg = self.scheduler.get_config_snapshot()
+        cfg["image_layout_enabled"] = True
+        if force_preview:
+            cfg["image_layout_preview_enabled"] = True
+
+        sources = await self._get_configured_sources(cfg)
+        if not sources:
+            yield event.plain_result("未配置 news_sources")
+            return
+
+        source = None
+        if self._is_likely_url(source_query):
+            source = NewsSourceConfig(
+                name="临时公众号测试",
+                url=source_query,
+                type="wechat",
+                priority=1,
+                max_articles=3,
+            )
+        else:
+            matched = self._match_sources(sources, source_query)
+            if not matched:
+                names = ", ".join(str(getattr(s, "name", "") or "") for s in sources[:20])
+                yield event.plain_result(
+                    f"未找到信息源：{source_query}\n可用信息源：{names}\n也可以直接传一篇公众号文章 URL 作为临时测试源。"
+                )
+                return
+            if len(matched) > 1:
+                names = ", ".join(str(getattr(s, "name", "") or "") for s in matched)
+                yield event.plain_result(f"匹配到多个信息源，请写更精确一些：{names}")
+                return
+            source = matched[0]
+
+        source_articles = await self._fetch_articles_for_sources([source], cfg)
+        articles = source_articles.get(source.name, []) or []
+        image_urls = await self._collect_images_for_source(
+            source=source,
+            articles=articles,
+            max_urls=max_urls,
+        )
+
+        if test_kind == "images":
+            lines = [
+                f"# source_test: {source.name}",
+                f"- type: {source.type}",
+                f"- articles: {len(articles)}",
+                f"- images: {len(image_urls)}",
+                "",
+            ]
+            if self._is_likely_url(source_query):
+                lines.insert(3, f"- seed_url: {source.url}")
+            for article in articles[: min(5, len(articles))]:
+                if not isinstance(article, dict):
+                    continue
+                title = str(article.get("title") or "").strip()
+                article_url = str(article.get("url") or "").strip()
+                if title:
+                    lines.append(f"- article: {title}")
+                if article_url:
+                    lines.append(f"  {article_url}")
+            if image_urls:
+                lines.append("")
+                lines.append("## image_urls")
+                for u in image_urls:
+                    lines.append(f"- {u}")
+
+            if force_preview and image_urls:
+                out_path = (
+                    get_plugin_data_dir("image_previews")
+                    / f"source_preview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                )
+                try:
+                    merged = await merge_images_vertical(
+                        image_urls[:max_urls], out_path=out_path
+                    )
+                    img_file = Path(str(merged)).resolve()
+                    if _is_valid_image_file(img_file):
+                        p = img_file.as_posix()
+                        if _ImageComponent is not None:
+                            yield event.chain_result(
+                                [_ImageComponent(file=f"file:///{p}", path=p)]
+                            )
+                        else:
+                            yield event.image_result(p)
+                except Exception as e:
+                    astrbot_logger.warning(
+                        "[dailynews] news_source_test preview failed: %s",
+                        e,
+                        exc_info=True,
+                    )
+                    lines.append("")
+                    lines.append(f"preview_failed: {e}")
+
+            yield event.plain_result("\n".join(lines).strip())
+            return
+
+        article_lines = []
+        for idx, article in enumerate(articles[: min(6, len(articles))], start=1):
+            if not isinstance(article, dict):
+                continue
+            title = str(article.get("title") or "").strip() or f"条目 {idx}"
+            article_url = str(article.get("url") or "").strip()
+            if article_url:
+                article_lines.append(f"- [{title}]({article_url})")
+            else:
+                article_lines.append(f"- {title}")
+        if not article_lines:
+            article_lines.append("- 本次未抓到文章标题，仅测试图片插入。")
+
+        test_md = "\n".join(
+            [
+                f"# 单源排版测试：{source.name}",
+                "",
+                f"*生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+                "",
+                "## 最新内容",
+                *article_lines,
+                "",
+                "## 编辑说明",
+                "- 仅允许使用这个信息源的候选图。",
+                "- 优先让图片贴合对应条目，不要无意义插图。",
+                "- 如果候选图不合适，可以在配置开启时调用文生图工具生成辅助氛围图。",
+            ]
+        ).strip()
+
+        sub_results = []
+        if image_urls:
+            sub_results.append(
+                SubAgentResult(
+                    source_name=source.name,
+                    summary="",
+                    key_points=[],
+                    content="\n".join(article_lines),
+                    images=image_urls,
+                )
+            )
+
+        patched = await ImageLayoutAgent().enhance_markdown(
+            draft_markdown=test_md,
+            sub_results=sub_results,
+            user_config=cfg,
+            astrbot_context=self.context,
+            image_plan={source.name: min(len(image_urls), 3)} if image_urls else None,
+        )
+
+        if output_mode == "html":
+            html_cfg = dict(cfg)
+            html_cfg["delivery_mode"] = "html_image"
+            prepared = await self.scheduler._build_report_payload(
+                patched,
+                html_cfg,
+                cache_hit=False,
+            )
+            async for r in self._send_prepared_report_to_event(
+                event,
+                content=patched,
+                prepared=prepared,
+            ):
+                yield r
+            return
+
+        yield event.plain_result(patched)
+
+    @filter.command("news_url_test")
+    async def news_url_test(self, event: AstrMessageEvent, args: str = ""):
+        """
+        使用一篇微信公众号文章 URL 作为临时单源测试入口。
+        用法：/news_url_test <wechat_article_url> [images|layout] [plain|html] [preview] [max_urls]
+        """
+        parts = [p.strip() for p in (args or "").strip().split() if p.strip()]
+        if not parts:
+            yield event.plain_result(
+                "用法：news_url_test <wechat_article_url> [images|layout] [plain|html] [preview] [max_urls]"
+            )
+            return
+        if not self._is_likely_url(parts[0]):
+            yield event.plain_result("news_url_test 只接受公众号文章 URL。")
+            return
+        async for item in self.news_source_test(event, args=args):
+            yield item
 
     @filter.command("news_subscribe")
     async def news_subscribe(self, event: AstrMessageEvent):

@@ -5,7 +5,7 @@ import io
 import re
 from collections.abc import Iterable
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import aiohttp
 from PIL import Image
@@ -28,6 +28,16 @@ _IMG_CLASS_RE = re.compile(r'\sclass=(?P<q>["\'])(?P<cls>[^"\']*)(?P=q)', re.I)
 _IMG_ATTR_RE = re.compile(r'\s(?P<name>[a-zA-Z_:][-a-zA-Z0-9_:.]*)=(?P<q>["\'])(?P<val>[^"\']*)(?P=q)', re.I)
 _FETCH_WARNED: set[tuple[str, int]] = set()
 _INLINE_NOOP_WARNED: set[str] = set()
+_IMAGE_TRANSFORM_QUERY_KEYS = {
+    "x-oss-process",
+    "from",
+    "wx_fmt",
+    "wxfrom",
+    "wx_lazy",
+    "tp",
+    "fmt",
+    "wxtype",
+}
 
 
 def get_plugin_data_dir(subdir: str) -> Path:
@@ -113,6 +123,41 @@ def _normalize_urls(urls: Iterable[str]) -> list[str]:
             seen.add(s)
             out.append(s)
     return out
+
+
+def canonicalize_image_url(url: str) -> str:
+    s = str(url or "").strip()
+    if not s:
+        return ""
+    if s.startswith("data:image/") or s.startswith("base64://"):
+        return s
+    if s.startswith("file:///"):
+        return s.replace("\\", "/")
+
+    try:
+        parsed = urlparse(s)
+    except Exception:
+        return s
+
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return s
+
+    query_items = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if str(key or "").strip().lower() in _IMAGE_TRANSFORM_QUERY_KEYS:
+            continue
+        query_items.append((key, value))
+
+    return urlunparse(
+        (
+            parsed.scheme.lower(),
+            parsed.netloc.lower(),
+            parsed.path,
+            "",
+            urlencode(query_items, doseq=True),
+            "",
+        )
+    )
 
 
 def _split_url_input(value: str) -> list[str]:

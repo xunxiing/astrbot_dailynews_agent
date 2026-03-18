@@ -23,6 +23,7 @@ from ..core.config_models import (
     RenderImageStyleConfig,
 )
 from ..core.image_utils import (
+    canonicalize_image_url,
     get_plugin_data_dir,
     merge_images_vertical,
     probe_image_size_from_url,
@@ -348,6 +349,7 @@ class ImageLayoutAgent:
 
         # 收集图片候选（来自写作子 Agent 抓正文时解析出的 image_urls）
         images_by_source: dict[str, list[str]] = {}
+        seen_image_canonical: set[str] = set()
         for r in sub_results:
             if isinstance(r, SubAgentResult) and r.source_name and r.images:
                 if r.content and r.content.strip():
@@ -355,9 +357,15 @@ class ImageLayoutAgent:
                 urls: list[str] = []
                 seen = set()
                 for u in r.images:
-                    if isinstance(u, str) and u.strip() and u not in seen:
-                        seen.add(u)
-                        urls.append(u.strip())
+                    if not isinstance(u, str) or not u.strip():
+                        continue
+                    clean = u.strip()
+                    canonical = canonicalize_image_url(clean) or clean
+                    if canonical in seen or canonical in seen_image_canonical:
+                        continue
+                    seen.add(canonical)
+                    seen_image_canonical.add(canonical)
+                    urls.append(clean)
                 if urls:
                     images_by_source[r.source_name] = urls
 
@@ -384,10 +392,13 @@ class ImageLayoutAgent:
             target = str(url or "").strip()
             if not target:
                 return None
+            target_canonical = canonicalize_image_url(target) or target
             for row in image_catalog:
                 if not isinstance(row, dict):
                     continue
-                if str(row.get("url") or "").strip() == target:
+                row_url = str(row.get("url") or "").strip()
+                row_canonical = str(row.get("canonical_url") or "").strip()
+                if row_url == target or row_canonical == target_canonical:
                     return row
             return None
 
@@ -440,9 +451,6 @@ class ImageLayoutAgent:
                 "promo",
                 "concept art",
                 "key visual",
-                "landscape",
-                "scene",
-                "atmosphere",
             )
             ui_words = (
                 "ui",
@@ -466,7 +474,11 @@ class ImageLayoutAgent:
                 mode = "external"
                 size = "external"
                 reason = "extra-tall image will dominate the column"
-            elif any(word in label for word in poster_words) and portrait_ratio < 2.1:
+            elif (
+                any(word in label for word in poster_words)
+                and portrait_ratio < 2.1
+                and not side_ok
+            ):
                 mode = "center"
                 size = "full"
                 reason = "poster or atmosphere image works better as a centered hero"
@@ -534,7 +546,10 @@ class ImageLayoutAgent:
                 url = str(row.get("url") or "").strip()
                 if not url:
                     continue
-                merged[url] = dict(row)
+                canonical = str(row.get("canonical_url") or canonicalize_image_url(url) or url)
+                row2 = dict(row)
+                row2["canonical_url"] = canonical
+                merged[canonical] = row2
 
             probe_targets: list[tuple[str, str]] = []
             probe_budget = max(8, min(24, int(max_images_total) * 3))
@@ -543,10 +558,16 @@ class ImageLayoutAgent:
                     clean_url = str(url or "").strip()
                     if not clean_url:
                         continue
-                    row = merged.get(clean_url) or {"source": src, "url": clean_url}
+                    canonical = canonicalize_image_url(clean_url) or clean_url
+                    row = merged.get(canonical) or {
+                        "source": src,
+                        "url": clean_url,
+                        "canonical_url": canonical,
+                    }
                     row.setdefault("source", src)
                     row.setdefault("url", clean_url)
-                    merged[clean_url] = row
+                    row.setdefault("canonical_url", canonical)
+                    merged[canonical] = row
                     if (
                         _to_pos_int(row.get("width")) <= 0
                         or _to_pos_int(row.get("height")) <= 0
@@ -579,12 +600,17 @@ class ImageLayoutAgent:
             for src, urls in images_by_source.items():
                 for url in urls:
                     clean_url = str(url or "").strip()
-                    if not clean_url or clean_url in seen_rows:
+                    canonical = canonicalize_image_url(clean_url) or clean_url
+                    if not clean_url or canonical in seen_rows:
                         continue
-                    seen_rows.add(clean_url)
-                    row = dict(merged.get(clean_url) or {"source": src, "url": clean_url})
+                    seen_rows.add(canonical)
+                    row = dict(
+                        merged.get(canonical)
+                        or {"source": src, "url": clean_url, "canonical_url": canonical}
+                    )
                     row["source"] = str(row.get("source") or src)
                     row["url"] = clean_url
+                    row["canonical_url"] = canonical
                     row["width"] = _to_pos_int(row.get("width"))
                     row["height"] = _to_pos_int(row.get("height"))
                     if row["width"] > 0 and row["height"] > 0:
@@ -820,6 +846,9 @@ class ImageLayoutAgent:
 
                 tool_system += "- 优先侧边排版：除封面/海报/氛围大图外，不要默认全居中。\n"
                 tool_system += "- 插图时请显式给出 layout/size；常用 `layout=float-right size=medium`。\n"
+                tool_system += "- 默认只使用侧边图；普通正文插图禁止 center/full，大多数图片都应为 float-left/right。\n"
+                tool_system += "- 严禁重复使用同一张图（即使只是 x-oss-process / 尺寸参数不同也算重复）。\n"
+                tool_system += "- 严禁把游戏图片硬塞到科技/开源段落；没有匹配图时优先调用 gemini_image_generation 生成氛围图。\n"
 
                 tool_system += (
                     f"- Real layout context: readable column is about {layout_context.content_width_px}px; "
@@ -829,6 +858,20 @@ class ImageLayoutAgent:
                 tool_system += (
                     "- If image_catalog[*].render_hint.side_by_side_safe is false, do not use float-left/right for that image.\n"
                 )
+                if layout_cfg.generation_enabled:
+                    tool_system += (
+                        "- If no topic-matched side-safe image is available, call gemini_image_generation instead of falling back to a centered unrelated candidate.\n"
+                    )
+                    tool_system += (
+                        f"- Default generation params: resolution={layout_cfg.generation_resolution}, "
+                        f"aspect_ratio={layout_cfg.generation_aspect_ratio}.\n"
+                    )
+                    tool_system += (
+                        "- Never generate fake screenshots, fake official posters, or factual product/game UI that must match the source exactly.\n"
+                    )
+                    tool_system += (
+                        "- Generated support art should still prefer side-friendly composition and must be inserted with float-left/right unless chief editor guidance explicitly requests a hero image.\n"
+                    )
 
                 if (layout_guidance or "").strip():
                     tool_system += f"- Layout guidance from chief editor: {str(layout_guidance).strip()}\n"
@@ -897,7 +940,9 @@ class ImageLayoutAgent:
         system_prompt = (prompts.image_layout_system + "\n").strip() + "\n"
         system_prompt += f"- 总图片数不超过 {max_images_total} 张；单个来源不超过 {max_images_per_source} 张。\n"
 
-        system_prompt += "- Prefer side-aligned images by default; use center/full only for hero posters or atmosphere images.\n"
+        system_prompt += "- Prefer side-aligned images by default. Normal body inserts must stay float-left/right; center/full is exceptional.\n"
+        system_prompt += "- Never reuse the same image twice, even if the URL only differs by transform parameters.\n"
+        system_prompt += "- Never use game/community images to illustrate unrelated tech/open-source sections; if no suitable image exists, prefer generating a neutral atmosphere image.\n"
         system_prompt += (
             f"- Real layout context: template={layout_context.template_name}, page_width={layout_context.page_width_px}px, "
             f"readable column={layout_context.content_width_px}px. Side-float images should stay around "
@@ -907,6 +952,13 @@ class ImageLayoutAgent:
         system_prompt += (
             "- Treat image_catalog[*].render_hint as renderer-aware advice. If side_by_side_safe is false, avoid float-left/right.\n"
         )
+        if layout_cfg.generation_enabled:
+            system_prompt += (
+                f"- If no topic-matched side-safe candidate exists, call gemini_image_generation with default resolution={layout_cfg.generation_resolution} and aspect_ratio={layout_cfg.generation_aspect_ratio}; do not fall back to a centered unrelated image.\n"
+            )
+            system_prompt += (
+                "- Generated support art should prefer side-friendly composition and still be inserted with float-left/right by default.\n"
+            )
         if (layout_guidance or "").strip():
             system_prompt += f"- Layout guidance from chief editor: {str(layout_guidance).strip()}\n"
         if image_plan:
