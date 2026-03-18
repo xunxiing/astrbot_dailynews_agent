@@ -39,6 +39,15 @@ except Exception:  # pragma: no cover
     _ImageComponent = None  # type: ignore
 
 try:
+    from astrbot.core.message.components import Node as _NodeComponent
+    from astrbot.core.message.components import Nodes as _NodesComponent
+    from astrbot.core.message.components import Plain as _PlainComponent
+except Exception:  # pragma: no cover
+    _NodeComponent = None  # type: ignore
+    _NodesComponent = None  # type: ignore
+    _PlainComponent = None  # type: ignore
+
+try:
     from astrbot.core import html_renderer as _astrbot_html_renderer
 except Exception:  # pragma: no cover
     _astrbot_html_renderer = None  # type: ignore
@@ -221,6 +230,59 @@ class DailyNewsPlugin(Star):
             )
             async for rr in _send_image(Path(r.image_path)):
                 yield rr
+
+    async def _send_prepared_report_to_event(
+        self,
+        event: AstrMessageEvent,
+        *,
+        content: str,
+        prepared: dict,
+    ):
+        img_paths = self.scheduler._valid_cached_img_paths(prepared.get("img_paths") or [])
+        for img_path in img_paths:
+            p = Path(str(img_path)).resolve().as_posix()
+            if _ImageComponent is not None:
+                yield event.chain_result([_ImageComponent(file=f"file:///{p}", path=p)])
+            else:
+                yield event.image_result(p)
+
+        link_node_chunks = [
+            str(x) for x in (prepared.get("link_node_chunks") or []) if str(x).strip()
+        ]
+        appendix_images = self.scheduler._normalize_appendix_images(
+            prepared.get("appendix_images") or []
+        )
+        if not link_node_chunks and not appendix_images:
+            return
+
+        if (
+            _NodesComponent is not None
+            and _NodeComponent is not None
+            and _PlainComponent is not None
+        ):
+            nodes = [
+                _NodeComponent(
+                    uin="0",
+                    name="每日资讯日报",
+                    content=[_PlainComponent(chunk)],
+                )
+                for chunk in link_node_chunks
+            ]
+            nodes.extend(self.scheduler._build_appendix_image_nodes(appendix_images))
+            if nodes:
+                yield event.chain_result([_NodesComponent(nodes)])
+                return
+
+        fallback_parts = list(link_node_chunks)
+        fallback_parts.extend(
+            [
+                str(item.get("url") or "").strip()
+                for item in appendix_images
+                if str(item.get("url") or "").strip()
+            ]
+        )
+        if fallback_parts:
+            yield event.plain_result("\n\n".join(fallback_parts))
 
     @filter.command("daily_news")
     async def daily_news(self, event: AstrMessageEvent, args: str = ""):
@@ -751,7 +813,18 @@ class DailyNewsPlugin(Star):
         )
 
         if mode == "html":
-            async for r in self._send_as_html_images(event, patched):
+            html_cfg = dict(cfg)
+            html_cfg["delivery_mode"] = "html_image"
+            prepared = await self.scheduler._build_report_payload(
+                patched,
+                html_cfg,
+                cache_hit=False,
+            )
+            async for r in self._send_prepared_report_to_event(
+                event,
+                content=patched,
+                prepared=prepared,
+            ):
                 yield r
         else:
             yield event.plain_result(patched)

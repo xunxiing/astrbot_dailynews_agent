@@ -626,9 +626,9 @@ def _should_externalize_image(*, width: int, height: int, classes: list[str]) ->
 
 
 def _build_external_image_link(src: str, *, alt: str = "", width: int = 0, height: int = 0) -> str:
-    label = alt or "??????"
+    label = "查看长图"
     if width > 0 and height > 0:
-        label = f"{label}?{width}?{height}?"
+        label = f"{label}（{width}x{height}）"
     href = _html.escape(src, quote=True)
     text = _html.escape(label)
     return (

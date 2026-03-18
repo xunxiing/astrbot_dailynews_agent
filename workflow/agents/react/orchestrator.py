@@ -31,7 +31,13 @@ from ...core.skland_official import (
     format_skland_posts_for_tool,
 )
 from ...core.utils import _run_sync
+from ...core.wechat_freshness import (
+    article_is_new_since_recent_baseline as _article_is_new_since_recent_baseline,
+    build_wechat_seed_key as _build_wechat_seed_key,
+    merge_seen_articles as _merge_seen_articles,
+)
 from ...pipeline.rendering import load_template
+from ...storage.seed_store import _get_seed_state, _update_seed_entry
 from ..image_labeler import ImageLabeler
 from ..sources.github_source import GitHubClient, GitHubConfig, parse_repo
 from .react_agent import ReActAgent, ReactRunResult
@@ -150,9 +156,6 @@ def _pick_first_url_arg(*values: Any) -> str:
 
 
 def _extract_image_urls(payload: Any, *, max_count: int = 20) -> list[str]:
-    if not isinstance(payload, (dict, list)):
-        return []
-
     out: list[str] = []
     seen: set[str] = set()
 
@@ -163,6 +166,20 @@ def _extract_image_urls(payload: Any, *, max_count: int = 20) -> list[str]:
         if re.search(r"\.(png|jpe?g|webp|gif|bmp|svg)(?:\?|$)", s):
             return True
         return any(k in s for k in ("/image", "/images/", "/img/", "image.miyoushe"))
+
+    if isinstance(payload, str):
+        for m in re.finditer(r"https?://[^\s)>\"]+", payload, flags=re.I):
+            s = str(m.group(0) or "").strip()
+            s = s.rstrip(".,;")
+            if _looks_like_image_url(s) and s not in seen:
+                seen.add(s)
+                out.append(s)
+                if len(out) >= max_count:
+                    break
+        return out
+
+    if not isinstance(payload, (dict, list)):
+        return []
 
     def _walk(node: Any, depth: int = 0):
         if len(out) >= max_count or depth > 8:
@@ -1366,6 +1383,19 @@ class ReActDailyNewsOrchestrator:
                         resolved_scope = pre_scope
                         meta: dict[str, Any] = {}
                         stale_only = False
+                        stale_override = False
+                        raw_rows_for_cache: list[dict[str, Any]] = []
+                        detail_payload: dict[str, Any] = {}
+                        seed_key = _build_wechat_seed_key(
+                            input_url, album_keyword or "", pre_scope
+                        )
+                        state = await _get_seed_state()
+                        entry = (
+                            state.get(seed_key)
+                            if isinstance(state, dict)
+                            and isinstance(state.get(seed_key), dict)
+                            else {}
+                        )
 
                         if callable(fetch_latest):
                             try:
@@ -1375,26 +1405,37 @@ class ReActDailyNewsOrchestrator:
                                     parse_limit,
                                     latest_scope=pre_scope,
                                 )
+                                if isinstance(rows, list):
+                                    raw_rows_for_cache = [
+                                        row for row in rows if isinstance(row, dict)
+                                    ]
                                 if max_age_hours > 0 and isinstance(rows, list) and rows:
                                     filtered_rows: list[dict[str, Any]] = []
                                     stale_count = 0
+                                    new_override_count = 0
                                     for row in rows:
                                         if not isinstance(row, dict):
                                             continue
                                         row_ts = _safe_unix_ts(row.get("create_time"))
-                                        if (
-                                            row_ts > 0
-                                            and row_ts < cutoff_ts
-                                            and not _looks_like_today_item(row)
-                                        ):
-                                            stale_count += 1
-                                            continue
+                                        if row_ts > 0 and row_ts < cutoff_ts:
+                                            is_today = _looks_like_today_item(row)
+                                            is_new_since_baseline = (
+                                                _article_is_new_since_recent_baseline(
+                                                    row, entry
+                                                )
+                                            )
+                                            if not is_today and not is_new_since_baseline:
+                                                stale_count += 1
+                                                continue
+                                            if is_new_since_baseline and not is_today:
+                                                new_override_count += 1
                                         filtered_rows.append(row)
-                                    if stale_count > 0:
+                                    if stale_count > 0 or new_override_count > 0:
                                         astrbot_logger.info(
-                                            "[dailynews][react] wechat stale-filter dropped=%s kept=%s max_age_hours=%s url=%s",
+                                            "[dailynews][react] wechat stale-filter dropped=%s kept=%s new_override=%s max_age_hours=%s url=%s",
                                             stale_count,
                                             len(filtered_rows),
+                                            new_override_count,
                                             max_age_hours,
                                             input_url,
                                         )
@@ -1407,7 +1448,33 @@ class ReActDailyNewsOrchestrator:
                                     and str(rows[0].get("url") or "").strip()
                                 ):
                                     resolved_url = str(rows[0].get("url")).strip()
+                                    stale_override = (
+                                        _article_is_new_since_recent_baseline(
+                                            rows[0], entry
+                                        )
+                                    )
                                 resolved_scope = str((meta or {}).get("scope") or pre_scope)
+                                if raw_rows_for_cache:
+                                    updated_entry = _merge_seen_articles(
+                                        {
+                                            **entry,
+                                            "seed_url": resolved_url or input_url,
+                                            "seed_urls": [
+                                                u
+                                                for u in [resolved_url or input_url, input_url]
+                                                if isinstance(u, str)
+                                                and u.strip()
+                                                and "mp.weixin.qq.com" in u.lower()
+                                            ][:3],
+                                            "last_good_seed_url": resolved_url or input_url,
+                                            "source_url": input_url,
+                                            "album_keyword": album_keyword or "",
+                                            "latest_scope": pre_scope,
+                                        },
+                                        raw_rows_for_cache,
+                                    )
+                                    await _update_seed_entry(seed_key, updated_entry)
+                                    entry = updated_entry
                             except Exception as e:
                                 astrbot_logger.warning(
                                     "[dailynews][react] wechat preprocess latest-list failed url=%s scope=%s err=%s",
@@ -1426,6 +1493,8 @@ class ReActDailyNewsOrchestrator:
                         if cutoff_ts > 0 and callable(fetch_article):
                             try:
                                 detail = await _run_sync(fetch_article, resolved_url)
+                                if isinstance(detail, dict):
+                                    detail_payload = detail
                                 article_ts = _safe_unix_ts(
                                     (detail or {}).get("ct")
                                     or (detail or {}).get("create_time")
@@ -1434,6 +1503,7 @@ class ReActDailyNewsOrchestrator:
                                     article_ts > 0
                                     and article_ts < cutoff_ts
                                     and not _looks_like_today_item(detail or {})
+                                    and not stale_override
                                 ):
                                     return (
                                         False,
@@ -1467,6 +1537,43 @@ class ReActDailyNewsOrchestrator:
                                 md_text = f.read().strip()
                         except Exception as e:
                             return False, f"read markdown failed ({md_path}): {_exception_text(e)}"
+
+                        source_name = ""
+                        memory_snapshot = memory.read_all()
+                        for mem_key, mem_payload in memory_snapshot.items():
+                            if not str(mem_key or "").startswith("prefetched_source::"):
+                                continue
+                            if not isinstance(mem_payload, dict):
+                                continue
+                            source_url = str(mem_payload.get("source_url") or "").strip()
+                            if source_url and source_url == input_url:
+                                source_name = (
+                                    str(mem_payload.get("source_name") or "").strip()
+                                )
+                                break
+                        if not source_name:
+                            source_name = album_keyword or kw or "WeChat"
+
+                        layout_payload = {
+                            "source_name": source_name,
+                            "source_type": "wechat",
+                            "source_url": input_url,
+                            "resolved_url": resolved_url,
+                            "summary": str(
+                                (detail_payload or {}).get("title")
+                                or (detail_payload or {}).get("publish_time")
+                                or ""
+                            ).strip(),
+                            "content": md_text,
+                            "items": raw_rows_for_cache[:8],
+                            "images": _extract_image_urls(detail_payload, max_count=24)
+                            or _extract_image_urls(md_text, max_count=24),
+                            "error": None,
+                        }
+                        wechat_hash = hashlib.sha1(
+                            f"{source_name}|{resolved_url}".encode("utf-8")
+                        ).hexdigest()[:10]
+                        memory.write(f"vertical::wechat::{wechat_hash}", layout_payload)
 
                         if len(md_text) > 10000:
                             md_text = md_text[:10000] + "\n\n...(truncated)"

@@ -107,6 +107,11 @@ except Exception:  # pragma: no cover
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
 from ...core.utils import _json_from_text, _run_sync, ensure_section_links
+from ...core.wechat_freshness import (
+    article_is_new_since_recent_baseline as _article_is_new_since_recent_baseline,
+    build_wechat_seed_key as _build_wechat_seed_key,
+    merge_seen_articles as _merge_seen_articles,
+)
 from ...storage.seed_store import _get_seed_state, _update_seed_entry
 
 
@@ -131,7 +136,7 @@ class WechatSubAgent:
             int(effective_max_age_hours) * 3600 if effective_max_age_hours > 0 else 0
         )
 
-        key = f"{source.url}||{album_keyword or ''}||{latest_scope}"
+        key = _build_wechat_seed_key(source.url, album_keyword or "", latest_scope)
 
         state = await _get_seed_state() if persist_seed else {}
         entry = state.get(key) if isinstance(state, dict) else None
@@ -167,6 +172,8 @@ class WechatSubAgent:
 
         seed_url = ""
         articles: list[dict[str, str]] = []
+        raw_articles_for_cache: list[dict[str, str]] = []
+        raw_seed_url = ""
         last_err: str = ""
 
         for start_url in candidates[: max(1, len(candidates))]:
@@ -182,7 +189,7 @@ class WechatSubAgent:
                         ),
                         timeout=float(fetch_timeout_s),
                     )
-                    articles = [
+                    raw_articles = [
                         {
                             "title": str((x or {}).get("title", "")),
                             "url": str((x or {}).get("url", "")),
@@ -191,6 +198,13 @@ class WechatSubAgent:
                         for x in (rows or [])
                         if isinstance(x, dict) and str((x or {}).get("url", "")).strip()
                     ]
+                    if raw_articles:
+                        raw_seed_url = (
+                            str((meta or {}).get("article_url") or start_url).strip()
+                            or start_url
+                        )
+                        raw_articles_for_cache = list(raw_articles)
+                    articles = list(raw_articles)
                     # Defensive: force newest-first by create_time when available.
                     if any(_article_create_ts(x) > 0 for x in articles):
                         articles = sorted(
@@ -203,24 +217,29 @@ class WechatSubAgent:
                             latest_max_age_seconds
                         )
                         stale_count = 0
+                        new_override_count = 0
                         filtered_articles: list[dict[str, str]] = []
                         for item in articles:
                             ts = _article_create_ts(item)
-                            if (
-                                ts > 0
-                                and ts < cutoff_ts
-                                and not _looks_like_today_item(item)
-                            ):
-                                stale_count += 1
-                                continue
+                            if ts > 0 and ts < cutoff_ts:
+                                is_today = _looks_like_today_item(item)
+                                is_new_since_baseline = (
+                                    _article_is_new_since_recent_baseline(item, entry)
+                                )
+                                if not is_today and not is_new_since_baseline:
+                                    stale_count += 1
+                                    continue
+                                if is_new_since_baseline and not is_today:
+                                    new_override_count += 1
                             filtered_articles.append(item)
-                        if stale_count > 0:
+                        if stale_count > 0 or new_override_count > 0:
                             astrbot_logger.warning(
-                                "[dailynews] wechat latest stale-filter source=%s start=%s dropped=%s kept=%s max_age_hours=%s max_age_seconds=%s",
+                                "[dailynews] wechat latest stale-filter source=%s start=%s dropped=%s kept=%s new_override=%s max_age_hours=%s max_age_seconds=%s",
                                 source.name,
                                 start_url,
                                 stale_count,
                                 len(filtered_articles),
+                                new_override_count,
                                 effective_max_age_hours,
                                 latest_max_age_seconds,
                             )
@@ -275,27 +294,32 @@ class WechatSubAgent:
                     break
                 await asyncio.sleep(0.8 * attempt)
 
-            if articles:
+            if articles or raw_articles_for_cache:
                 # Update pool: put latest seed_url at front, keep up to 3.
-                if persist_seed and seed_url:
+                if persist_seed and (seed_url or raw_seed_url):
+                    selected_seed_url = seed_url or raw_seed_url
                     new_pool: list[str] = []
-                    for u in [seed_url] + [x for x in candidates if x != seed_url]:
+                    for u in [selected_seed_url] + [
+                        x for x in candidates if x != selected_seed_url
+                    ]:
                         if u and u not in new_pool and "mp.weixin.qq.com/s" in u:
                             new_pool.append(u)
                         if len(new_pool) >= 3:
                             break
-                    await _update_seed_entry(
-                        key,
+                    updated_entry = _merge_seen_articles(
                         {
-                            "seed_url": seed_url,
+                            **entry,
+                            "seed_url": selected_seed_url,
                             "seed_urls": new_pool,
-                            "last_good_seed_url": seed_url,
+                            "last_good_seed_url": selected_seed_url,
                             "source_url": source.url,
                             "album_keyword": album_keyword or "",
                             "latest_scope": latest_scope,
-                            "updated_at": datetime.now().isoformat(),
                         },
+                        raw_articles_for_cache or articles,
                     )
+                    await _update_seed_entry(key, updated_entry)
+                    entry = updated_entry
                 break
 
         if not articles:

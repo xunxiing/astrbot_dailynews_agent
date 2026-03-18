@@ -89,7 +89,9 @@ def _build_image_markdown(
     title = (title or "").strip().replace('"', "'")
     layout = (layout or "").strip()
     size = (size or "").strip()
-    caption = (caption or "").strip()
+    # Caption is intentionally ignored for production report layout.
+    # Image labels are for model understanding, not reader-facing body text.
+    caption = ""
 
     if not title:
         hints: list[str] = []
@@ -99,10 +101,7 @@ def _build_image_markdown(
             hints.append(f"size={size}")
         title = " ".join(hints).strip()
 
-    img_md = f"![{alt}]({image_url}{f' "{title}"' if title else ''})"
-    if caption:
-        return f"{img_md}\n\n*{caption}*"
-    return img_md
+    return f'![{alt}]({image_url}{f" {chr(34)}{title}{chr(34)}" if title else ""})'
 
 
 def _find_spans(

@@ -90,7 +90,7 @@ _MD_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\((https?://[^)]+)\)")
 _H2_SECTION_RE = re.compile(r"^##\s*(.+?)\s*$")
 _MD_IMAGE_RE = re.compile(r"!\[[^\]]*]\((https?://[^)\s]+)\)", flags=re.I)
 _MD_IMAGE_ENTRY_RE = re.compile(
-    r"!\[(?P<alt>[^\]]*)\]\((?P<url>https?://[^)\s]+)(?:\s+\"[^\"]*\")?\)",
+    r'!\[(?P<alt>[^\]]*)\]\((?P<url>https?://[^)\s]+)(?:\s+"(?P<title>[^"]*)")?\)',
     flags=re.I,
 )
 _HTML_IMG_RE = re.compile(r"<img[^>]+src=[\"'](https?://[^\"'>\s]+)", flags=re.I)
@@ -205,11 +205,34 @@ def _extract_report_image_entries(
             {
                 "url": url,
                 "alt": str(match.group("alt") or "").strip(),
+                "title": str(match.group("title") or "").strip(),
             }
         )
         if len(out) >= max(1, int(max_images)):
             break
     return out
+
+
+def _forced_external_from_title(title: str) -> bool:
+    hint = str(title or "").strip().lower().replace("_", "-")
+    if not hint:
+        return False
+    return (
+        "layout=external" in hint
+        or "layout:external" in hint
+        or "size=external" in hint
+        or "size:external" in hint
+        or "md-img--external" in hint
+    )
+
+
+def _appendix_display_title(
+    idx: int, *, width: int = 0, height: int = 0, prefix: str = "附图"
+) -> str:
+    title = f"{prefix} {max(1, int(idx))}"
+    if width > 0 and height > 0:
+        title = f"{title}（{int(width)}x{int(height)}）"
+    return title
 
 
 def _build_appendix_image_rows(
@@ -223,10 +246,7 @@ def _build_appendix_image_rows(
         alt = str(item.get("alt") or "").strip() or f"?? {idx}"
         width = int(item.get("width") or 0)
         height = int(item.get("height") or 0)
-        if width > 0 and height > 0:
-            label = f"{alt}??? {width}?{height}?"
-        else:
-            label = f"{alt}??????"
+        label = _appendix_display_title(idx, width=width, height=height, prefix="长图")
         rows.append((label, url))
     return rows
 
@@ -554,14 +574,19 @@ class DailyNewsScheduler:
             url = str(item.get("url") or "").strip()
             if not url:
                 continue
+            title = str(item.get("title") or "").strip()
+            forced_external = _forced_external_from_title(title)
             try:
                 size = await probe_image_size_from_url(url)
             except Exception:
                 size = None
-            if not size:
+            if not size and not forced_external:
                 continue
-            width, height = size
-            if not _should_externalize_image(width=width, height=height, classes=[]):
+            width, height = size or (0, 0)
+            classes = ["md-img--external"] if forced_external else []
+            if not forced_external and not _should_externalize_image(
+                width=width, height=height, classes=classes
+            ):
                 continue
             out.append(
                 {
@@ -586,8 +611,7 @@ class DailyNewsScheduler:
             url = str(item.get("url") or "").strip()
             if not url:
                 continue
-            alt = str(item.get("alt") or "").strip() or f"?? {idx}"
-            mapping[url] = f"> ??????????????{alt}"
+            mapping[url] = f"> 该长图已移至附录合并转发：{_appendix_display_title(idx, prefix='长图')}"
 
         def repl(match: re.Match) -> str:
             url = str(match.group("url") or "").strip()
@@ -653,12 +677,9 @@ class DailyNewsScheduler:
             url = str(item.get("url") or "").strip()
             if not url:
                 continue
-            alt = str(item.get("alt") or "").strip() or f"?? {idx}"
             width = int(item.get("width") or 0)
             height = int(item.get("height") or 0)
-            title = f"???? {idx}?{alt}"
-            if width > 0 and height > 0:
-                title = f"{title}?{width}?{height}?"
+            title = _appendix_display_title(idx, width=width, height=height, prefix="附图")
             image_comp = None
             try:
                 if hasattr(_ImageComponent, "fromURL"):
