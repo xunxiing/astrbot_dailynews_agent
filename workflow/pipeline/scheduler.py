@@ -18,16 +18,8 @@ try:
 except Exception:  # pragma: no cover
     MessageChain = None  # type: ignore
 
-from ..agents.sources.astrbook_agent import AstrBookSubAgent
-from ..agents.sources.github_agent import GitHubSubAgent
+from ..agents.sources import discover_source_agent_registry
 from ..agents.sources.github_source import build_github_sources_from_config
-from ..agents.sources.miyoushe_agent import MiyousheSubAgent
-from ..agents.sources.plugin_registry_agent import PluginRegistrySubAgent
-from ..agents.sources.rss_agent import RssSubAgent
-from ..agents.sources.skland_official_agent import SklandOfficialSubAgent
-from ..agents.sources.twitter_agent import TwitterSubAgent
-from ..agents.sources.wechat_agent import WechatSubAgent
-from ..agents.sources.xiuxiu_ai_agent import XiuxiuAISubAgent
 from ..core.astrbook_client import ASTRBOOK_API_BASE, AstrBookClient
 from ..core.config_models import (
     ImageLabelConfig,
@@ -366,19 +358,15 @@ class DailyNewsScheduler:
         self._init_workflow_manager()
 
     def _init_workflow_manager(self):
-        self.workflow_manager.register_sub_agent("wechat", WechatSubAgent)
-        self.workflow_manager.register_sub_agent("miyoushe", MiyousheSubAgent)
-        self.workflow_manager.register_sub_agent("github", GitHubSubAgent)
-        self.workflow_manager.register_sub_agent("twitter", TwitterSubAgent)
-        self.workflow_manager.register_sub_agent("rss", RssSubAgent)
-        self.workflow_manager.register_sub_agent(
-            "skland_official", SklandOfficialSubAgent
+        self.workflow_manager.sub_agents.clear()
+        registry = discover_source_agent_registry()
+        for source_type, agent_cls in registry.items():
+            self.workflow_manager.register_sub_agent(source_type, agent_cls)
+
+        astrbot_logger.info(
+            "[dailynews] loaded source agents: %s",
+            sorted(self.workflow_manager.sub_agents),
         )
-        self.workflow_manager.register_sub_agent("astrbook", AstrBookSubAgent)
-        self.workflow_manager.register_sub_agent(
-            "plugin_registry", PluginRegistrySubAgent
-        )
-        self.workflow_manager.register_sub_agent("xiuxiu_ai", XiuxiuAISubAgent)
 
     def _save_config(self):
         if hasattr(self.config, "save_config"):
@@ -844,7 +832,7 @@ class DailyNewsScheduler:
         cfg.setdefault("render_template_name", "daily_news")
 
         mode_cfg = NewsWorkflowModeConfig.from_mapping(cfg)
-        cfg.setdefault("news_workflow_mode", mode_cfg.mode)
+        cfg["news_workflow_mode"] = mode_cfg.mode
         single_cfg = SingleAgentConfig.from_mapping(cfg)
         cfg.setdefault("single_agent_provider_id", single_cfg.provider_id)
         cfg.setdefault("single_agent_max_steps", single_cfg.max_steps)
@@ -1311,6 +1299,13 @@ class DailyNewsScheduler:
         if templated:
             validated: list[NewsSourceConfig] = []
             for s in templated:
+                if s.type not in self.workflow_manager.sub_agents:
+                    astrbot_logger.warning(
+                        "[dailynews] news_sources(%s) has no registered source agent; skipping: %s",
+                        s.type,
+                        s.name,
+                    )
+                    continue
                 low = str(s.url or "").lower()
                 if s.type == "wechat" and "mp.weixin.qq.com" not in low:
                     astrbot_logger.warning(

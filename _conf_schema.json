@@ -22,11 +22,10 @@
   "news_workflow_mode": {
     "type": "string",
     "description": "工作流模式",
-    "default": "multi",
+    "default": "react",
     "options": [
-      "multi",
-      "single",
-      "react"
+      "react",
+      "single"
     ],
     "hint": "multi=多 Agent 工作流（默认）；single=single agent 模式（不支持插图）"
   },

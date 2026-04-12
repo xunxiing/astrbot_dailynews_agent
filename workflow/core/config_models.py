@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from ..agents.sources import GENERIC_SOURCE_TEMPLATE_KEYS
 from .astrbook_client import ASTRBOOK_API_BASE
 from .models import NewsSourceConfig
 
@@ -90,6 +92,65 @@ def _to_str_list(value: Any) -> list[str]:
 def _to_optional_str(value: Any) -> str | None:
     s = _to_str(value, "").strip()
     return s if s else None
+
+
+def _to_meta_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return {}
+        try:
+            data = json.loads(text)
+        except Exception:
+            return {}
+        if isinstance(data, Mapping):
+            return dict(data)
+    return {}
+
+
+def _build_generic_source_config(
+    item: Mapping[str, Any],
+    *,
+    default_type: str,
+    default_index: int,
+) -> NewsSourceConfig | None:
+    source_type = _to_str(item.get("type"), default_type).strip().lower()
+    url = _to_str(item.get("url"), "").strip()
+    if not source_type or not url:
+        return None
+
+    meta = _to_meta_mapping(item.get("meta"))
+    for key, value in item.items():
+        if key in {
+            "__template_key",
+            "name",
+            "url",
+            "type",
+            "priority",
+            "max_articles",
+            "album_keyword",
+            "meta",
+        }:
+            continue
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, list | dict) and not value:
+            continue
+        meta.setdefault(key, value)
+
+    return NewsSourceConfig(
+        name=_to_str(item.get("name"), "").strip() or f"{source_type} {default_index}",
+        url=url,
+        type=source_type,
+        priority=max(1, _to_int(item.get("priority"), 1)),
+        max_articles=max(1, _to_int(item.get("max_articles"), 3)),
+        album_keyword=_to_optional_str(item.get("album_keyword")),
+        meta=meta or None,
+    )
 
 
 @dataclass(frozen=True)
@@ -382,15 +443,40 @@ class NewsSourcesConfig:
 
         out: list[NewsSourceConfig] = []
         seen: set[tuple[str, str]] = set()
+        legacy_template_keys = {
+            "wechat",
+            "miyoushe",
+            "github",
+            "twitter",
+            "rss",
+            "skland_official",
+            "astrbook",
+            "plugin_registry_official",
+            "plugin_registry_custom",
+            "xiuxiu_ai",
+        }
 
         for item in raw:
             if not isinstance(item, Mapping):
                 continue
             tkey = _to_str(item.get("__template_key"), "").strip().lower()
-            if not tkey:
-                continue
+            generic_type = ""
+            if tkey in GENERIC_SOURCE_TEMPLATE_KEYS:
+                generic_type = _to_str(item.get("type"), "").strip().lower()
+            elif tkey and tkey not in legacy_template_keys:
+                generic_type = _to_str(item.get("type"), tkey).strip().lower()
+            elif not tkey:
+                generic_type = _to_str(item.get("type"), "").strip().lower()
 
-            if tkey == "wechat":
+            if generic_type:
+                src = _build_generic_source_config(
+                    item,
+                    default_type=generic_type,
+                    default_index=len(out) + 1,
+                )
+                if src is None:
+                    continue
+            elif tkey == "wechat":
                 url = _to_str(item.get("url"), "").strip()
                 if not url:
                     continue
@@ -615,21 +701,17 @@ class NewsSourcesConfig:
 class NewsWorkflowModeConfig:
     """
     Workflow mode switch.
-    - multi: existing multi-agent pipeline (default)
-    - single: single-agent mode (no image insertion)
-    - react: goal-oriented react mode with native function-calling loop
+    Multi-agent mode is removed. Legacy `multi` values are normalized to `react`.
     """
 
-    mode: str = "multi"
+    mode: str = "react"
 
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> NewsWorkflowModeConfig:
-        raw = _to_str(cfg.get("news_workflow_mode"), "multi").strip().lower()
+        raw = _to_str(cfg.get("news_workflow_mode"), "react").strip().lower()
         if raw in {"single", "single_agent", "single-agent"}:
             return cls(mode="single")
-        if raw in {"react", "react_agent", "react-agent"}:
-            return cls(mode="react")
-        return cls(mode="multi")
+        return cls(mode="react")
 
 
 @dataclass(frozen=True)
