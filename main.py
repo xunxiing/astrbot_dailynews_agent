@@ -9,17 +9,6 @@ from astrbot.api import logger as astrbot_logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
-from .tools import (
-    ImageUrlDownloadTool,
-    ImageUrlsDownloadBatchTool,
-    ImageUrlsPreviewTool,
-    MarkdownDocApplyEditsTool,
-    MarkdownDocCreateTool,
-    MarkdownDocMatchInsertImageTool,
-    MarkdownDocReadTool,
-    WechatAlbumLatestArticlesTool,
-    WechatArticleMarkdownTool,
-)
 from .workflow import (
     DailyNewsScheduler,
     ImageLayoutAgent,
@@ -90,30 +79,6 @@ class DailyNewsPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        self._plugin_module_prefix = str(__package__ or "").strip()
-
-        tools = [
-            WechatArticleMarkdownTool(),
-            WechatAlbumLatestArticlesTool(),
-            ImageUrlsPreviewTool(),
-            ImageUrlDownloadTool(),
-            ImageUrlsDownloadBatchTool(),
-            MarkdownDocCreateTool(),
-            MarkdownDocReadTool(),
-            MarkdownDocApplyEditsTool(),
-            MarkdownDocMatchInsertImageTool(),
-        ]
-        self._registered_llm_tool_names = {tool.name for tool in tools}
-
-        # Hot reload in AstrBot does not always clean stale tool registrations reliably.
-        # Purge any old dailynews-owned tool objects before registering the current set.
-        self._purge_dailynews_llm_tools(include_internal_only=True)
-
-        if hasattr(self.context, "add_llm_tools"):
-            self.context.add_llm_tools(*tools)
-        else:
-            tool_mgr = self.context.provider_manager.llm_tools
-            tool_mgr.func_list.extend(tools)
 
         self.scheduler = DailyNewsScheduler(self.context, self.config)
         self._scheduler_task = None
@@ -129,69 +94,6 @@ class DailyNewsPlugin(Star):
                     "[dailynews] failed to start scheduler", exc_info=True
                 )
 
-    def _tool_modules(self, tool) -> set[str]:
-        mods: set[str] = set()
-        for value in (
-            getattr(tool, "handler_module_path", None),
-            getattr(tool, "__module__", None),
-            getattr(getattr(tool, "__class__", None), "__module__", None),
-        ):
-            text = str(value or "").strip()
-            if text:
-                mods.add(text)
-        return mods
-
-    def _is_dailynews_owned_tool(self, tool) -> bool:
-        prefix = self._plugin_module_prefix
-        if not prefix:
-            return False
-        return any(mod.startswith(prefix) for mod in self._tool_modules(tool))
-
-    def _is_dailynews_internal_layout_tool(self, tool) -> bool:
-        name = str(getattr(tool, "name", "") or "").strip()
-        if name == "gemini_layout_generate_image":
-            return True
-        if name != "gemini_image_generation":
-            return False
-        modules = self._tool_modules(tool)
-        return any(
-            "astrbot_dailynews_agent" in mod and "image_tools" in mod for mod in modules
-        )
-
-    def _purge_dailynews_llm_tools(self, *, include_internal_only: bool) -> None:
-        tool_mgr = getattr(getattr(self.context, "provider_manager", None), "llm_tools", None)
-        if tool_mgr is None:
-            return
-        func_list = getattr(tool_mgr, "func_list", None)
-        if not isinstance(func_list, list):
-            return
-
-        removed: list[str] = []
-        for tool in list(func_list):
-            name = str(getattr(tool, "name", "") or "").strip()
-            if not name:
-                continue
-            should_remove = False
-            if self._is_dailynews_owned_tool(tool) and (
-                name in self._registered_llm_tool_names or include_internal_only
-            ):
-                should_remove = True
-            if include_internal_only and self._is_dailynews_internal_layout_tool(tool):
-                should_remove = True
-            if not should_remove:
-                continue
-            try:
-                func_list.remove(tool)
-                removed.append(name)
-            except ValueError:
-                continue
-
-        if removed:
-            astrbot_logger.info(
-                "[dailynews] purged stale llm tools: %s",
-                ", ".join(sorted(set(removed))),
-            )
-
     async def terminate(self):
         # Best-effort: cancel any in-flight workflow & background tasks to avoid leaking across reloads.
         if getattr(self, "scheduler", None) is not None:
@@ -206,14 +108,6 @@ class DailyNewsPlugin(Star):
                 t.cancel()
             except Exception:
                 pass
-
-        try:
-            self._purge_dailynews_llm_tools(include_internal_only=True)
-        except Exception:
-            astrbot_logger.warning(
-                "[dailynews] failed to purge llm tools during terminate",
-                exc_info=True,
-            )
 
     async def _get_configured_sources(self, cfg: dict) -> list:
         await self.scheduler.update_workflow_sources_from_config(cfg)
