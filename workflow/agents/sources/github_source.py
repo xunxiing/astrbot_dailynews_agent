@@ -388,18 +388,6 @@ async def fetch_github_snapshot_for_source(
             return int(default)
 
     cfg = GitHubConfig.from_user_config(user_config)
-    if not cfg.enabled:
-        raw = user_config.get("news_sources") or []
-        has_github_tpl = False
-        if isinstance(raw, list):
-            for it in raw:
-                if not isinstance(it, dict):
-                    continue
-                if str(it.get("__template_key") or "").strip().lower() == "github":
-                    has_github_tpl = True
-                    break
-        if not has_github_tpl:
-            return None
     repo = parse_repo(source.url)
     if not repo:
         astrbot_logger.warning("[dailynews] github invalid repo url: %s", source.url)

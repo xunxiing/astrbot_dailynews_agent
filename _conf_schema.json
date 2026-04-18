@@ -284,6 +284,22 @@
     "invisible": true,
     "hint": "兼容字段（已弃用）：请使用 news_sources -> X/Twitter 模板（priority）"
   },
+  "source_preset_tags": {
+    "type": "list",
+    "description": "信息源预设标签",
+    "default": [],
+    "hint": "快速添加一组内置 news_sources；会与手动配置的 news_sources 合并，重复来源会自动去重。",
+    "items": {
+      "type": "string"
+    },
+    "options": [
+      "astrbot"
+    ],
+    "labels": [
+      "AstrBot"
+    ],
+    "render_type": "checkbox"
+  },
   "news_sources": {
     "type": "template_list",
     "description": "新闻源列表（推荐，v4.10.4+）",

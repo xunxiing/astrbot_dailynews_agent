@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import re
 import shutil
@@ -377,11 +378,22 @@ class DailyNewsScheduler:
                     "[dailynews] config.save_config failed", exc_info=True
                 )
 
-    def _report_cache_path(self) -> Path:
-        return get_plugin_data_dir("daily_report_cache") / "latest_report.json"
+    def _report_cache_path(self, config: dict[str, Any] | None = None) -> Path:
+        return self._report_cache_dir(config) / "latest_report.json"
 
-    def _report_cache_images_dir(self) -> Path:
-        return get_plugin_data_dir("daily_report_cache") / "images"
+    def _report_cache_images_dir(self, config: dict[str, Any] | None = None) -> Path:
+        return self._report_cache_dir(config) / "images"
+
+    def _report_cache_scope(self, config: dict[str, Any] | None = None) -> str:
+        raw = str((config or {}).get("report_cache_scope") or "").strip().lower()
+        return raw or "default"
+
+    def _report_cache_dir(self, config: dict[str, Any] | None = None) -> Path:
+        scope = self._report_cache_scope(config)
+        if scope == "default":
+            return get_plugin_data_dir("daily_report_cache")
+        scope_hash = hashlib.sha1(scope.encode("utf-8", "ignore")).hexdigest()[:12]
+        return get_plugin_data_dir("daily_report_cache") / f"scope_{scope_hash}"
 
     def _report_cache_ttl_minutes(self, config: dict[str, Any]) -> int:
         try:
@@ -433,8 +445,8 @@ class DailyNewsScheduler:
                 out.append(resolved.as_posix())
         return out
 
-    def _load_report_cache_sync(self) -> dict[str, Any] | None:
-        path = self._report_cache_path()
+    def _load_report_cache_sync(self, config: dict[str, Any]) -> dict[str, Any] | None:
+        path = self._report_cache_path(config)
         if not path.exists():
             return None
         try:
@@ -443,16 +455,18 @@ class DailyNewsScheduler:
             return None
         return data if isinstance(data, dict) else None
 
-    async def _load_report_cache(self) -> dict[str, Any] | None:
+    async def _load_report_cache(self, config: dict[str, Any]) -> dict[str, Any] | None:
         async with self._report_cache_lock:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self._load_report_cache_sync)
+            return await loop.run_in_executor(
+                None, lambda: self._load_report_cache_sync(config)
+            )
 
     def _store_report_cache_sync(
         self, payload: dict[str, Any], config: dict[str, Any]
     ) -> dict[str, Any]:
-        cache_dir = get_plugin_data_dir("daily_report_cache")
-        images_dir = self._report_cache_images_dir()
+        cache_dir = self._report_cache_dir(config)
+        images_dir = self._report_cache_images_dir(config)
         cache_dir.mkdir(parents=True, exist_ok=True)
         if images_dir.exists():
             shutil.rmtree(images_dir, ignore_errors=True)
@@ -475,6 +489,7 @@ class DailyNewsScheduler:
         now = datetime.now()
         entry = {
             "content": str(payload.get("content") or ""),
+            "scope": self._report_cache_scope(config),
             "img_paths": stored_img_paths,
             "link_node_chunks": [
                 str(x)
@@ -494,7 +509,7 @@ class DailyNewsScheduler:
             "created_at": now.isoformat(),
             "expires_at": (now + timedelta(minutes=ttl_minutes)).isoformat(),
         }
-        path = self._report_cache_path()
+        path = self._report_cache_path(config)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(
             json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -525,6 +540,10 @@ class DailyNewsScheduler:
         self, entry: dict[str, Any] | None, config: dict[str, Any]
     ) -> bool:
         if not isinstance(entry, dict):
+            return False
+        if str(entry.get("scope") or "default").strip().lower() != self._report_cache_scope(
+            config
+        ):
             return False
         content = str(entry.get("content") or "").strip()
         if not content:
@@ -731,7 +750,7 @@ class DailyNewsScheduler:
     ) -> dict[str, Any]:
         config = cfg or self._normalized_config()
         if prefer_cache and self._report_cache_enabled(config):
-            cached = await self._load_report_cache()
+            cached = await self._load_report_cache(config)
             if self._cache_entry_usable(cached, config):
                 content = str(cached.get("content") or "")
                 payload = {

@@ -3,6 +3,7 @@ import json
 import textwrap
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from astrbot.api import AstrBotConfig
 from astrbot.api import logger as astrbot_logger
@@ -21,6 +22,10 @@ from .workflow import (
     merge_images_vertical,
     render_daily_news_pages,
     split_pages,
+)
+from .workflow.core.config_models import (
+    AVAILABLE_SOURCE_PRESET_TAGS,
+    normalize_source_preset_tags,
 )
 
 try:
@@ -116,6 +121,19 @@ class DailyNewsPlugin(Star):
     def _is_likely_url(self, value: str) -> bool:
         text = str(value or "").strip().lower()
         return text.startswith("http://") or text.startswith("https://")
+
+    def _build_manual_report_config(
+        self, cfg: dict[str, Any], *, preset_tag: str = ""
+    ) -> tuple[dict[str, Any], str]:
+        selected = normalize_source_preset_tags([preset_tag]) if preset_tag else []
+        if not selected:
+            return dict(cfg), ""
+
+        manual_cfg = dict(cfg)
+        manual_cfg["source_preset_tags"] = selected
+        manual_cfg["news_sources"] = []
+        manual_cfg["report_cache_scope"] = f"preset:{selected[0]}"
+        return manual_cfg, selected[0]
 
     def _match_sources(self, sources: list, query: str) -> list:
         key = str(query or "").strip().lower()
@@ -348,10 +366,45 @@ class DailyNewsPlugin(Star):
         """
         parts = [p.strip().lower() for p in (args or "").strip().split() if p.strip()]
         force_refresh = "force" in parts
-        yield event.plain_result(
+        raw_tags = [p for p in parts if p != "force"]
+        if len(raw_tags) > 1:
+            yield event.plain_result(
+                "用法：/daily_news [force] [preset_tag]\n"
+                f"可用 preset_tag：{', '.join(AVAILABLE_SOURCE_PRESET_TAGS)}"
+            )
+            return
+
+        selected_tag = raw_tags[0] if raw_tags else ""
+        normalized_tags = (
+            normalize_source_preset_tags([selected_tag]) if selected_tag else []
+        )
+        if selected_tag and not normalized_tags:
+            yield event.plain_result(
+                f"未知的信息源预设标签：{selected_tag}\n"
+                f"可用 preset_tag：{', '.join(AVAILABLE_SOURCE_PRESET_TAGS)}\n"
+                "用法：/daily_news [force] [preset_tag]"
+            )
+            return
+
+        normalized_tag = normalized_tags[0] if normalized_tags else ""
+        if normalized_tag:
+            yield event.plain_result(
+                "正在强制刷新仅包含预设标签 "
+                f"{normalized_tag}"
+                " 的日报，请稍候..."
+                if force_refresh
+                else "正在准备仅包含预设标签 "
+                f"{normalized_tag}"
+                " 的日报，请稍候..."
+            )
+        else:
+            yield event.plain_result(
             "正在强制刷新日报，请稍候..." if force_refresh else "正在准备日报，请稍候..."
         )
         cfg = self.scheduler.get_config_snapshot()
+        cfg, selected_preset_tag = self._build_manual_report_config(
+            cfg, preset_tag=normalized_tag
+        )
         prepared = await self.scheduler.prepare_report(
             cfg, source="manual", prefer_cache=not force_refresh
         )
@@ -363,7 +416,13 @@ class DailyNewsPlugin(Star):
             content = "生成失败：日报内容为空（可能是抓取、LLM 超时或被其它插件过滤），请查看 AstrBot 日志。"
         # Manual trigger should also publish to AstrBook when enabled.
         try:
-            if not bool(prepared.get("cache_hit", False)):
+            if selected_preset_tag:
+                res = {
+                    "ok": False,
+                    "skipped": True,
+                    "reason": f"manual_preset_tag:{selected_preset_tag}",
+                }
+            elif not bool(prepared.get("cache_hit", False)):
                 res = await self.scheduler.publish_report_to_astrbook(
                     content, config=cfg
                 )

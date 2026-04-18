@@ -26,6 +26,7 @@ from ...core.config_models import ReactAgentConfig
 from ...core.internal_event import make_internal_event
 from .shared_memory import SharedMemory
 from .tool_registry import ToolExecution, ToolRegistry
+from .writer_style import REACT_CHIEF_EDITOR_CONCISE_HINT
 
 
 @dataclass(frozen=True)
@@ -195,7 +196,8 @@ class ReActAgent:
             "For web investigation, treat Tavily-based tools and `grok_web_search` as first-class search options.\n"
             "Prefer Tavily when page extraction is needed, and use `web_search` only as the normal fallback.\n"
             "Do not output fake tool calls in plain text.\n"
-            "When the collected evidence is enough, stop using tools and produce the final markdown report."
+            "When the collected evidence is enough, stop using tools and produce the final markdown report.\n"
+            f"{REACT_CHIEF_EDITOR_CONCISE_HINT}"
         )
 
     def _user_prompt(

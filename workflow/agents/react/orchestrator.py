@@ -44,6 +44,7 @@ from .react_agent import ReActAgent, ReactRunResult
 from .shared_memory import SharedMemory
 from .subagent_wrapper import SubAgentWrapper
 from .tool_registry import ToolRegistry
+from .writer_style import compose_react_writer_style_hint
 
 
 def _to_brief_text(payload: Any, *, max_chars: int = 2400) -> str:
@@ -2256,7 +2257,7 @@ class ReActDailyNewsOrchestrator:
         ):
             _ = context
             dep_ids = dependency_ids if isinstance(dependency_ids, list) else []
-            style = str(style_hint or "").strip()
+            style = compose_react_writer_style_hint(str(style_hint or "").strip())
 
             async def _runner(injected_prompt: str) -> Any:
                 snapshot = memory.read(dep_ids) if dep_ids else memory.read_all()
@@ -2308,7 +2309,7 @@ class ReActDailyNewsOrchestrator:
 
         registry.register_callable(
             name="tool_write_report",
-            description="Compose final markdown report from shared memory.",
+            description="Compose final markdown report from shared memory. Default to compact event items: one fact line plus one optional hard-detail line.",
             parameters={
                 "type": "object",
                 "properties": {

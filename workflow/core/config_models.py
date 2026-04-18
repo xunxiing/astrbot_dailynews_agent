@@ -9,6 +9,9 @@ from ..agents.sources import GENERIC_SOURCE_TEMPLATE_KEYS
 from .astrbook_client import ASTRBOOK_API_BASE
 from .models import NewsSourceConfig
 
+ASTRBOT_RELEASES_ATOM_URL = "https://github.com/AstrBotDevs/AstrBot/releases.atom"
+AVAILABLE_SOURCE_PRESET_TAGS: tuple[str, ...] = ("astrbot",)
+
 IMAGE_LABEL_ENABLED = True
 IMAGE_LABEL_PROVIDER_ID = "modelscope_source/Qwen/Qwen3-VL-235B-A22B-Instruct"
 IMAGE_LABEL_MAX_IMAGES_TOTAL = 24
@@ -92,6 +95,50 @@ def _to_str_list(value: Any) -> list[str]:
 def _to_optional_str(value: Any) -> str | None:
     s = _to_str(value, "").strip()
     return s if s else None
+
+
+def normalize_source_preset_tags(value: Any) -> list[str]:
+    out: list[str] = []
+    for item in _to_str_list(value):
+        tag = item.strip().lower()
+        if tag and tag in AVAILABLE_SOURCE_PRESET_TAGS and tag not in out:
+            out.append(tag)
+    return out
+
+
+def _build_source_preset_items(cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
+    tags = normalize_source_preset_tags(cfg.get("source_preset_tags"))
+
+    items: list[dict[str, Any]] = []
+    if "astrbot" in tags:
+        items.extend(
+            [
+                {
+                    "__template_key": "plugin_registry_official",
+                    "name": "AstrBot 插件市场",
+                    "since_hours": 24,
+                    "max_plugins": 20,
+                },
+                {
+                    "__template_key": "github",
+                    "name": "AstrBot Core",
+                    "repo": "AstrBotDevs/AstrBot",
+                    "since_hours": 24,
+                    "max_releases": 3,
+                    "max_commits": 10,
+                    "max_prs": 10,
+                },
+                {
+                    "__template_key": "rss",
+                    "name": "AstrBot 版本更新",
+                    "url": ASTRBOT_RELEASES_ATOM_URL,
+                    "since_hours": 24,
+                    "max_articles": 5,
+                },
+            ]
+        )
+
+    return items
 
 
 def _to_meta_mapping(value: Any) -> dict[str, Any]:
@@ -438,8 +485,8 @@ class NewsSourcesConfig:
     @classmethod
     def from_mapping(cls, cfg: Mapping[str, Any]) -> NewsSourcesConfig:
         raw = cfg.get("news_sources") or []
-        if not isinstance(raw, list):
-            return cls(sources=[])
+        raw_items = list(raw) if isinstance(raw, list) else []
+        raw_items.extend(_build_source_preset_items(cfg))
 
         out: list[NewsSourceConfig] = []
         seen: set[tuple[str, str]] = set()
@@ -456,7 +503,7 @@ class NewsSourcesConfig:
             "xiuxiu_ai",
         }
 
-        for item in raw:
+        for item in raw_items:
             if not isinstance(item, Mapping):
                 continue
             tkey = _to_str(item.get("__template_key"), "").strip().lower()
@@ -574,6 +621,9 @@ class NewsSourcesConfig:
                     meta={
                         "timeout_s": max(5, min(timeout_s, 60)),
                         "include_content": include_content,
+                        "since_hours": max(1, _to_int(item.get("since_hours"), 0))
+                        if item.get("since_hours") is not None
+                        else 0,
                     },
                 )
             elif tkey == "skland_official":

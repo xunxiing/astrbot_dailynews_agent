@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
@@ -22,14 +23,15 @@ class RssSubAgent:
     ) -> tuple[str, list[dict[str, Any]]]:
         meta = source.meta if isinstance(source.meta, dict) else {}
         timeout_s = max(5, min(int(meta.get("timeout_s") or 20), 60))
+        since_hours = max(0, int(meta.get("since_hours") or 0))
         date_text = str(meta.get("date") or "").strip() or None
         try:
             feed = await fetch_rss_feed(
                 source.url,
                 limit=max(1, min(int(source.max_articles or 5), 30)),
                 timeout_s=timeout_s,
-                date_text=date_text,
-                keep_only_report_day=True,
+                date_text=date_text if since_hours <= 0 else None,
+                keep_only_report_day=since_hours <= 0,
             )
         except Exception as e:
             astrbot_logger.warning(
@@ -41,6 +43,15 @@ class RssSubAgent:
             return source.name, []
 
         items = feed.get("items") if isinstance(feed.get("items"), list) else []
+        if since_hours > 0:
+            cutoff_ts = int(
+                (datetime.now(tz=timezone.utc) - timedelta(hours=since_hours)).timestamp()
+            )
+            items = [
+                item
+                for item in items
+                if isinstance(item, dict) and int(item.get("published_ts") or 0) >= cutoff_ts
+            ]
         for item in items:
             if isinstance(item, dict):
                 item.setdefault("feed_title", feed.get("feed_title") or source.name)
