@@ -651,6 +651,9 @@ def _build_target_source_snapshot(
     for src in (sources or [])[:max_sources]:
         if not isinstance(src, NewsSourceConfig):
             continue
+        items = fetched.get(src.name, []) or []
+        if not items:
+            continue
         source_urls: list[str] = []
         src_url = str(src.url or "").strip()
         if src_url and src_url not in source_urls:
@@ -661,7 +664,6 @@ def _build_target_source_snapshot(
             if h0 and h0 not in all_hosts:
                 all_hosts.append(h0)
 
-        items = fetched.get(src.name, []) or []
         sample_titles: list[str] = []
         for it in items:
             u = _extract_item_url(it)
@@ -1769,6 +1771,8 @@ class ReActDailyNewsOrchestrator:
             if not src_name:
                 continue
             items = fetched.get(src_name, []) or []
+            if not items:
+                continue
             payload = _build_prefetched_source_payload(source=src, items=items)
             prefetched_source_map[src_name] = payload
             memory.write(f"prefetched_source::{src_name}", payload)
@@ -2309,7 +2313,7 @@ class ReActDailyNewsOrchestrator:
 
         registry.register_callable(
             name="tool_write_report",
-            description="Compose final markdown report from shared memory. Default to compact event items: one fact line plus one optional hard-detail line.",
+            description="Compose final markdown report from shared memory. Default to one-liner changelog-style items.",
             parameters={
                 "type": "object",
                 "properties": {

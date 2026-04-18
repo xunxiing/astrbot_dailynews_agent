@@ -44,6 +44,7 @@ class ReactWriterStyleTests(unittest.TestCase):
         )
 
         self.assertIn(REACT_CHIEF_EDITOR_CONCISE_HINT, agent._system_prompt())
+        self.assertIn("one-liner", agent._system_prompt().lower())
 
     def test_react_writer_templates_include_compact_line_format(self):
         system_text = (
@@ -53,12 +54,13 @@ class ReactWriterStyleTests(unittest.TestCase):
             PLUGIN_ROOT / "templates" / "prompts" / "react_writer_user.txt"
         ).read_text(encoding="utf-8")
 
+        self.assertIn("One-liner", user_text)
         self.assertIn("短句日报格式", system_text)
         self.assertTrue(
-            ("单行体结构" in system_text) or ("1 行核心事件 + 可选 1 行硬信息" in system_text)
+            ("单行体结构" in system_text) or ("One-liner" in system_text)
         )
         self.assertTrue(
-            ("默认采用短句日报格式" in user_text) or ("不要写第二行" in user_text)
+            ("默认采用单行体" in user_text) or ("One-liner" in user_text)
         )
 
 

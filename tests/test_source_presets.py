@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from data.plugins.astrbot_dailynews_agent.workflow.agents.sources.github_source import (
+    GitHubClient,
     fetch_github_snapshot_for_source,
 )
 from data.plugins.astrbot_dailynews_agent.workflow.agents.sources.rss_agent import (
@@ -102,6 +103,64 @@ class SourcePresetConfigTests(unittest.TestCase):
 
 
 class SourcePresetRuntimeTests(unittest.TestCase):
+    def test_github_snapshot_only_includes_recently_merged_prs(self):
+        async def fake_get_json(self, session, url: str, *, attempts: int = 3):
+            if url.endswith("/AstrBot"):
+                return {
+                    "full_name": "AstrBotDevs/AstrBot",
+                    "html_url": "https://github.com/AstrBotDevs/AstrBot",
+                    "default_branch": "main",
+                    "description": "AstrBot core",
+                    "stargazers_count": 1,
+                    "forks_count": 1,
+                    "language": "Python",
+                }
+            if "/releases?" in url:
+                return []
+            if "/tags?" in url:
+                return []
+            if "/commits?" in url:
+                return []
+            if "/pulls?" in url:
+                return [
+                    {
+                        "title": "merged fix",
+                        "html_url": "https://github.com/AstrBotDevs/AstrBot/pull/1",
+                        "state": "closed",
+                        "updated_at": "2026-04-18T11:00:00Z",
+                        "merged_at": "2026-04-18T10:00:00Z",
+                    },
+                    {
+                        "title": "open but updated",
+                        "html_url": "https://github.com/AstrBotDevs/AstrBot/pull/2",
+                        "state": "open",
+                        "updated_at": "2026-04-18T11:30:00Z",
+                        "merged_at": None,
+                    },
+                ]
+            raise AssertionError(f"unexpected url: {url}")
+
+        with patch.object(GitHubClient, "_get_json", new=fake_get_json):
+            snapshot = asyncio.run(
+                GitHubClient(token="").fetch_repo_snapshot(
+                    owner="AstrBotDevs",
+                    repo="AstrBot",
+                    since=datetime(2026, 4, 18, 9, 0, tzinfo=timezone.utc),
+                    max_commits=0,
+                    max_prs=10,
+                    max_releases=0,
+                )
+            )
+
+        self.assertEqual(
+            [pr["title"] for pr in snapshot["prs_recent"]],
+            ["merged fix"],
+        )
+        self.assertEqual(
+            snapshot["prs_recent"][0]["merged_at"],
+            "2026-04-18T10:00:00Z",
+        )
+
     def test_preset_github_source_runs_without_raw_github_template(self):
         source = NewsSourceConfig(
             name="AstrBot Core",

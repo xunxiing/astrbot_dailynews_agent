@@ -266,8 +266,8 @@ class GitHubClient:
         for pr in pulls_all:
             if not isinstance(pr, dict):
                 continue
-            updated = _dt(str(pr.get("updated_at") or ""))
-            if updated is None or updated < since:
+            merged_at = _dt(str(pr.get("merged_at") or ""))
+            if merged_at is None or merged_at < since:
                 continue
             title = str(pr.get("title") or "").strip()
             url = str(pr.get("html_url") or "")
@@ -276,7 +276,7 @@ class GitHubClient:
                     "title": title,
                     "url": url,
                     "state": str(pr.get("state") or ""),
-                    "updated_at": iso_utc(updated),
+                    "merged_at": iso_utc(merged_at),
                 }
             )
             if max_prs > 0 and len(prs_recent) >= max_prs:
