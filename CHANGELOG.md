@@ -7,6 +7,12 @@
 
 ## [Unreleased]
 
+## [v1.2.4] - 2024-05-04
+
+### Fixed
+- 修复 GitHub Actions 中 Python 脚本传参数问题
+- 改用 `-c` 参数传递版本号，避免 heredoc 导致的 shell 语法问题
+
 ## [v1.2.3] - 2024-05-04
 
 ### Fixed
