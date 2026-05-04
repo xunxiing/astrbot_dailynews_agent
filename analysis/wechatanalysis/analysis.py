@@ -544,7 +544,13 @@ class WechatCrawler:
                 ajax=True,
             )
             album_resp = data.get("getalbum_resp", {})
-            articles = album_resp.get("article_list", [])
+            raw_articles = album_resp.get("article_list", [])
+            if isinstance(raw_articles, dict):
+                articles = [raw_articles]
+            elif isinstance(raw_articles, list):
+                articles = [a for a in raw_articles if isinstance(a, dict)]
+            else:
+                articles = []
             if not articles:
                 break
             for a in articles:
@@ -561,6 +567,8 @@ class WechatCrawler:
                         create_time=str(a.get("create_time", "")),
                     )
                 )
+                if len(results) >= limit:
+                    return sort_latest_articles_desc(results)[:limit]
             if str(album_resp.get("continue_flag", "0")) != "1":
                 break
             last = articles[-1]

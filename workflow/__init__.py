@@ -21,6 +21,7 @@ __all__ = [
     "NewsWorkflowManager",
     "LLMRunner",
     "_run_sync",
+    "get_logger",
 ]
 
 _EXPORTS: dict[str, tuple[str, str]] = {

@@ -1,0 +1,4 @@
+Stop tool usage now due to: {{REASON}}.
+Produce the best possible final markdown report.
+Coverage rules still apply: include every configured source with fetched items unless it is clearly duplicate, stale, or noisy.
+If something is unavailable, state it briefly without exposing internal stack traces or raw tool logs.

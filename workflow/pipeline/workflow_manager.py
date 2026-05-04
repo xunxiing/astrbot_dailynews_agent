@@ -4,14 +4,10 @@ import time
 from datetime import datetime
 from typing import Any
 
-try:
-    from astrbot.api import logger as astrbot_logger
-except Exception:  # pragma: no cover
-    import logging
-
-    astrbot_logger = logging.getLogger(__name__)
-
+from ..core.decorators import get_logger
 from ..agents.image_layout_agent import ImageLayoutAgent
+
+astrbot_logger = get_logger(__name__)
 from ..agents.react.orchestrator import ReActDailyNewsOrchestrator
 from ..agents.single_agent.single_agent_writer import SingleAgentNewsWriter
 from ..core.config_models import ImageLayoutConfig

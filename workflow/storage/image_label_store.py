@@ -5,12 +5,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-try:
-    from astrbot.api import logger as astrbot_logger
-except Exception:  # pragma: no cover
-    import logging
+from ..core.decorators import get_logger, safe_sync_call
 
-    astrbot_logger = logging.getLogger(__name__)
+astrbot_logger = get_logger(__name__)
 
 from ..core.image_utils import get_plugin_data_dir
 from .sqlite_store import image_label_upsert, image_labels_get_all
@@ -32,6 +29,11 @@ def _store_path() -> Path:
     return get_plugin_data_dir("image_labels") / "labels.json"
 
 
+@safe_sync_call(
+    logger=astrbot_logger,
+    log_msg="load_labels failed",
+    default_return={},
+)
 def load_labels() -> dict[str, ImageLabelEntry]:
     # Prefer sqlite; fallback to legacy JSON and migrate into sqlite.
     rows = image_labels_get_all()
@@ -53,39 +55,35 @@ def load_labels() -> dict[str, ImageLabelEntry]:
     path = _store_path()
     if not path.exists():
         return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            return {}
-        out: dict[str, ImageLabelEntry] = {}
-        for url, v in raw.items():
-            if not isinstance(url, str) or not isinstance(v, dict):
-                continue
-            ent = ImageLabelEntry(
-                url=url,
-                label=str(v.get("label") or ""),
-                source=str(v.get("source") or ""),
-                updated_at=str(v.get("updated_at") or ""),
-                local_path=str(v.get("local_path") or ""),
-                width=int(v.get("width") or 0),
-                height=int(v.get("height") or 0),
-                skip=bool(v.get("skip") or False),
-            )
-            out[url] = ent
-            image_label_upsert(
-                url=ent.url,
-                label=ent.label,
-                source=ent.source,
-                updated_at=ent.updated_at or None,
-                local_path=ent.local_path,
-                width=ent.width,
-                height=ent.height,
-                skip=bool(ent.skip),
-            )
-        return out
-    except Exception as e:
-        astrbot_logger.warning("[dailynews] load_labels failed: %s", e, exc_info=True)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
         return {}
+    out: dict[str, ImageLabelEntry] = {}
+    for url, v in raw.items():
+        if not isinstance(url, str) or not isinstance(v, dict):
+            continue
+        ent = ImageLabelEntry(
+            url=url,
+            label=str(v.get("label") or ""),
+            source=str(v.get("source") or ""),
+            updated_at=str(v.get("updated_at") or ""),
+            local_path=str(v.get("local_path") or ""),
+            width=int(v.get("width") or 0),
+            height=int(v.get("height") or 0),
+            skip=bool(v.get("skip") or False),
+        )
+        out[url] = ent
+        image_label_upsert(
+            url=ent.url,
+            label=ent.label,
+            source=ent.source,
+            updated_at=ent.updated_at or None,
+            local_path=ent.local_path,
+            width=ent.width,
+            height=ent.height,
+            skip=bool(ent.skip),
+        )
+    return out
 
 
 def save_labels(labels: dict[str, ImageLabelEntry]) -> None:

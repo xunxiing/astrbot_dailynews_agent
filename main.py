@@ -439,6 +439,10 @@ class DailyNewsPlugin(Star):
                 "[dailynews] manual publish to astrbook failed", exc_info=True
             )
 
+        if bool(prepared.get("generation_failed", False)):
+            yield event.plain_result(content)
+            return
+
         # Send to current session directly (with fallback inside scheduler) to avoid
         # "prepared but failed to send" cases when platform times out on images.
         try:

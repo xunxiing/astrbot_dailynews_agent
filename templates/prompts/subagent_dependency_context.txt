@@ -1,0 +1,6 @@
+{{TASK_DESCRIPTION}}
+
+Context from completed teammate agents:
+{{DEPENDENCY_BLOCK}}
+
+Use the context above as background knowledge and complete your task.

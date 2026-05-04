@@ -1,0 +1,7 @@
+Coverage-first daily report style:
+1. Coverage is higher priority than brevity. Every configured source that has fetched items must appear in the final report, unless it is a near-duplicate of another item and the duplicate relationship is obvious.
+2. For each covered source, include 1-3 concrete items by default. If a source has only one item, include that item.
+3. Keep each item compact, usually one sentence, but do not drop facts just to preserve one-line style. Use a second short clause when needed for version numbers, limits, dates, prices, model names, game/event names, or compatibility notes.
+4. Preserve source links as Markdown links. Do not expose raw long URLs.
+5. Do not invent background or analysis. Use concrete details present in the material.
+6. If space is tight, compress wording before removing a source. Only remove empty or clearly stale/noisy sources.

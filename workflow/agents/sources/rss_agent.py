@@ -3,21 +3,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-try:
-    from astrbot.api import logger as astrbot_logger
-except Exception:  # pragma: no cover
-    import logging
-
-    astrbot_logger = logging.getLogger(__name__)
-
-from ...core.llm import LLMRunner
+from ...core.decorators import safe_async_call
 from ...core.models import NewsSourceConfig, SubAgentResult
 from ...core.rss import fetch_rss_feed
+from .base import BaseSourceAgent, register_source
 
 
-class RssSubAgent:
+@register_source("rss")
+class RssSubAgent(BaseSourceAgent):
     """RSS/Atom source agent."""
 
+    @safe_async_call(log_msg="rss fetch failed", default_return=None)
     async def fetch_latest_articles(
         self, source: NewsSourceConfig, user_config: dict[str, Any]
     ) -> tuple[str, list[dict[str, Any]]]:
@@ -25,22 +21,14 @@ class RssSubAgent:
         timeout_s = max(5, min(int(meta.get("timeout_s") or 20), 60))
         since_hours = max(0, int(meta.get("since_hours") or 0))
         date_text = str(meta.get("date") or "").strip() or None
-        try:
-            feed = await fetch_rss_feed(
-                source.url,
-                limit=max(1, min(int(source.max_articles or 5), 30)),
-                timeout_s=timeout_s,
-                date_text=date_text if since_hours <= 0 else None,
-                keep_only_report_day=since_hours <= 0,
-            )
-        except Exception as e:
-            astrbot_logger.warning(
-                "[dailynews] rss fetch failed source=%s url=%s err=%s",
-                source.name,
-                source.url,
-                e,
-            )
-            return source.name, []
+
+        feed = await fetch_rss_feed(
+            source.url,
+            limit=max(1, min(int(source.max_articles or 5), 30)),
+            timeout_s=timeout_s,
+            date_text=date_text if since_hours <= 0 else None,
+            keep_only_report_day=since_hours <= 0,
+        )
 
         items = feed.get("items") if isinstance(feed.get("items"), list) else []
         if since_hours > 0:
@@ -60,7 +48,7 @@ class RssSubAgent:
         return source.name, [x for x in items if isinstance(x, dict)]
 
     async def analyze_source(
-        self, source: NewsSourceConfig, articles: list[dict[str, Any]], llm: LLMRunner
+        self, source: NewsSourceConfig, articles: list[dict[str, Any]], llm: Any
     ) -> dict[str, Any]:
         titles: list[str] = []
         for item in articles or []:
@@ -105,7 +93,7 @@ class RssSubAgent:
         source: NewsSourceConfig,
         instruction: str,
         articles: list[dict[str, Any]],
-        llm: LLMRunner,
+        llm: Any,
         user_config: dict[str, Any] | None = None,
     ) -> SubAgentResult:
         chosen = [item for item in (articles or []) if isinstance(item, dict)]

@@ -3,13 +3,6 @@ from datetime import datetime
 from typing import Any
 
 try:
-    from astrbot.api import logger as astrbot_logger
-except Exception:  # pragma: no cover
-    import logging
-
-    astrbot_logger = logging.getLogger(__name__)
-
-try:
     import sys
     from pathlib import Path
 
@@ -26,9 +19,11 @@ except Exception:  # pragma: no cover
 from ...core.llm import LLMRunner
 from ...core.models import NewsSourceConfig, SubAgentResult
 from ...core.utils import _json_from_text
+from .base import BaseSourceAgent, register_source
 
 
-class TwitterSubAgent:
+@register_source("twitter")
+class TwitterSubAgent(BaseSourceAgent):
     """X/Twitter 子 Agent：抓取主页最新推文（含图片）并生成 Markdown 小节。"""
 
     async def fetch_latest_articles(
@@ -115,12 +110,12 @@ class TwitterSubAgent:
         except Exception as e:
             msg = str(e) or type(e).__name__
             if "swap `twitter_targets` and `twitter_proxy`" in msg:
-                astrbot_logger.warning(
+                self.logger.warning(
                     "[dailynews] twitter fetch failed: %s. Fix config: set `twitter_targets` to https://x.com/<user> and `twitter_proxy` to http/https proxy.",
                     msg,
                 )
             else:
-                astrbot_logger.warning(
+                self.logger.warning(
                     "[dailynews] twitter fetch failed: %s", msg, exc_info=True
                 )
             tweets = []

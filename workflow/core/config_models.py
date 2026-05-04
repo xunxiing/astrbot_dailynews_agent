@@ -791,6 +791,9 @@ class ReactAgentConfig:
     max_no_progress_rounds: int = 3
     max_repeat_action: int = 2
     tool_call_timeout_s: int = 90
+    llm_max_retries: int = 2
+    llm_retry_base_s: float = 2.0
+    llm_retry_max_s: float = 20.0
     enable_trace: bool = True
 
     @classmethod
@@ -809,6 +812,13 @@ class ReactAgentConfig:
             ),
             tool_call_timeout_s=max(
                 5, _to_int(cfg.get("react_agent_tool_call_timeout_s"), 90)
+            ),
+            llm_max_retries=max(0, _to_int(cfg.get("react_agent_llm_max_retries"), 2)),
+            llm_retry_base_s=max(
+                0.1, _to_float(cfg.get("react_agent_llm_retry_base_s"), 2.0)
+            ),
+            llm_retry_max_s=max(
+                0.5, _to_float(cfg.get("react_agent_llm_retry_max_s"), 20.0)
             ),
             enable_trace=_to_bool(cfg.get("react_agent_enable_trace"), True),
         )

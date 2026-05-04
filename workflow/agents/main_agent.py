@@ -2,14 +2,10 @@ import json
 from datetime import datetime
 from typing import Any
 
-try:
-    from astrbot.api import logger as astrbot_logger
-except Exception:  # pragma: no cover
-    import logging
-
-    astrbot_logger = logging.getLogger(__name__)
-
+from ..core.decorators import get_logger
 from ..core.llm import LLMRunner
+
+astrbot_logger = get_logger(__name__)
 from ..core.models import MainAgentDecision, SubAgentResult
 from ..core.utils import _json_from_text
 

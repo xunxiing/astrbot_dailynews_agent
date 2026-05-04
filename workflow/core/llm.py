@@ -2,12 +2,9 @@ import asyncio
 from collections.abc import Iterable
 from typing import Any
 
-try:
-    from astrbot.api import logger as astrbot_logger
-except Exception:  # pragma: no cover
-    import logging
+from ..core.decorators import get_logger
 
-    astrbot_logger = logging.getLogger(__name__)
+astrbot_logger = get_logger(__name__)
 
 
 class LLMRunner:

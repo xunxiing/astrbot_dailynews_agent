@@ -29,6 +29,24 @@
     ],
     "hint": "multi=多 Agent 工作流（默认）；single=single agent 模式（不支持插图）"
   },
+  "react_agent_llm_max_retries": {
+    "type": "int",
+    "description": "ReAct 主 Agent LLM 瞬时错误重试次数",
+    "default": 2,
+    "hint": "用于 429/500/并发限制/超时等瞬时错误。总尝试次数=1+重试次数。"
+  },
+  "react_agent_llm_retry_base_s": {
+    "type": "float",
+    "description": "ReAct 主 Agent LLM 重试基础等待秒数",
+    "default": 2.0,
+    "invisible": true
+  },
+  "react_agent_llm_retry_max_s": {
+    "type": "float",
+    "description": "ReAct 主 Agent LLM 重试最大等待秒数",
+    "default": 20.0,
+    "invisible": true
+  },
   "single_agent_provider_id": {
     "type": "string",
     "description": "single agent 使用的 Provider（留空则复用 main_agent_provider_id）",

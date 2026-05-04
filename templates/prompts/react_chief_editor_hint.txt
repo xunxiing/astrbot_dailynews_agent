@@ -1,0 +1,3 @@
+When planning or asking the writer to draft the report, optimize for source coverage first and compact wording second.
+Do not stop after a few highlights if configured sources with fetched items remain uncovered.
+One-liners are a format preference, not permission to omit sources or fetched items.

@@ -260,7 +260,7 @@ def _compact_prefetched_item(item: Any) -> dict[str, Any] | None:
 
 
 def _build_prefetched_source_payload(
-    *, source: NewsSourceConfig, items: list[dict[str, Any]], max_items: int = 8
+    *, source: NewsSourceConfig, items: list[dict[str, Any]], max_items: int = 12
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     all_images: list[str] = []
@@ -285,13 +285,13 @@ def _build_prefetched_source_payload(
 
 
 def _format_prefetched_source_for_tool(
-    payload: dict[str, Any], *, limit: int = 6, focus: str = ""
+    payload: dict[str, Any], *, limit: int = 12, focus: str = ""
 ) -> str:
     source_name = str(payload.get("source_name") or "").strip() or "(unknown)"
     source_type = str(payload.get("source_type") or "").strip() or "(unknown)"
     source_url = str(payload.get("source_url") or "").strip()
     items = payload.get("items") if isinstance(payload.get("items"), list) else []
-    rows = items[: max(1, int(limit or 6))]
+    rows = items[: max(1, int(limit or 12))]
     lines = [f"Prefetched Source: {source_name}", f"Type: {source_type}"]
     if source_url:
         lines.append(f"Seed URL: {source_url}")
@@ -639,9 +639,9 @@ def _build_target_source_snapshot(
     fetched: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     max_sources = 20
-    max_urls_per_source = 6
+    max_urls_per_source = 10
     max_total_urls = 60
-    max_titles_per_source = 4
+    max_titles_per_source = 8
 
     rows: list[dict[str, Any]] = []
     all_seed_urls: list[str] = []
@@ -1090,7 +1090,12 @@ class ReActDailyNewsOrchestrator:
 
         wrapped = SubAgentWrapper(
             agent_id=agent_id,
-            task_description=f"You are vertical analyzer for {source.type}.",
+            task_description=str(
+                load_template("templates/prompts/react_vertical_analyzer_task.txt")
+                or ""
+            )
+            .replace("{{SOURCE_TYPE}}", str(source.type or "unknown"))
+            .strip(),
             dependency_ids=dep_ids,
             runner=_runner,
         )
@@ -1851,7 +1856,7 @@ class ReActDailyNewsOrchestrator:
         )
 
         async def _tool_read_prefetched_source(
-            *, context, source_name: str, limit: int = 6, focus: str = ""
+            *, context, source_name: str, limit: int = 12, focus: str = ""
         ):
             _ = context
             target_name = str(source_name or "").strip()
@@ -1868,7 +1873,7 @@ class ReActDailyNewsOrchestrator:
                 return f"error: prefetched source not found: `{target_name}`"
             return _format_prefetched_source_for_tool(
                 payload,
-                limit=_safe_int(limit, 6, minimum=1, maximum=12),
+                limit=_safe_int(limit, 12, minimum=1, maximum=20),
                 focus=str(focus or "").strip(),
             )
 
@@ -2266,7 +2271,7 @@ class ReActDailyNewsOrchestrator:
             async def _runner(injected_prompt: str) -> Any:
                 snapshot = memory.read(dep_ids) if dep_ids else memory.read_all()
                 materials = _sanitize_writer_context(
-                    _to_brief_text(snapshot, max_chars=22000)
+                    _to_brief_text(snapshot, max_chars=50000)
                 )
                 injected_prompt = _sanitize_writer_context(str(injected_prompt or ""))
                 system_core = str(
@@ -2297,7 +2302,9 @@ class ReActDailyNewsOrchestrator:
 
             wrapper = SubAgentWrapper(
                 agent_id="writer_agent",
-                task_description="Compose final daily report from collected intelligence.",
+                task_description=str(
+                    load_template("templates/prompts/react_writer_task.txt") or ""
+                ).strip(),
                 dependency_ids=dep_ids,
                 runner=_runner,
             )
@@ -2313,7 +2320,7 @@ class ReActDailyNewsOrchestrator:
 
         registry.register_callable(
             name="tool_write_report",
-            description="Compose final markdown report from shared memory. Default to one-liner changelog-style items.",
+            description="Compose final markdown report from shared memory. Must preserve coverage for every fetched source before compacting style.",
             parameters={
                 "type": "object",
                 "properties": {

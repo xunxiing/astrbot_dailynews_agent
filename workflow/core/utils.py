@@ -5,6 +5,8 @@ import json
 import re
 from typing import Any
 
+from .decorators import get_logger
+
 
 def _json_from_text(text: str) -> dict[str, Any] | None:
     text = (text or "").strip()

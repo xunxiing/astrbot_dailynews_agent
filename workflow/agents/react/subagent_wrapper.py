@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from ...pipeline.rendering import load_template
 from .shared_memory import SharedMemory
 
 
@@ -58,15 +59,19 @@ class SubAgentWrapper:
         if not dep_payload:
             return self.task_description
 
-        lines = [self.task_description, "", "Context from completed teammate agents:"]
+        lines: list[str] = []
         for aid, content in dep_payload.items():
             lines.append(f"[{aid}]")
             lines.append(self._to_text(content))
             lines.append("")
-        lines.append(
-            "Use the context above as background knowledge and complete your task."
+        template = str(
+            load_template("templates/prompts/subagent_dependency_context.txt") or ""
+        ).strip()
+        return (
+            template.replace("{{TASK_DESCRIPTION}}", self.task_description)
+            .replace("{{DEPENDENCY_BLOCK}}", "\n".join(lines).strip())
+            .strip()
         )
-        return "\n".join(lines).strip()
 
     async def execute(self, *, shared_memory: SharedMemory) -> SubAgentExecutionResult:
         dep_payload = (

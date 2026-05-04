@@ -1,0 +1,24 @@
+User Goal:
+{{USER_GOAL}}
+
+Collected Intelligence:
+{{COLLECTED_INTELLIGENCE}}
+
+Initial Context:
+{{INITIAL_CONTEXT}}
+
+Available Tools:
+{{AVAILABLE_TOOLS}}
+
+Search Strategy:
+{{SEARCH_STRATEGY}}
+
+Execution Rules:
+1. Treat the Configured Source Summary as a coverage checklist, not as optional context.
+2. If a source has fetched_items > 0, include at least one concrete item from it unless it is clearly duplicate, stale, or noisy.
+3. If information for a checklist source is missing or too compressed, call the right tool, especially `tool_read_prefetched_source`.
+4. If some parts are unavailable, clearly mention missing parts in the final report.
+5. Use web-search tools for recent facts, external background, and cross-source verification.
+6. If a good page-extraction tool is available, extract the target page before summarizing it.
+7. If images matter for presentation, collect source materials first, then use the image-brief tool to tell the downstream image-layout agent what to do.
+8. Prefer compact wording over omission. Do not let one-liner style remove a source.

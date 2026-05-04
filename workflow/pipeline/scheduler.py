@@ -407,6 +407,9 @@ class DailyNewsScheduler:
             self._report_cache_ttl_minutes(config) > 0
         )
 
+    def _is_generation_failed_content(self, content: Any) -> bool:
+        return str(content or "").strip().startswith("生成失败")
+
     def _raw_delivery_mode(self, config: dict[str, Any]) -> str:
         return (
             str(config.get("delivery_mode", "html_image") or "html_image")
@@ -530,7 +533,7 @@ class DailyNewsScheduler:
         self, payload: dict[str, Any], config: dict[str, Any]
     ) -> bool:
         content = str(payload.get("content") or "").strip()
-        if not content or content.startswith("\u751f\u6210\u5931\u8d25"):
+        if not content or self._is_generation_failed_content(content):
             return False
         if self._actual_delivery_mode(config) == "html_image":
             return bool(self._valid_cached_img_paths(payload.get("img_paths") or []))
@@ -793,6 +796,15 @@ class DailyNewsScheduler:
                 return payload
 
         content = await self.generate_once(config, source=source)
+        if self._is_generation_failed_content(content):
+            return {
+                "content": str(content or ""),
+                "img_paths": [],
+                "link_node_chunks": [],
+                "appendix_images": [],
+                "cache_hit": False,
+                "generation_failed": True,
+            }
         payload = await self._build_report_payload(content, config, cache_hit=False)
         if self._report_cache_enabled(config) and self._can_store_report_cache(
             payload, config
@@ -864,6 +876,9 @@ class DailyNewsScheduler:
         cfg.setdefault("react_agent_max_no_progress_rounds", 3)
         cfg.setdefault("react_agent_max_repeat_action", 2)
         cfg.setdefault("react_agent_tool_call_timeout_s", 90)
+        cfg.setdefault("react_agent_llm_max_retries", 2)
+        cfg.setdefault("react_agent_llm_retry_base_s", 2.0)
+        cfg.setdefault("react_agent_llm_retry_max_s", 20.0)
         cfg.setdefault("react_agent_enable_trace", True)
         cfg.setdefault("react_vertical_llm_timeout_s", 45)
         cfg.setdefault("react_vertical_llm_max_retries", 0)
@@ -1480,6 +1495,13 @@ class DailyNewsScheduler:
             self._workflow_task = None
         if result.get("status") == "success":
             return str(result.get("final_summary") or "")
+        astrbot_logger.warning(
+            "[dailynews] generate_once failed source=%s status=%s error=%s traceback=%s",
+            source,
+            result.get("status"),
+            result.get("error"),
+            result.get("traceback") or "",
+        )
         return f"生成失败：{result.get('error') or '未知错误'}"
 
     async def generate_and_send(self, cfg: dict[str, Any] | None = None) -> str:
@@ -1781,11 +1803,11 @@ class DailyNewsScheduler:
                 "[dailynews] astrbook publish skipped: empty content"
             )
             return {"ok": False, "error": "empty_content"}
-        if s.startswith("生成失败"):
+        if self._is_generation_failed_content(s):
             astrbot_logger.warning(
                 "[dailynews] astrbook publish skipped: generate_failed"
             )
-            return {"ok": False, "error": "generate_failed"}
+            return {"ok": False, "skipped": True, "reason": "generate_failed"}
 
         token = str(cfg.get("astrbook_token") or "").strip()
         if not token:

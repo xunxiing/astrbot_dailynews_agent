@@ -6,18 +6,27 @@ import inspect
 import pkgutil
 from typing import Any
 
-try:
-    from astrbot.api import logger as astrbot_logger
-except Exception:  # pragma: no cover
-    import logging
+from ...core.decorators import get_logger
 
-    astrbot_logger = logging.getLogger(__name__)
+astrbot_logger = get_logger(__name__)
 
+from .base import (  # noqa: E402
+    BaseSourceAgent,
+    clear_source_registry,
+    get_source_registry,
+    register_source,
+    unregister_source,
+)
 
 GENERIC_SOURCE_TEMPLATE_KEYS = frozenset(
     {"generic", "generic_source", "custom", "custom_source", "source"}
 )
 
+
+# ------------------------------------------------------------------
+# Old-style discovery (kept for backward compat with agents that
+# do not yet use @register_source)
+# ------------------------------------------------------------------
 
 def _iter_source_module_names() -> list[str]:
     names: list[str] = []
@@ -73,8 +82,13 @@ def discover_source_agent_registry() -> dict[str, type[Any]]:
     - one file == one source, file name should end with `_agent.py`
     - one source agent class per file, the class must implement `fetch_latest_articles`
     - optionally expose `SOURCE_TYPE = "your_type"` when the file name is not enough
+
+    New-style agents using ``@register_source`` are picked up automatically
+    because importing the module triggers the decorator. Old-style agents are
+    scanned and added as a fallback.
     """
-    registry: dict[str, type[Any]] = {}
+    # Start with new-style registry entries (populated by @register_source)
+    registry: dict[str, type[Any]] = dict(get_source_registry())
 
     for module_name in _iter_source_module_names():
         fqmn = f"{__name__}.{module_name}"
@@ -83,6 +97,11 @@ def discover_source_agent_registry() -> dict[str, type[Any]]:
             source_type = _resolve_source_type(module, module_name)
             if not source_type:
                 raise RuntimeError("source type is empty")
+
+            # If the module already registered via @register_source, skip.
+            if source_type in registry:
+                continue
+
             agent_class = _resolve_agent_class(module)
         except Exception as exc:
             astrbot_logger.warning(
@@ -116,4 +135,9 @@ __all__ = [
     "GENERIC_SOURCE_TEMPLATE_KEYS",
     "available_source_types",
     "discover_source_agent_registry",
+    "BaseSourceAgent",
+    "register_source",
+    "get_source_registry",
+    "unregister_source",
+    "clear_source_registry",
 ]

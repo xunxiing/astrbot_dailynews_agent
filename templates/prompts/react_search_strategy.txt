@@ -1,0 +1,10 @@
+Web investigation priority:
+1. Prefer Tavily-class search when available: `web_search_tavily` for retrieval and `tavily_extract_web_page` for extracting the target page.
+2. `grok_web_search` is the same priority tier as Tavily and can be used as a first-class search tool when available.
+3. Use `web_search` only as the normal fallback when Tavily/Grok tools are unavailable or unsuitable.
+4. If none of the above exist, use local `tool_search_web` only as the final safety fallback.
+5. After searching, prefer opening/extracting the most relevant page instead of relying only on result snippets.
+6. Avoid repeating near-identical searches once evidence is sufficient.
+
+Current search-tool availability:
+{{SEARCH_TOOL_AVAILABILITY}}

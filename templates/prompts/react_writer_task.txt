@@ -1,0 +1,2 @@
+Compose the final daily report from collected intelligence.
+Preserve coverage for every fetched source before compacting style.
