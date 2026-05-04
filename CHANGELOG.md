@@ -7,6 +7,21 @@
 
 ## [Unreleased]
 
+## [v1.2.3] - 2024-05-04
+
+### Fixed
+- 修复 GitHub Actions 自动发版脚本无法正确提取 changelog 的问题
+- 优化版本号解析逻辑，支持带注释的版本字段
+
+### Changed
+- 使用 Python 脚本替代 shell 命令提取 changelog，提高可靠性
+
+## [v1.2.2] - 2024-05-04
+
+### Added
+- 新增 GitHub Actions 自动发版工作流
+- 新增 CHANGELOG.md 维护规范
+
 ## [v1.2.1] - 2024-05-04
 
 ### Changed

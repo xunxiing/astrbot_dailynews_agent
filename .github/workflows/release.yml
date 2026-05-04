@@ -43,22 +43,37 @@ jobs:
           VERSION="${{ steps.get_version.outputs.version }}"
           echo "Looking for version: $VERSION"
           
-          # 使用 sed 提取对应版本的 changelog
-          CHANGELOG=$(sed -n "/^## \[$VERSION\]/,/^## \[/p" CHANGELOG.md | sed '$d')
+          # 使用 Python 提取 changelog 更可靠
+          CHANGELOG=$(python3 << 'PYTHON_SCRIPT'
+          import re
+          import sys
+
+          version = sys.argv[1]
           
-          # 移除空行并输出
-          CHANGELOG=$(echo "$CHANGELOG" | sed '/^[[:space:]]*$/d')
+          with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
+              content = f.read()
           
-          if [ -z "$CHANGELOG" ]; then
-            CHANGELOG="No detailed changelog provided for this version."
-          fi
+          # 匹配指定版本的内容
+          pattern = rf'^## \[{re.escape(version)}\].*?\n(.*?)(?=\n## \[|$)'
+          match = re.search(pattern, content, re.MULTILINE | re.DOTALL)
+          
+          if match:
+              changelog = match.group(1).strip()
+              print(changelog)
+          else:
+              print("No detailed changelog provided for this version.")
+          PYTHON_SCRIPT
+          "$VERSION")
           
           echo "Extracted changelog:"
           echo "$CHANGELOG"
           
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # 写入输出
+          {
+            echo "changelog<<EOF"
+            echo "$CHANGELOG"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
       
       - name: Create Release
         if: steps.check_release.outputs.exists == 'false'
