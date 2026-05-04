@@ -7,6 +7,11 @@
 
 ## [Unreleased]
 
+## [v1.2.9] - 2024-05-04
+
+### Fixed
+- 修复 GitHub Actions 自动发版时 CHANGELOG 内容未正确提取的问题
+
 ## [v1.2.8] - 2024-05-04
 
 ### Fixed
