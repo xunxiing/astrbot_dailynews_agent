@@ -50,8 +50,12 @@ jobs:
           
           version = '$VERSION'
           
-          with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
-              content = f.read()
+          try:
+              with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
+                  content = f.read()
+          except FileNotFoundError:
+              print('修复了一些已知问题')
+              sys.exit(0)
           
           # 匹配指定版本的内容
           pattern = rf'^## \\[{re.escape(version)}\\].*?\\n(.*?)$(?=\\n## \\[|\\Z)'
@@ -59,10 +63,18 @@ jobs:
           
           if match:
               changelog = match.group(1).strip()
-              print(changelog)
+              if changelog:
+                  print(changelog)
+              else:
+                  print('修复了一些已知问题')
           else:
-              print('No detailed changelog provided for this version.')
+              print('修复了一些已知问题')
           ")
+          
+          # 如果 changelog 为空，使用默认提示
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="修复了一些已知问题"
+          fi
           
           echo "Extracted changelog:"
           echo "$CHANGELOG"
