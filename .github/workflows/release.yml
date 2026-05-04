@@ -18,7 +18,8 @@ jobs:
       - name: Extract version from metadata.yaml
         id: get_version
         run: |
-          VERSION=$(grep -E '^version:' metadata.yaml | sed 's/version: *//' | tr -d ' ')
+          # 提取版本号（去除 # 后面的注释）
+          VERSION=$(grep -E '^version:' metadata.yaml | sed 's/version: *//' | sed 's/ *#.*//' | tr -d ' ')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
       
@@ -39,16 +40,11 @@ jobs:
         if: steps.check_release.outputs.exists == 'false'
         id: get_changelog
         run: |
-          VERSION=${{ steps.get_version.outputs.version }}
-          # 正则转义版本号（处理特殊字符）
-          ESCAPED_VERSION=$(echo "$VERSION" | sed 's/[\[\]]/\\&/g')
-          # 使用 awk 提取对应版本的 changelog 内容
-          CHANGELOG=$(awk -v ver="[$ESCAPED_VERSION]" '
-            /^## \[Unreleased\]/ {next}
-            $0 ~ "^## " ver {flag=1; next}
-            flag && /^## \[/ {flag=0}
-            flag {print}
-          ' CHANGELOG.md)
+          VERSION="${{ steps.get_version.outputs.version }}"
+          echo "Looking for version: $VERSION"
+          
+          # 使用 sed 提取对应版本的 changelog
+          CHANGELOG=$(sed -n "/^## \[$VERSION\]/,/^## \[/p" CHANGELOG.md | sed '$d')
           
           # 移除空行并输出
           CHANGELOG=$(echo "$CHANGELOG" | sed '/^[[:space:]]*$/d')
@@ -56,6 +52,9 @@ jobs:
           if [ -z "$CHANGELOG" ]; then
             CHANGELOG="No detailed changelog provided for this version."
           fi
+          
+          echo "Extracted changelog:"
+          echo "$CHANGELOG"
           
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
